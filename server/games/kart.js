@@ -25,7 +25,7 @@ const GUN_TIME = 2;
 const BANANA_LIFE = 40;
 
 // Damage in the arena (karts have 100 hp). In a race every hit except bullets spins you out.
-const DAMAGE = { rocket: 70, triple: 45, bullet: 9, banana: 35, mine: 100, bomb: 100, shock: 45, lava: 1000 }; // lava is instant death
+const DAMAGE = { rocket: 70, triple: 45, bullet: 6, banana: 35, mine: 100, bomb: 100, shock: 45, lava: 1000 }; // lava is instant death
 
 const SHOT_CODE = { rocket: 1, bullet: 2, bomb: 3 };
 const NO_INPUT = { up: false, down: false, left: false, right: false, drift: false };
@@ -70,6 +70,15 @@ function weightedPick(odds) {
 // Kart Battle has two variants:
 //  - race:  laps around a circuit, items, points for placement + hits
 //  - arena: timed deathmatch with health; destroyed karts respawn
+// Squared distance from point (x, y) to the segment (ax, ay)-(bx, by).
+function segmentDist2(ax, ay, bx, by, x, y) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / len2)) : 0;
+  return (ax + dx * t - x) ** 2 + (ay + dy * t - y) ** 2;
+}
+
 class KartBattle {
   static minPlayers = 1;
 
@@ -222,7 +231,7 @@ class KartBattle {
   }
 
   useItem(kart) {
-    if (!kart.item || kart.spin > 0 || kart.dead > 0 || kart.finished) return;
+    if (this.phase !== 'racing' || !kart.item || kart.spin > 0 || kart.dead > 0 || kart.finished) return;
     const item = kart.item;
     const cos = Math.cos(kart.angle);
     const sin = Math.sin(kart.angle);
@@ -294,6 +303,8 @@ class KartBattle {
 
   // ---------- damage ----------
   damage(target, amount, attacker, kind) {
+    // Nothing more can happen once the round is over (e.g. a kill limit hit mid-blast).
+    if (this.phase !== 'racing') return;
     if (target.dead > 0 || target.finished || (target.ghost > 0 && kind !== 'lava')) return;
     if (attacker && attacker !== target && this.isFriendly(attacker.id, target.id)) return;
     if (kind !== 'lava') {
@@ -310,7 +321,7 @@ class KartBattle {
 
     if (!this.arena) {
       if (kind === 'bullet') {
-        target.speed *= 0.72;
+        target.speed *= 0.82;
         this.room.emit('game:kart:hit', event);
         return;
       }
@@ -560,6 +571,8 @@ class KartBattle {
         }
         if (turn !== null) s.angle += Math.max(-ROCKET.homing * dt, Math.min(ROCKET.homing * dt, turn));
       }
+      const px = s.x;
+      const py = s.y;
       s.x += Math.cos(s.angle) * s.speed * dt;
       s.y += Math.sin(s.angle) * s.speed * dt;
       s.life -= dt;
@@ -575,8 +588,10 @@ class KartBattle {
       }
       for (const k of alive) {
         if (k.id === s.owner || k.ghost > 0 || k.dead > 0 || this.isFriendly(k.id, s.owner)) continue;
+        // Swept test over this tick's whole path: bullets cover ~60 units a
+        // tick, more than a kart is wide, so a point test lets them pass through.
         const r = K.KART_RADIUS + (s.kind === 'bullet' ? 4 : 8);
-        if ((k.x - s.x) ** 2 + (k.y - s.y) ** 2 < r * r) {
+        if (segmentDist2(px, py, s.x, s.y, k.x, k.y) < r * r) {
           this.damage(k, s.dmg, owner, s.kind === 'bullet' ? 'bullet' : 'rocket');
           s.life = 0;
           if (s.kind === 'rocket') this.room.emit('game:kart:boom', { x: Math.round(s.x), y: Math.round(s.y), r: 40, kind: 'rocket' });
@@ -603,7 +618,8 @@ class KartBattle {
       k.finished = true;
       k.finishTime = this.time - this.raceStart;
       this.finishOrder.push(k.id);
-      if (this.firstFinishAt === null) this.firstFinishAt = this.time;
+      // Only a human finishing starts the grace countdown; bots finishing first never cut a race short.
+      if (this.firstFinishAt === null && !k.bot) this.firstFinishAt = this.time;
       const p = this.room.players.get(k.id);
       const name = k.bot ? `🤖 ${k.name}` : p ? p.name : null;
       this.room.emit('game:kart:finish', { idx: k.idx, place: this.finishOrder.length, time: k.finishTime });

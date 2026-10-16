@@ -824,3 +824,74 @@ test('results include CPU drivers with their stats and team scores', async () =>
   assert.strictEqual(final.teams.reduce((sum, tm) => sum + tm.members, 0), 5);
   room.destroy();
 });
+
+test('a CPU driver finishing first never cuts a human race short', async () => {
+  const { room, game, bots, run, players } = await kartGame(1, { kartMap: 'grandprix', kartBots: 1, kartLaps: 1 });
+  const bot = bots()[0];
+  bot.lap = game.laps + 1;
+  game.trackLaps(bot, bot.trackIndex);
+  assert.ok(bot.finished);
+  assert.strictEqual(game.firstFinishAt, null, 'no grace countdown for bots');
+  const human = game.karts.get(players[0].id);
+  human.lap = game.laps + 1;
+  game.trackLaps(human, human.trackIndex);
+  assert.ok(game.firstFinishAt !== null, 'a human finishing starts it');
+  run(0.1);
+  room.destroy();
+});
+
+test('arena bots never stall next to a box or a rival they are gunning for', async () => {
+  for (const skill of ['easy', 'hard']) {
+    // Overshot a box, facing away from it, with nobody else nearby.
+    let ctx = await kartGame(1, { kartMode: 'arena', kartMap: 'colosseum', kartBots: 1, kartBotSkill: skill });
+    let bot = ctx.bots()[0];
+    const human = ctx.game.karts.get(ctx.players[0].id);
+    const box = ctx.game.map.itemBoxes[0];
+    Object.assign(human, { x: 2200, y: 2200, speed: 0 });
+    Object.assign(bot, { x: box.x + 110, y: box.y, angle: 0, speed: 0, item: null });
+    ctx.run(10);
+    assert.ok(bot.item || bot.gun > 0 || Math.hypot(bot.x - box.x - 110, bot.y - box.y) > 200, `${skill}: bot went for the box`);
+    ctx.room.destroy();
+
+    // Holding a minigun with a parked rival just off to the side.
+    ctx = await kartGame(1, { kartMode: 'arena', kartMap: 'colosseum', kartBots: 1, kartBotSkill: skill, kartItems: 'none' });
+    bot = ctx.bots()[0];
+    const target = ctx.game.karts.get(ctx.players[0].id);
+    Object.assign(bot, { x: 1000, y: 400, angle: 0, speed: 0, item: 'minigun', ammo: 1 });
+    Object.assign(target, { x: 1000, y: 550, speed: 0 });
+    ctx.run(15);
+    assert.ok(target.hp < 100 || target.deaths > 0, `${skill}: bot opened fire`);
+    ctx.room.destroy();
+  }
+});
+
+test('nothing happens after a kill limit ends the battle', async () => {
+  const { room, game, players } = await kartGame(3, { kartMode: 'arena', kartMap: 'colosseum', arenaKillLimit: 5 });
+  const [a, b, c] = players.map((p) => game.karts.get(p.id));
+  a.kills = 4;
+  Object.assign(b, { hp: 1, x: 700, y: 1300 });
+  Object.assign(c, { hp: 1, x: 760, y: 1300 });
+  game.damage(b, 50, a, 'shock');
+  assert.strictEqual(game.phase, 'done');
+  game.damage(c, 50, a, 'shock');
+  assert.strictEqual(a.kills, 5, 'no kills after the round is over');
+  assert.ok(c.dead <= 0);
+  a.item = 'rocket'; a.ammo = 1;
+  game.useItem(a);
+  assert.strictEqual(a.item, 'rocket', 'items cannot be used after the round');
+  room.destroy();
+});
+
+test('fast bullets never pass through a kart', async () => {
+  const { room, game, players } = await kartGame(2, { kartMode: 'arena', kartMap: 'colosseum' });
+  const [a, b] = players.map((p) => game.karts.get(p.id));
+  for (let range = 40; range <= 500; range += 23) {
+    Object.assign(a, { x: 600, y: 1300, angle: 0, speed: 0, gun: 0, item: null, input: {} });
+    Object.assign(b, { x: 600 + range, y: 1300, speed: 0, hp: 100, invuln: 0, shield: 0, input: {} });
+    game.shots = [];
+    game.fire('bullet', a);
+    for (let i = 0; i < 15; i++) game.simulate(1 / 30);
+    assert.strictEqual(b.hp, 94, `bullet hit at range ${range}`);
+  }
+  room.destroy();
+});

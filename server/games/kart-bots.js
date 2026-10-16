@@ -295,7 +295,8 @@ function pickArenaGoal(game, k, ai, sk) {
   const map = game.map;
   const s = scan(game, k, sk.aim);
   const hpFrac = k.hp / (game.hpMax || 100);
-  const armed = !!k.item || k.gun > 0;
+  // Defensive items aren't a weapon: keep looking for boxes until they're used.
+  const armed = (!!k.item && !['ghost', 'shield', 'boost'].includes(k.item)) || k.gun > 0;
   if (hpFrac < 0.3 && s.near && s.nearD < 650) {
     ai.mode = 'flee';
     ai.target = s.near;
@@ -413,8 +414,11 @@ function arenaDrive(game, k, ai, sk, input) {
   input.drift = false;
   input.down = false;
   input.up = true;
-  if (ai.mode === 'hunt' && gunning && dist < 230) input.up = false; // keep some distance with the minigun
-  if (ai.mode === 'box' && dist < 160 && Math.abs(err) > 1.2) input.up = false; // don't orbit the box
+  // Coast to keep some distance with the minigun, but never roll to a stop:
+  // karts can only turn while moving.
+  if (ai.mode === 'hunt' && gunning && dist < 230 && v > 140) input.up = false;
+  // Box just off to the side: brake to tighten the turn instead of orbiting it.
+  if (ai.mode === 'box' && dist < 240 && Math.abs(err) > 0.9 && v > 170) { input.up = false; input.down = true; }
   if (Math.abs(err) > 2 && v > 250) { input.up = false; input.down = true; }
   setSteer(input, err, 0.06);
 }
@@ -436,11 +440,11 @@ function arenaItems(game, k, ai, sk) {
     case 'mine':
       return (s.behind && s.behindD < 350) || holdTooLong;
     case 'shock':
-      return s.close >= 1;
+      return s.close >= 1 || holdTooLong;
     case 'shield':
       return threatened(game, k) || (hpFrac < 0.5 && s.nearD < 400) || holdTooLong;
     case 'ghost':
-      return threatened(game, k) || (hpFrac < 0.4 && s.nearD < 450);
+      return threatened(game, k) || (hpFrac < 0.4 && s.nearD < 450) || holdTooLong;
     case 'boost':
       return ai.mode === 'flee' || (ai.mode === 'hunt' && s.nearD > 650 && Math.abs(wrap(Math.atan2(s.near.y - k.y, s.near.x - k.x) - k.angle)) < 0.3) || holdTooLong;
     default:
@@ -475,7 +479,7 @@ function think(game, k, dt) {
   }
   if (game.arena) arenaDrive(game, k, ai, sk, input);
   else raceDrive(game, k, ai, sk, input);
-  if (input.up && Math.abs(k.speed) < 40 && k.spin <= 0) {
+  if ((input.up || input.down) && Math.abs(k.speed) < 40 && k.spin <= 0) {
     ai.stuck += dt;
     if (ai.stuck > 0.8) {
       ai.stuck = 0;
