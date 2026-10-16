@@ -445,6 +445,14 @@ function arenaDrive(game, k, ai, sk, input) {
   // Box just off to the side: brake to tighten the turn instead of orbiting it.
   if (ai.mode === 'box' && dist < 240 && Math.abs(err) > 0.9 && v > 170) { input.up = false; input.down = true; }
   if (Math.abs(err) > 2 && v > 250) { input.up = false; input.down = true; }
+  // A rival right beside us can't be faced by circling (the turn is wider than the gap): back off
+  // while turning towards it. Steering flips in reverse.
+  if (ai.mode === 'hunt' && dist < 120 && Math.abs(err) > 0.6) {
+    input.up = false;
+    input.down = true;
+    setSteer(input, k.speed < 0 ? -err : err, 0.06);
+    return;
+  }
   setSteer(input, err, 0.06);
 }
 

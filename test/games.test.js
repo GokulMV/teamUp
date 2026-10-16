@@ -862,7 +862,8 @@ test('arena bots never stall next to a box or a rival they are gunning for', asy
     Object.assign(bot, { x: 1000, y: 400, angle: 0, speed: 0, item: 'minigun', ammo: 1 });
     Object.assign(target, { x: 1000, y: 550, speed: 0 });
     ctx.run(15);
-    assert.ok(target.hp < 100 || target.deaths > 0, `${skill}: bot opened fire`);
+    // Easy bots aim loosely and can miss a whole burst; what matters is that they don't sit on it.
+    assert.ok(bot.item !== 'minigun' || target.hp < 100 || target.deaths > 0, `${skill}: bot opened fire`);
     ctx.room.destroy();
   }
 });
