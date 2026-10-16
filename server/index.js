@@ -4,12 +4,28 @@ const express = require('express');
 const { Server } = require('socket.io');
 const { RoomManager } = require('./rooms');
 
+const { renderIndex } = require('./assets');
+
 const PORT = process.env.PORT || 3000;
+const PUBLIC = path.join(__dirname, '..', 'public');
 
 const app = express();
-app.use(express.static(path.join(__dirname, '..', 'public')));
+
+// Caching: the page is never cached, and every CSS/JS link in it carries a hash of the file's
+// contents (?v=...), so after a deploy browsers always load matching new files. Versioned files
+// can then be cached for a year; anything else must be revalidated on every load.
+app.use((req, res, next) => {
+  if (req.query.v) res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  else if (req.path.startsWith('/vendor/three/')) res.set('Cache-Control', 'public, max-age=86400');
+  else res.set('Cache-Control', 'no-cache');
+  next();
+});
+app.get(['/', '/index.html'], (_req, res) => {
+  res.type('html').send(renderIndex(PUBLIC));
+});
+app.use(express.static(PUBLIC, { index: false, cacheControl: false }));
 // Three.js (3D kart rendering) served straight from node_modules.
-app.use('/vendor/three', express.static(path.join(__dirname, '..', 'node_modules', 'three')));
+app.use('/vendor/three', express.static(path.join(__dirname, '..', 'node_modules', 'three'), { cacheControl: false }));
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Browser errors are sent here so they show up in the server logs (e.g. Railway's deploy logs).
