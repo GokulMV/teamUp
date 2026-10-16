@@ -515,3 +515,280 @@ test('telephone modes: knock-off is all drawing with a memorise time; speedrun i
   assert.ok(ctx2.room.game.stepTime(0) <= 20, `speedrun write step is short (${ctx2.room.game.stepTime(0)}s)`);
   ctx2.room.destroy();
 });
+
+// ---------- Kart options and CPU drivers ----------
+async function kartGame(n, settings = {}) {
+  const ctx = await makeRoom(n);
+  const r = await call(ctx.host, 'lobby:settings', { mode: 'kart', ...settings });
+  assert.ok(r.ok, r.error);
+  const init = once(ctx.host, 'game:kart:init');
+  const started = await call(ctx.host, 'game:start');
+  assert.ok(started.ok, started.error);
+  ctx.init = await init;
+  const game = ctx.room.game;
+  game.stop();
+  game.phase = 'racing';
+  game.raceStart = game.time;
+  ctx.game = game;
+  ctx.bots = () => [...game.karts.values()].filter((k) => k.bot);
+  ctx.run = (seconds) => { for (let i = 0; i < seconds * 30; i++) { game.time += 1 / 30; game.simulate(1 / 30); } };
+  return ctx;
+}
+
+test('kart settings: defaults and strict validation (bad values are ignored)', async () => {
+  const K = require('../public/js/shared/kart-core');
+  const { host, room } = await makeRoom(2);
+  const s = room.settings;
+  const snapshot = () => [s.kartBots, s.kartBotSkill, s.kartClass, s.kartItems, s.kartBoxRespawn, s.kartCatchup, s.kartReverse,
+    s.arenaKillLimit, s.arenaRespawn, s.arenaHealth];
+  assert.deepStrictEqual(snapshot(), [0, 'normal', 'standard', 'all', 'normal', true, false, 0, 'normal', 'normal']);
+  assert.deepStrictEqual(s.kartItemList, K.ITEMS);
+
+  await call(host, 'lobby:settings', {
+    kartBots: 7, kartBotSkill: 'hard', kartClass: 'turbo', kartItems: 'custom', kartItemList: ['rocket', 'nope', 'banana', 'rocket', 42],
+    kartBoxRespawn: 'frequent', kartCatchup: false, kartReverse: true, arenaKillLimit: 10, arenaRespawn: 'fast', arenaHealth: 'high',
+  });
+  const expected = [7, 'hard', 'turbo', 'custom', 'frequent', false, true, 10, 'fast', 'high'];
+  assert.deepStrictEqual(snapshot(), expected);
+  assert.deepStrictEqual(s.kartItemList, ['rocket', 'banana'], 'unknown ids dropped, no duplicates');
+
+  for (const bad of [
+    { kartBots: 16 }, { kartBots: -1 }, { kartBots: 2.5 }, { kartBots: 'lots' }, { kartBots: null },
+    { kartBotSkill: 'insane' }, { kartClass: 'warp' }, { kartClass: 3 }, { kartItems: 'some' },
+    { kartItemList: 'rocket' }, { kartBoxRespawn: 'never' }, { kartCatchup: 'no' }, { kartReverse: 1 },
+    { arenaKillLimit: 7 }, { arenaKillLimit: 100 }, { arenaKillLimit: 'ten' }, { arenaRespawn: 'instant' }, { arenaHealth: 9000 },
+  ]) {
+    await call(host, 'lobby:settings', bad);
+  }
+  assert.deepStrictEqual(snapshot(), expected);
+  assert.deepStrictEqual(s.kartItemList, ['rocket', 'banana']);
+  await call(host, 'lobby:settings', { kartBots: '3', arenaKillLimit: 0, kartItemList: [] });
+  assert.strictEqual(s.kartBots, 3, 'numeric strings from <select>s are accepted');
+  assert.strictEqual(s.arenaKillLimit, 0);
+  assert.deepStrictEqual(s.kartItemList, []);
+  room.destroy();
+});
+
+test('CPU drivers join the race and lap the grand prix at hard', async () => {
+  const { room, init, game, bots, run, players } = await kartGame(1, { kartMap: 'grandprix', kartBots: 5, kartBotSkill: 'hard', kartLaps: 3 });
+  assert.strictEqual(init.karts.length, 6);
+  const human = init.karts.find((k) => k.id === players[0].id);
+  assert.ok(Number.isInteger(human.avatar), 'humans carry their avatar');
+  assert.ok(!human.bot);
+  const botMeta = init.karts.filter((k) => k.bot);
+  assert.strictEqual(botMeta.length, 5);
+  for (const b of botMeta) {
+    assert.match(b.id, /^bot:\d+$/);
+    assert.ok(b.name && b.color && Number.isInteger(b.avatar) && b.avatar >= 0 && b.avatar < 24);
+  }
+  assert.strictEqual(new Set(botMeta.map((b) => b.name)).size, 5, 'bot names are unique');
+
+  const start = new Map(bots().map((k) => [k.id, [k.x, k.y]]));
+  run(60);
+  assert.strictEqual(game.botError, false);
+  for (const k of bots()) {
+    assert.ok(Number.isFinite(k.x) && Number.isFinite(k.y), `${k.name} position is finite`);
+    const [x0, y0] = start.get(k.id);
+    assert.ok(Math.hypot(k.x - x0, k.y - y0) > 100 || k.lap > 1, `${k.name} moved`);
+    assert.ok(k.lap >= 2, `${k.name} completed a lap within 60 s (lap ${k.lap})`);
+  }
+  room.destroy();
+});
+
+test('CPU drivers fight in the arena without errors and stay balanced across teams', async () => {
+  const { room, init, game, bots, run } = await kartGame(2, {
+    kartMode: 'arena', kartMap: 'volcano', kartBots: 8, kartBotSkill: 'hard', teamMode: true, teamCount: 2, arenaTime: 300,
+  });
+  assert.strictEqual(init.karts.length, 10);
+  const perTeam = [0, 0];
+  for (const k of init.karts) perTeam[k.team]++;
+  assert.deepStrictEqual(perTeam, [5, 5], 'bots fill the smaller team first');
+  run(60);
+  assert.strictEqual(game.botError, false);
+  for (const k of game.karts.values()) assert.ok(Number.isFinite(k.x) && Number.isFinite(k.y) && Number.isFinite(k.hp));
+  const kills = bots().reduce((sum, k) => sum + k.kills, 0);
+  assert.ok(kills > 0, 'bots destroyed someone');
+  room.destroy();
+});
+
+test('kart items: none removes the boxes, weapons only rolls weapons, custom list is respected', async () => {
+  const K = require('../public/js/shared/kart-core');
+  const ctx = await kartGame(2, { kartMap: 'grandprix', kartItems: 'none' });
+  assert.strictEqual(ctx.init.items, false);
+  assert.strictEqual(ctx.game.boxes.length, 0);
+  const state = once(ctx.host, 'game:kart:state');
+  ctx.game.broadcast();
+  assert.deepStrictEqual((await state).x, []);
+  const kart = ctx.game.karts.get(ctx.players[0].id);
+  Object.assign(kart, { x: K.MAPS.grandprix.itemBoxes[0].x, y: K.MAPS.grandprix.itemBoxes[0].y });
+  ctx.run(0.2);
+  assert.strictEqual(kart.item, null);
+  ctx.room.destroy();
+
+  for (const kartMode of ['race', 'arena']) {
+    const c = await kartGame(3, { kartMode, kartItems: 'weapons' });
+    const seen = new Set();
+    for (const k of c.game.karts.values()) for (let i = 0; i < 400; i++) seen.add(c.game.rollItem(k));
+    for (const banned of ['boost', 'shield', 'ghost', 'banana']) assert.ok(!seen.has(banned), `${kartMode}: weapons mode rolled ${banned}`);
+    assert.ok(seen.has('rocket') && seen.has('minigun'));
+    c.room.destroy();
+  }
+
+  const c2 = await kartGame(2, { kartMode: 'arena', kartItems: 'custom', kartItemList: ['ghost', 'shock'] });
+  const seen = new Set();
+  for (let i = 0; i < 300; i++) seen.add(c2.game.rollItem(c2.game.karts.get(c2.players[0].id)));
+  assert.deepStrictEqual([...seen].sort(), ['ghost', 'shock']);
+  c2.room.destroy();
+
+  const c3 = await kartGame(2, { kartItems: 'custom', kartItemList: [] });
+  assert.strictEqual(c3.game.boxes.length, 0, 'an empty custom list means no item boxes');
+  assert.strictEqual(c3.init.items, false);
+  c3.room.destroy();
+});
+
+test('kart catch-up off: item odds no longer depend on race position', async () => {
+  const roll = async (kartCatchup) => {
+    const c = await kartGame(2, { kartItems: 'custom', kartItemList: ['triple', 'banana'], kartCatchup });
+    const [a, b] = [c.game.karts.get(c.players[0].id), c.game.karts.get(c.players[1].id)];
+    a.progress = 500; b.progress = 0; // a leads
+    let triples = 0;
+    for (let i = 0; i < 400; i++) if (c.game.rollItem(a) === 'triple') triples++;
+    c.room.destroy();
+    return triples;
+  };
+  assert.strictEqual(await roll(true), 0, 'the leader never gets triple rockets with catch-up');
+  assert.ok(await roll(false) > 0, 'without catch-up the leader can get them');
+});
+
+test('arena kill limit ends the battle (per player and per team)', async () => {
+  const solo = await kartGame(2, { kartMode: 'arena', arenaKillLimit: 5 });
+  assert.strictEqual(solo.init.killLimit, 5);
+  const [a, b] = solo.players.map((p) => solo.game.karts.get(p.id));
+  a.kills = 4;
+  Object.assign(b, { shield: 0, invuln: 0, ghost: 0 });
+  const results = once(solo.host, 'room:state', (st) => st.state === 'results', 8000);
+  solo.game.damage(b, 999, a, 'rocket');
+  assert.strictEqual(a.kills, 5);
+  assert.strictEqual(solo.game.phase, 'done');
+  assert.strictEqual((await results).results.players[0].id, solo.players[0].id);
+  solo.room.destroy();
+
+  const team = await kartGame(4, { kartMode: 'arena', arenaKillLimit: 5, teamMode: true, teamCount: 2 });
+  const k = team.players.map((p) => team.game.karts.get(p.id));
+  team.players.forEach((p, i) => { team.room.players.get(p.id).team = i < 2 ? 0 : 1; });
+  k[0].kills = 2; k[1].kills = 2;
+  Object.assign(k[2], { shield: 0, invuln: 0, ghost: 0 });
+  team.game.damage(k[2], 999, k[0], 'rocket');
+  assert.strictEqual(k[0].kills, 3);
+  assert.strictEqual(team.game.phase, 'done', 'team total reached 5');
+  team.room.destroy();
+});
+
+test('arena health and respawn options', async () => {
+  const high = await kartGame(2, { kartMode: 'arena', arenaHealth: 'high', arenaRespawn: 'slow' });
+  const [a, b] = high.players.map((p) => high.game.karts.get(p.id));
+  assert.strictEqual(b.hp, 150);
+  assert.strictEqual(high.init.hpMax, 150);
+  Object.assign(b, { shield: 0, invuln: 0 });
+  high.game.damage(b, 70, a, 'rocket');
+  assert.strictEqual(b.hp, 80, 'a rocket no longer takes half your health');
+  const state = once(high.host, 'game:kart:state');
+  high.game.broadcast();
+  const row = (await state).k.find((r) => r[0] === b.idx);
+  assert.strictEqual(row[12], 53, 'hp is sent as a percentage');
+  b.invuln = 0;
+  high.game.damage(b, 999, a, 'rocket');
+  assert.strictEqual(b.dead, 4, 'slow respawn');
+  high.run(4.1);
+  assert.strictEqual(b.hp, 150, 'respawns at full (high) health');
+  high.room.destroy();
+
+  const low = await kartGame(2, { kartMode: 'arena', arenaHealth: 'low', arenaRespawn: 'fast' });
+  const [c, d] = low.players.map((p) => low.game.karts.get(p.id));
+  assert.strictEqual(d.hp, 60);
+  Object.assign(d, { shield: 0, invuln: 0 });
+  low.game.damage(d, 70, c, 'rocket');
+  assert.ok(d.dead > 0, 'one rocket destroys a low-health kart');
+  assert.strictEqual(d.dead, 1.5);
+  low.room.destroy();
+});
+
+test('kart speed class scales top speed on the server and in shared physics', async () => {
+  const K = require('../public/js/shared/kart-core');
+  const flat = { type: 'arena', size: 1e6, obstacles: [], hazards: [], boostPads: [] };
+  const top = (speed) => {
+    const kart = { x: 1000, y: 1000, angle: 0, speed: 0, boost: 0, spin: 0 };
+    for (let i = 0; i < 300; i++) K.stepKart(kart, { up: true }, 1 / 30, flat, speed === undefined ? undefined : { speed });
+    return kart.speed;
+  };
+  assert.ok(Math.abs(top() - K.PHYS.maxSpeed) < 1);
+  assert.ok(Math.abs(top(1) - K.PHYS.maxSpeed) < 1);
+  assert.ok(Math.abs(top(0.82) - K.PHYS.maxSpeed * 0.82) < 1);
+  assert.ok(Math.abs(top(1.18) - K.PHYS.maxSpeed * 1.18) < 1);
+
+  const turbo = await kartGame(1, { kartMode: 'arena', kartClass: 'turbo' });
+  assert.strictEqual(turbo.init.speedMul, 1.18);
+  const k = turbo.game.karts.get(turbo.players[0].id);
+  Object.assign(k, { x: 1300, y: 300, angle: 0, heading: 0, speed: 0 });
+  k.input = { up: true };
+  turbo.run(1.2);
+  assert.ok(k.speed > K.PHYS.maxSpeed * 1.05, `turbo karts go faster (${Math.round(k.speed)})`);
+  turbo.room.destroy();
+  const chill = await kartGame(1, { kartClass: 'chill' });
+  assert.strictEqual(chill.init.speedMul, 0.82);
+  chill.room.destroy();
+});
+
+test('reverse races: mirrored map, laps count the other way round', async () => {
+  const K = require('../public/js/shared/kart-core');
+  const fwd = K.getMap('grandprix', 'race');
+  const rev = K.getMap('grandprix', 'race', { reverse: true });
+  assert.strictEqual(rev, K.getMap('grandprix', 'race', { reverse: true }), 'cached');
+  assert.strictEqual(K.MAPS.grandprix, fwd, 'the catalogue keeps the forward map');
+  assert.ok(rev.reverse && !fwd.reverse);
+  assert.deepStrictEqual(rev.centerline[0], fwd.centerline[0], 'start line stays put');
+  assert.deepStrictEqual(rev.centerline[1], fwd.centerline[fwd.n - 1]);
+  assert.ok(rev.tangents[5][0] * fwd.tangents[fwd.n - 6][0] + rev.tangents[5][1] * fwd.tangents[fwd.n - 6][1] < -0.99);
+  assert.strictEqual(rev.itemBoxes.length, fwd.itemBoxes.length);
+  for (const b of rev.itemBoxes) assert.ok(!rev.offTrack(b.x, b.y), 'item boxes on the track');
+  for (const p of rev.boostPads) assert.ok(!rev.offTrack(p.x, p.y), 'boost pads on the track');
+  assert.strictEqual(K.getMap('colosseum', 'arena', { reverse: true }), K.MAPS.colosseum, 'arenas ignore reverse');
+
+  const { room, init, game, players, run, bots } = await kartGame(1, { kartMap: 'grandprix', kartReverse: true, kartLaps: 1, kartBots: 3, kartBotSkill: 'hard' });
+  assert.strictEqual(init.reverse, true);
+  assert.strictEqual(game.map, rev);
+  // The grid sits just behind the start line and faces the reversed direction.
+  const me = game.karts.get(players[0].id);
+  const t = rev.tangents[me.trackIndex];
+  assert.ok(Math.cos(me.angle) * t[0] + Math.sin(me.angle) * t[1] > 0.99);
+  assert.ok(me.trackIndex > rev.n - 20);
+  // Bots drive the reversed circuit and finish the lap.
+  run(45);
+  assert.ok(bots().every((k) => k.finished), `bots finished: ${bots().map((k) => k.lap)}`);
+  // Driving the forward direction across the line does not count as a lap.
+  Object.assign(me, { lap: 1, finished: false });
+  me.trackIndex = rev.n - 3;
+  game.trackLaps(me, 3);
+  assert.strictEqual(me.lap, 0);
+  room.destroy();
+});
+
+test('results include CPU drivers with their stats and team scores', async () => {
+  const { host, room, game, bots } = await kartGame(2, { kartMode: 'arena', kartBots: 3, teamMode: true, teamCount: 2 });
+  const [b1] = bots();
+  b1.kills = 3;
+  const results = once(host, 'room:state', (st) => st.state === 'results', 8000);
+  game.endRace();
+  const final = (await results).results;
+  assert.strictEqual(final.players.length, 5);
+  const botRows = final.players.filter((p) => p.bot);
+  assert.strictEqual(botRows.length, 3);
+  for (const p of botRows) assert.ok(p.name && p.color && Number.isInteger(p.avatar) && Number.isInteger(p.team));
+  assert.strictEqual(final.players[0].id, b1.id);
+  assert.strictEqual(final.players[0].score, 300);
+  assert.strictEqual(final.players[0].kills, 3);
+  const team = final.teams.find((tm) => tm.id === b1.team);
+  assert.strictEqual(team.score, 300);
+  assert.strictEqual(final.teams.reduce((sum, tm) => sum + tm.members, 0), 5);
+  room.destroy();
+});

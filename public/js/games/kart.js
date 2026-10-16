@@ -62,7 +62,7 @@ window.Games.kart = {
     function createRenderer() {
       if (!info || view3d || !window.Kart3D) return;
       try {
-        view3d = new window.Kart3D(stage, { mapId: info.mapId, type: info.map });
+        view3d = new window.Kart3D(stage, { mapId: info.mapId, type: info.map, reverse: !!info.reverse, items: info.items !== false });
         view3d.setKarts(info.karts, myIdx, (meta) => (teamMode() ? api.teamById(meta.team)?.color : null));
       } catch (err) {
         console.error(err);
@@ -129,9 +129,9 @@ window.Games.kart = {
 
     // ---------- Network ----------
     function onInit(data) {
-      const sameRound = info && info.mapId === data.mapId && info.karts.length === data.karts.length;
+      const sameRound = info && info.mapId === data.mapId && !!info.reverse === !!data.reverse && info.items === data.items && info.karts.length === data.karts.length;
       info = data;
-      map = K.getMap(data.mapId, data.map);
+      map = K.getMap(data.mapId, data.map, { reverse: !!data.reverse });
       kartsByIdx = new Map(data.karts.map((k) => [k.idx, k]));
       const mine = data.karts.find((k) => k.id === api.myId());
       myIdx = mine ? mine.idx : -1;
@@ -373,7 +373,7 @@ window.Games.kart = {
       const myRow = latest?.k.find((r) => r[0] === myIdx);
       if (local && !local.dead && latest?.phase === 'racing') {
         const finished = myRow && myRow[9] & 8;
-        K.stepKart(local, finished ? { down: true } : input, dt, map);
+        K.stepKart(local, finished ? { down: true } : input, dt, map, { speed: info.speedMul || 1 });
       }
       if (local && myRow && latest?.phase === 'racing' && !(myRow[9] & 32)) {
         Sfx.engine(Math.abs(local.speed) / K.PHYS.maxSpeed, !!(myRow[9] & 2), !!(myRow[9] & 64));

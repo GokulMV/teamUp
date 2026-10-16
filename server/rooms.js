@@ -44,6 +44,18 @@ const DEFAULT_SETTINGS = {
   kartMode: 'race', // race | arena
   kartMap: 'grandprix', // a map id from kart-core MAPS matching kartMode
   arenaTime: 180, // seconds
+  // Kart Battle options
+  kartBots: 0, // CPU drivers added to the race/arena (0-15, total karts capped at 30)
+  kartBotSkill: 'normal', // easy | normal | hard
+  kartClass: 'standard', // chill | standard | turbo (speed 0.82 / 1 / 1.18)
+  kartItems: 'all', // all | weapons | none | custom
+  kartItemList: [...KartCore.ITEMS], // items allowed when kartItems === 'custom'
+  kartBoxRespawn: 'normal', // rare | normal | frequent (6 / 3 / 1.5 s)
+  kartCatchup: true, // race: karts at the back get stronger items
+  kartReverse: false, // race: drive the circuit the other way round
+  arenaKillLimit: 0, // 0 (no limit) | 5 | 10 | 15 | 25
+  arenaRespawn: 'normal', // fast | normal | slow (1.5 / 2.5 / 4 s)
+  arenaHealth: 'normal', // low | normal | high (60 / 100 / 150 hp)
   // Telephone (Gartic Phone-style)
   telephoneSteps: 8, // chain length (0 = everyone)
   telMode: 'normal', // normal | speedrun | knockoff | complement | secret
@@ -54,6 +66,14 @@ const DEFAULT_SETTINGS = {
 const WORD_MODES = ['normal', 'hidden', 'combo'];
 const TEL_MODES = ['normal', 'speedrun', 'knockoff', 'complement', 'secret'];
 const TEL_PACES = ['slow', 'normal', 'fast'];
+const KART_BOT_SKILLS = ['easy', 'normal', 'hard'];
+const KART_CLASSES = ['chill', 'standard', 'turbo'];
+const KART_ITEM_MODES = ['all', 'weapons', 'none', 'custom'];
+const KART_BOX_RESPAWNS = ['rare', 'normal', 'frequent'];
+const ARENA_KILL_LIMITS = [0, 5, 10, 15, 25];
+const ARENA_RESPAWNS = ['fast', 'normal', 'slow'];
+const ARENA_HEALTHS = ['low', 'normal', 'high'];
+const MAX_KART_BOTS = 15;
 
 function makeCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -65,6 +85,13 @@ function makeCode() {
 function cleanName(name) {
   const s = String(name || '').replace(/[^\p{L}\p{N} _\-.!?]/gu, '').trim().slice(0, 16);
   return s || 'Player';
+}
+
+// Strict integer: a whole number (or a string of one) inside [min, max], else null.
+function strictInt(v, min, max) {
+  if (typeof v === 'string' && /^\s*-?\d+\s*$/.test(v)) v = Number(v);
+  if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max) return null;
+  return v;
 }
 
 function clampInt(v, min, max, fallback) {
@@ -81,7 +108,7 @@ class Room {
     this.players = new Map(); // playerId -> player
     this.hostId = null;
     this.state = 'lobby'; // lobby | playing | results
-    this.settings = { ...DEFAULT_SETTINGS };
+    this.settings = { ...DEFAULT_SETTINGS, kartItemList: [...DEFAULT_SETTINGS.kartItemList] };
     this.game = null;
     this.lastResults = null;
     this.colorIndex = 0;
@@ -272,9 +299,11 @@ class Room {
   }
 
   // Helper for games: rank players and teams from a score map.
-  buildResults(scores) {
+  // `extra` adds non-player entries (e.g. CPU karts: { id, name, color, avatar, team, bot: true }).
+  buildResults(scores, extra = []) {
     const players = [...this.players.values()]
       .map((p) => ({ id: p.id, name: p.name, color: p.color, avatar: p.avatar, team: p.team, score: scores.get(p.id) || 0 }))
+      .concat(extra.map((e) => ({ ...e, score: scores.get(e.id) || 0 })))
       .sort((a, b) => b.score - a.score);
     let teams = null;
     if (this.settings.teamMode) {
@@ -350,6 +379,27 @@ class Room {
         if (TEL_MODES.includes(data?.telMode)) s.telMode = data.telMode;
         if (TEL_PACES.includes(data?.telPace)) s.telPace = data.telPace;
         if (data?.telReveal === 'host' || data?.telReveal === 'auto') s.telReveal = data.telReveal;
+        // Kart Battle options: invalid values are ignored.
+        if (data?.kartBots !== undefined) {
+          const n = strictInt(data.kartBots, 0, MAX_KART_BOTS);
+          if (n !== null) s.kartBots = n;
+        }
+        if (KART_BOT_SKILLS.includes(data?.kartBotSkill)) s.kartBotSkill = data.kartBotSkill;
+        if (KART_CLASSES.includes(data?.kartClass)) s.kartClass = data.kartClass;
+        if (KART_ITEM_MODES.includes(data?.kartItems)) s.kartItems = data.kartItems;
+        if (Array.isArray(data?.kartItemList) && data.kartItemList.length <= 50) {
+          const wanted = new Set(data.kartItemList.filter((it) => typeof it === 'string'));
+          s.kartItemList = KartCore.ITEMS.filter((it) => wanted.has(it));
+        }
+        if (KART_BOX_RESPAWNS.includes(data?.kartBoxRespawn)) s.kartBoxRespawn = data.kartBoxRespawn;
+        if (typeof data?.kartCatchup === 'boolean') s.kartCatchup = data.kartCatchup;
+        if (typeof data?.kartReverse === 'boolean') s.kartReverse = data.kartReverse;
+        if (data?.arenaKillLimit !== undefined) {
+          const n = strictInt(data.arenaKillLimit, 0, 25);
+          if (n !== null && ARENA_KILL_LIMITS.includes(n)) s.arenaKillLimit = n;
+        }
+        if (ARENA_RESPAWNS.includes(data?.arenaRespawn)) s.arenaRespawn = data.arenaRespawn;
+        if (ARENA_HEALTHS.includes(data?.arenaHealth)) s.arenaHealth = data.arenaHealth;
         this.broadcastState();
         return reply({ ok: true });
       }
@@ -480,4 +530,4 @@ class RoomManager {
   }
 }
 
-module.exports = { RoomManager, Room, MAX_PLAYERS, TEAMS };
+module.exports = { RoomManager, Room, MAX_PLAYERS, TEAMS, DEFAULT_SETTINGS };
