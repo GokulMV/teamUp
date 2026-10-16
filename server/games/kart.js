@@ -25,7 +25,7 @@ const GUN_TIME = 2;
 const BANANA_LIFE = 40;
 
 // Damage in the arena (karts have 100 hp). In a race every hit except bullets spins you out.
-const DAMAGE = { rocket: 70, triple: 45, bullet: 9, banana: 35, mine: 100, bomb: 100, shock: 45, lava: 45 };
+const DAMAGE = { rocket: 70, triple: 45, bullet: 9, banana: 35, mine: 100, bomb: 100, shock: 45, lava: 1000 }; // lava is instant death
 
 const SHOT_CODE = { rocket: 1, bullet: 2, bomb: 3 };
 const NO_INPUT = { up: false, down: false, left: false, right: false, drift: false };
@@ -221,7 +221,7 @@ class KartBattle {
 
   // ---------- damage ----------
   damage(target, amount, attacker, kind) {
-    if (target.dead > 0 || target.finished || target.ghost > 0) return;
+    if (target.dead > 0 || target.finished || (target.ghost > 0 && kind !== 'lava')) return;
     if (attacker && attacker !== target && this.isFriendly(attacker.id, target.id)) return;
     if (kind !== 'lava') {
       if (target.shield > 0) {
@@ -350,8 +350,9 @@ class KartBattle {
         }
       }
       if (this.arena) {
+        // Driving (or getting knocked) into lava blows you up on the spot.
         for (const h of this.map.hazards) {
-          if ((k.x - h.x) ** 2 + (k.y - h.y) ** 2 < h.r * h.r) this.damage(k, DAMAGE.lava * dt, null, 'lava');
+          if ((k.x - h.x) ** 2 + (k.y - h.y) ** 2 < (h.r - 6) ** 2) { this.damage(k, DAMAGE.lava, null, 'lava'); break; }
         }
         if (k.dead <= 0 && k.hp < HP_MAX && this.time - k.lastHit > REGEN_DELAY) k.hp = Math.min(HP_MAX, k.hp + REGEN_RATE * dt);
       } else {

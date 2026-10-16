@@ -7,6 +7,8 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   const KART_RADIUS = 16;
   const WALL_PAD = 160; // race tracks: hard wall this far outside the asphalt
+  const CURB = 18; // painted curb outside the asphalt; still counts as road
+  const RUNOFF = 60; // sand/gravel strip after the curb: a light speed cap
 
   const PHYS = {
     accel: 500,
@@ -14,7 +16,9 @@
     reverseMax: -170,
     maxSpeed: 430,
     boostSpeed: 680,
-    offTrackMax: 190,
+    offTrackMax: 250, // grass
+    runoffMax: 370,
+    offTrackDecel: 420, // how fast you bleed speed down to the surface cap
     drag: 1.3,
     turnRate: 2.9,
     driftMinSpeed: 220,
@@ -82,7 +86,23 @@
           if (d < bestD) { bestD = d; best = i; }
         }
       }
-      return { index: best, dist: Math.sqrt(bestD) };
+      // Refine onto the polyline itself (the nearest sample can be half a
+      // segment away along the track, which skews distances and wall normals).
+      let px = centerline[best][0];
+      let py = centerline[best][1];
+      for (const j of [(best - 1 + n) % n, best]) {
+        const a = centerline[j];
+        const c = centerline[(j + 1) % n];
+        const sx = c[0] - a[0];
+        const sy = c[1] - a[1];
+        const len2 = sx * sx + sy * sy || 1;
+        const t = Math.max(0, Math.min(1, ((x - a[0]) * sx + (y - a[1]) * sy) / len2));
+        const qx = a[0] + sx * t;
+        const qy = a[1] + sy * t;
+        const d = (qx - x) ** 2 + (qy - y) ** 2;
+        if (d < bestD) { bestD = d; px = qx; py = qy; }
+      }
+      return { index: best, dist: Math.sqrt(bestD), px, py };
     }
 
     // Point across the track at sample `i`, lateral offset in [-1, 1].
@@ -258,15 +278,35 @@
   }
 
   // ---------- Physics ----------
-  function collideArena(kart, map) {
+  // Wall contact: drop only the part of the velocity that goes into the wall,
+  // so grazing a wall keeps nearly all your speed and a head-on hit bounces
+  // you back a little. (nx, ny) is the unit normal pointing away from the wall.
+  function slideOffWall(kart, nx, ny, dt) {
+    const h = kart.heading === undefined ? kart.angle : kart.heading;
+    const vx = Math.cos(h) * kart.speed;
+    const vy = Math.sin(h) * kart.speed;
+    const vn = vx * nx + vy * ny;
+    if (vn >= 0) return 0;
+    const scrape = Math.max(0, 1 - 0.35 * dt);
+    const ox = (vx - vn * nx) * scrape - vn * 0.25 * nx;
+    const oy = (vy - vn * ny) * scrape - vn * 0.25 * ny;
+    const v = Math.hypot(ox, oy);
+    const forward = ox * Math.cos(kart.angle) + oy * Math.sin(kart.angle) >= 0;
+    kart.speed = forward ? v : -v;
+    if (v > 1) kart.heading = forward ? Math.atan2(oy, ox) : Math.atan2(-oy, -ox);
+    if (kart.drift && -vn > 200) { kart.drift = 0; kart.driftTime = 0; }
+    return -vn;
+  }
+
+  function collideArena(kart, map, dt) {
     const r = KART_RADIUS;
-    let bumped = false;
+    let impact = 0;
     const min = 40 + r;
     const max = map.size - 40 - r;
-    if (kart.x < min) { kart.x = min; bumped = true; }
-    if (kart.x > max) { kart.x = max; bumped = true; }
-    if (kart.y < min) { kart.y = min; bumped = true; }
-    if (kart.y > max) { kart.y = max; bumped = true; }
+    if (kart.x < min) { kart.x = min; impact = Math.max(impact, slideOffWall(kart, 1, 0, dt)); }
+    if (kart.x > max) { kart.x = max; impact = Math.max(impact, slideOffWall(kart, -1, 0, dt)); }
+    if (kart.y < min) { kart.y = min; impact = Math.max(impact, slideOffWall(kart, 0, 1, dt)); }
+    if (kart.y > max) { kart.y = max; impact = Math.max(impact, slideOffWall(kart, 0, -1, dt)); }
     for (const o of map.obstacles) {
       const dx = kart.x - o.x;
       const dy = kart.y - o.y;
@@ -275,10 +315,10 @@
       if (d < minD && d > 0.001) {
         kart.x = o.x + (dx / d) * minD;
         kart.y = o.y + (dy / d) * minD;
-        bumped = true;
+        impact = Math.max(impact, slideOffWall(kart, dx / d, dy / d, dt));
       }
     }
-    if (bumped) kart.speed *= 0.6;
+    return impact;
   }
 
   // Advance a kart by dt seconds. `input` = {up, down, left, right, drift}.
@@ -323,19 +363,22 @@
       }
     }
 
-    let offTrack = false;
+    // Surface under the kart: 0 road (curbs included), 1 run-off strip, 2 grass.
+    let surface = 0;
     if (!arena) {
       const near = map.nearestIndex(kart.x, kart.y, kart.trackIndex);
       kart.trackIndex = near.index;
-      offTrack = near.dist > map.width / 2;
+      const edge = near.dist - map.width / 2;
+      surface = edge <= CURB + KART_RADIUS * 0.5 ? 0 : edge <= RUNOFF ? 1 : 2;
     }
+    kart.surface = surface;
     for (const p of map.boostPads) {
       if ((kart.x - p.x) ** 2 + (kart.y - p.y) ** 2 < 34 * 34) kart.boost = Math.max(kart.boost || 0, PHYS.padBoost);
     }
     let max = kart.boost > 0 ? PHYS.boostSpeed : PHYS.maxSpeed;
-    if (offTrack && kart.boost <= 0) max = PHYS.offTrackMax;
+    if (kart.boost <= 0 && surface) max = surface === 2 ? PHYS.offTrackMax : PHYS.runoffMax;
     if (kart.boost > 0 && !spinning) kart.speed = Math.max(kart.speed, PHYS.boostSpeed * 0.95);
-    if (kart.speed > max) kart.speed = Math.max(max, kart.speed - PHYS.brake * 1.5 * dt);
+    if (kart.speed > max) kart.speed = Math.max(max, kart.speed - (surface ? PHYS.offTrackDecel : PHYS.brake * 1.5) * dt);
     if (kart.speed < PHYS.reverseMax) kart.speed = PHYS.reverseMax;
 
     // On slippery maps the kart's travel direction lags behind where it points.
@@ -346,18 +389,20 @@
     kart.x += Math.cos(kart.heading) * kart.speed * dt;
     kart.y += Math.sin(kart.heading) * kart.speed * dt;
 
+    kart.bump = 0;
     if (arena) {
-      collideArena(kart, map);
+      kart.bump = collideArena(kart, map, dt);
     } else {
-      // Hard wall outside the track so nobody gets lost.
+      // Hard wall outside the track so nobody gets lost. Karts slide along it.
       const after = map.nearestIndex(kart.x, kart.y, kart.trackIndex);
       const wall = map.width / 2 + WALL_PAD;
       if (after.dist > wall) {
-        const c = map.centerline[after.index];
+        const nx = (after.px - kart.x) / after.dist;
+        const ny = (after.py - kart.y) / after.dist;
         const k = wall / after.dist;
-        kart.x = c[0] + (kart.x - c[0]) * k;
-        kart.y = c[1] + (kart.y - c[1]) * k;
-        kart.speed *= 0.5;
+        kart.x = after.px + (kart.x - after.px) * k;
+        kart.y = after.py + (kart.y - after.py) * k;
+        kart.bump = slideOffWall(kart, nx, ny, dt);
       }
     }
 
@@ -367,7 +412,7 @@
   }
 
   return {
-    KART_RADIUS, WALL_PAD, PHYS, ITEMS, MAPS, DEFAULT_MAP,
+    KART_RADIUS, WALL_PAD, CURB, RUNOFF, PHYS, ITEMS, MAPS, DEFAULT_MAP,
     getMap, mapList, stepKart, driftLevel,
   };
 });

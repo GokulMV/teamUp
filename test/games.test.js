@@ -349,10 +349,42 @@ test('volcano lava burns karts and credits the last attacker', async () => {
   game.useItem(a); step(game, 5);
   assert.strictEqual(b.hp, 30);
   Object.assign(b, { x: lava.x, y: lava.y, speed: 0 });
-  step(game, 30);
-  assert.ok(b.dead > 0, 'lava finished b off');
+  step(game, 1);
+  assert.ok(b.dead > 0, 'lava blows b up instantly');
   assert.strictEqual(a.kills, 1, 'the kill goes to whoever hit b last');
+  // Full health and a ghost power-up don't save you either.
+  step(game, 120);
+  assert.ok(b.dead <= 0 && b.hp === 100, 'b respawned');
+  Object.assign(a, { x: lava.x, y: lava.y, speed: 0, ghost: 3 });
+  step(game, 1);
+  assert.ok(a.dead > 0, 'ghosts burn too');
   room.destroy();
+});
+
+test('curbs keep full speed and walls are slid along, not stuck to', () => {
+  const K = require('../public/js/shared/kart-core');
+  const map = K.getMap('grandprix', 'race');
+  const dt = 1 / 30;
+  const i = 10;
+  const [cx, cy] = map.centerline[i];
+  const [tx, ty] = (() => { const q = map.centerline[i + 1]; const l = Math.hypot(q[0] - cx, q[1] - cy); return [(q[0] - cx) / l, (q[1] - cy) / l]; })();
+  const along = Math.atan2(ty, tx);
+  // Riding the curb at full speed: no slowdown.
+  const lateral = map.width / 2 + K.CURB - 4;
+  const onCurb = { x: cx - ty * lateral, y: cy + tx * lateral, angle: along, speed: K.PHYS.maxSpeed, trackIndex: i };
+  for (let n = 0; n < 15; n++) K.stepKart(onCurb, { up: true }, dt, map);
+  assert.ok(onCurb.speed > K.PHYS.maxSpeed * 0.97, `curb speed ${onCurb.speed}`);
+  // Steering into the outer wall at a shallow angle while holding the throttle keeps most of the speed.
+  const wallD = map.width / 2 + K.WALL_PAD - 2;
+  const scraper = { x: cx - ty * wallD, y: cy + tx * wallD, angle: along + 0.25, speed: 330, trackIndex: i };
+  let minSpeed = Infinity;
+  for (let n = 0; n < 30; n++) { K.stepKart(scraper, { up: true }, dt, map); minSpeed = Math.min(minSpeed, scraper.speed); }
+  assert.ok(minSpeed > 280, `kart kept moving along the wall (min ${Math.round(minSpeed)})`);
+  // Head-on into an arena wall bounces you back a little instead of pinning you.
+  const arena = K.getMap('colosseum', 'arena');
+  const head = { x: 60, y: 300, angle: Math.PI, speed: 400 };
+  K.stepKart(head, {}, dt, arena);
+  assert.ok(head.speed < 0 && head.speed > -150, `bounce ${head.speed}`);
 });
 
 test('map selection follows the kart mode and every map can be played', async () => {
