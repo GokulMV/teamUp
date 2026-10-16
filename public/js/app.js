@@ -400,6 +400,11 @@
       }
       stats.push(`📏 ${Math.round(len / 20)} m lap`);
       stats.push(`⏱️ ~${Math.round(len / (window.KartCore.PHYS.maxSpeed * 0.85))} s`);
+      if (map.climb > 100) stats.push(`⛰️ ${Math.round(map.climb / 20)} m climb`);
+      const jumps = (map.ramps || []).filter((r) => r.dir === 1).length;
+      if (jumps) stats.push(`🦘 ${jumps} jump${jumps > 1 ? 's' : ''}`);
+      if (map.water !== null && map.water !== undefined) stats.push('🌊 Water');
+      if ((map.liquids || []).some((l) => l.kind === 'lava')) stats.push('🔥 Lava');
       if (map.grip && map.grip < 1) stats.push('🧊 Slippery');
     } else {
       stats.push(`📐 ${Math.round(map.size / 20)} m arena`);

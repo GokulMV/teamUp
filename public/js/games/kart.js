@@ -54,7 +54,7 @@ window.Games.kart = {
     let view3d = null;
     let snapCamera = true;
     const input = { up: false, down: false, left: false, right: false, drift: false };
-    const prev = { item: 0, boost: false, drift: 0, count: null, finished: false };
+    const prev = { item: 0, boost: false, drift: 0, count: null, finished: false, air: 0, trick: false };
     const teamMode = () => !!api.room()?.settings.teamMode;
     const colorOf = (meta) => (teamMode() ? api.teamById(meta?.team)?.color : meta?.color) || '#fff';
 
@@ -157,13 +157,20 @@ window.Games.kart = {
     function reconcile(s) {
       const row = s.k.find((r) => r[0] === myIdx);
       if (!row) return;
-      const [, x, y, a1000, speed, , , , , flags] = row;
+      const [, x, y, a1000, speed, , , , , flags, , , , air = 0, fx = 0] = row;
       const angle = a1000 / 1000;
       if (!local || flags & 32) {
-        local = { x, y, angle, heading: angle, speed, boost: 0, spin: 0, trackIndex: null, dead: !!(flags & 32) };
+        local = { x, y, angle, heading: angle, speed, boost: 0, spin: 0, trackIndex: null, dead: !!(flags & 32), air: 0, z: null };
         return;
       }
-      if (local.dead) { local.dead = false; Object.assign(local, { x, y, angle, heading: angle, speed }); snapCamera = true; return; }
+      if (local.dead) { local.dead = false; Object.assign(local, { x, y, angle, heading: angle, speed, air: 0, z: null }); snapCamera = true; return; }
+      // Falls into water/lava/gaps are the server's call: freeze on its position until we are fished out.
+      if (fx & 1) { Object.assign(local, { x, y, angle, heading: angle, speed: 0, falling: true, air: 0, z: null, drift: 0 }); return; }
+      if (local.falling) {
+        Object.assign(local, { x, y, angle, heading: angle, speed, falling: false, air, z: null, vz: 0, trackIndex: null });
+        snapCamera = true;
+        return;
+      }
       // Server state is ~half an RTT old; project it forward before comparing.
       const lead = Math.min(0.25, rtt / 2000);
       const sx = x + Math.cos(angle) * speed * lead;
@@ -176,6 +183,7 @@ window.Games.kart = {
       if (flags & 2) local.boost = Math.max(local.boost, 0.15);
       if (err > 140 || spinning || s.phase !== 'racing') {
         Object.assign(local, { x: sx, y: sy, angle, heading: angle, speed });
+        if (err > 140) Object.assign(local, { air, z: null, vz: 0, trackIndex: null });
       } else {
         local.x += ex * 0.2;
         local.y += ey * 0.2;
@@ -209,6 +217,7 @@ window.Games.kart = {
         return {
           idx: r[0], x: p[1] + (r[1] - p[1]) * ff, y: p[2] + (r[2] - p[2]) * ff,
           angle: p[3] / 1000 + da * ff, speed: r[4], flags: r[9], hp: r[12],
+          air: (p[13] || 0) + ((r[13] || 0) - (p[13] || 0)) * ff, fx: r[14] || 0,
         };
       });
       const prevS = new Map((a.data.s || []).map((r) => [r[0], r]));
@@ -258,8 +267,9 @@ window.Games.kart = {
         const meta = kartsByIdx.get(k.idx);
         const me = k.idx === myIdx;
         ctx.fillStyle = colorOf(meta);
-        ctx.beginPath(); ctx.arc(k.x, k.y, me ? 110 : 65, 0, Math.PI * 2); ctx.fill();
-        if (me) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 40; ctx.stroke(); }
+        const dot = Math.max(65, size * 0.012);
+        ctx.beginPath(); ctx.arc(k.x, k.y, me ? dot * 1.7 : dot, 0, Math.PI * 2); ctx.fill();
+        if (me) { ctx.strokeStyle = '#fff'; ctx.lineWidth = dot * 0.6; ctx.stroke(); }
       }
       ctx.restore();
     }
@@ -371,8 +381,17 @@ window.Games.kart = {
 
       // Predict my kart locally so steering feels instant.
       const myRow = latest?.k.find((r) => r[0] === myIdx);
-      if (local && !local.dead && latest?.phase === 'racing') {
-        K.stepKart(local, input, dt, map, { speed: info.speedMul || 1 });
+      if (local && !local.dead && !local.falling && latest?.phase === 'racing') {
+        K.stepKart(local, input, dt, map, { speed: info.speedMul || 1, noFall: true });
+        // Tricks and landings feel instant for your own kart.
+        if (local.trick > 0 && !prev.trick) Sfx.trick?.();
+        prev.trick = local.trick > 0;
+        if (prev.air > 12 && !(local.air > 0)) {
+          Sfx.land?.(Math.min(1, prev.air / 90));
+          if (local.boost > 0 && prev.trickBoost) announce('TRICK BOOST!');
+        }
+        prev.trickBoost = !!local.tricked;
+        prev.air = local.air || 0;
       }
       if (local && myRow && latest?.phase === 'racing' && !(myRow[9] & 32)) {
         Sfx.engine(Math.abs(local.speed) / K.PHYS.maxSpeed, !!(myRow[9] & 2), !!(myRow[9] & 64));
@@ -383,8 +402,10 @@ window.Games.kart = {
       const view = interpolated();
       const karts = view ? view.karts : [];
       const me = karts.find((k) => k.idx === myIdx);
-      if (local && me && !(me.flags & 32)) {
+      if (local && me && !(me.flags & 32) && !(me.fx & 1)) {
         me.x = local.x; me.y = local.y; me.angle = local.angle; me.speed = local.speed;
+        me.air = local.air || 0;
+        me.fx = (me.fx & ~2) | (local.trick > 0 ? 2 : 0);
       }
 
       // Camera follows me, or the leader when spectating.
@@ -398,8 +419,8 @@ window.Games.kart = {
           ...view,
           karts,
           focus: focusKart ? {
-            x: focusKart.x, y: focusKart.y, angle: focusKart.angle,
-            spinning: !!(focusKart.flags & 1), boost: !!(focusKart.flags & 2), snap: snapCamera,
+            x: focusKart.x, y: focusKart.y, angle: focusKart.angle, air: focusKart.air || 0,
+            spinning: !!(focusKart.flags & 1) || !!(focusKart.fx & 1), boost: !!(focusKart.flags & 2), snap: snapCamera,
           } : (me && myRow ? { x: myRow[1], y: myRow[2], angle: myRow[3] / 1000, spinning: true } : null),
         }, dt, now);
         if (focusKart) snapCamera = false;
@@ -448,6 +469,12 @@ window.Games.kart = {
             if (data.kill && STREAKS[data.streak]) { announce(STREAKS[data.streak]); Sfx.streak(); }
             else if (data.kill || map?.type === 'race') api.toast(`🎯 You ${data.kill ? 'destroyed' : 'hit'} ${victim?.name || 'someone'}!`);
           }
+        } else if (event === 'game:kart:fall') {
+          const v = data.idx === myIdx ? 1 : volumeAt(data.x, data.y) * 0.6;
+          if (data.kind === 'water') Sfx.splash?.(v);
+          else if (data.kind === 'lava') Sfx.sizzle?.(v);
+          else Sfx.fall?.(v);
+          if (data.idx === myIdx) api.toast(data.kind === 'water' ? '🌊 Splash! Fishing you out…' : data.kind === 'lava' ? '🔥 Too hot! Fishing you out…' : '🪂 Missed the jump! Back on the road…');
         } else if (event === 'game:kart:finish' && data.idx === myIdx) {
           api.toast(`🏁 You finished #${data.place} in ${data.time.toFixed(1)}s!`);
         }
