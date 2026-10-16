@@ -9,7 +9,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { MOBILE, THEMES, tex, part, buildRace, buildArena, loadMoonlit } from './kart3d/world.js';
-import { ItemFX, shieldMaterial, shieldGeometry, ghostMaterial } from './kart3d/items3d.js';
+import { ItemFX, shieldMaterial, shieldGeometry, ghostMaterial, starVariant } from './kart3d/items3d.js';
 
 const K = window.KartCore;
 
@@ -282,17 +282,20 @@ function buildKart(meta, accentHex, isMe, night) {
     group.add(label.sprite);
   }
   return {
-    group, chassis, wheels, flames, shield, label, meshes, ghosted: false,
+    group, chassis, wheels, flames, shield, label, meshes, look: '',
     steer: 0, lastAngle: null, smoke: 0, slide: 0, hop: 0, wasSpin: false, wasDead: false,
   };
 }
 
-function setGhost(kart, on) {
-  if (kart.ghosted === on) return;
-  kart.ghosted = on;
+// Ghosts turn see-through; star power swaps in rainbow versions of the kart's own materials.
+function setLook(kart, ghost, star) {
+  const look = ghost ? 'ghost' : star ? 'star' : '';
+  if (kart.look === look) return;
+  kart.look = look;
   for (const m of kart.meshes) {
-    m.material = on ? SHARED.ghost : m.userData.mat;
-    m.castShadow = !on;
+    if (m.userData.shadow === undefined) m.userData.shadow = m.castShadow;
+    m.material = ghost ? SHARED.ghost : star ? starVariant(m.userData.mat) : m.userData.mat;
+    m.castShadow = !ghost && m.userData.shadow;
   }
 }
 
@@ -391,6 +394,9 @@ export class Kart3D {
     this.karts = new Map();
     this.lastKarts = new Map(); // idx -> latest drawn position, for item effects aimed at karts
     this.items = new ItemFX(this, { items: opts.items !== false });
+    // Compile every item and aura shader with the first frame, not with a stutter mid-race.
+    const S = sharedKartParts();
+    this.warm = this.items.warmUp([starVariant(S.dark), S.ghost, S.shield]);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -469,14 +475,15 @@ export class Kart3D {
     this.shake(x, z, big ? 14 * Math.min(1.5, scale) : 6);
   }
 
+  // The lightning ring and arcs carry the shock; a spray of small, fast sparks adds the crackle.
   shock(x, z, radius) {
     const gy = this.items.ground(x, z);
     this.items.shock(x, z, radius);
     this.ring(x, z, 0xffffff, radius * 0.7, 0.3);
-    for (let i = 0; i < (MOBILE ? 40 : 90); i++) {
+    for (let i = 0; i < (MOBILE ? 16 : 36); i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = radius * (1.5 + Math.random());
-      this.fire.emit(x, gy + 10 + Math.random() * 20, z, Math.cos(a) * sp, Math.random() * 60, Math.sin(a) * sp, this.colElectric, 8, 0.45, { drag: 2.5 });
+      const sp = radius * (2.2 + Math.random() * 1.4);
+      this.fire.emit(x, gy + 8 + Math.random() * 16, z, Math.cos(a) * sp, 20 + Math.random() * 80, Math.sin(a) * sp, i % 3 ? this.colElectric : this.colSnow, 3 + Math.random() * 1.5, 0.3, { drag: 4, rise: -200 });
     }
     this.shake(x, z, 10);
   }
@@ -493,7 +500,19 @@ export class Kart3D {
     this.ring(x, z, kind === 'trail' ? 0xffb347 : 0x93c5fd, 70, 0.3);
   }
 
-  // Thunder bolts on every victim ([[x, z], ...]).
+  // Thunder bolts on every victim, aimed where each kart is drawn (remote karts are drawn a little
+  // in the past, my own a little ahead of the server); `fallback`: idx -> [x, z] for karts not drawn yet.
+  thunderHit(idxs, fallback = new Map()) {
+    const list = [];
+    for (const idx of idxs) {
+      const k = this.lastKarts.get(idx);
+      const p = k ? [k.x, k.y] : fallback.get(idx);
+      if (p) list.push({ x: p[0], z: p[1], idx });
+    }
+    this.thunder(list);
+  }
+
+  // list: [{ x, z, idx? }]
   thunder(list) {
     this.items.thunder(list);
     if (this.focus) this.shakeAmt = Math.max(this.shakeAmt, 8);
@@ -592,7 +611,7 @@ export class Kart3D {
       if (dead) { kart.lastAngle = null; kart.wasDead = true; this.items.releaseKart(kart); continue; }
       this.lastKarts.set(k.idx, k);
       if (kart.wasDead) { kart.wasDead = false; this.respawnBeam(k.x, k.y); }
-      setGhost(kart, !!(k.flags & 1024));
+      setLook(kart, !!(k.flags & 1024), !!(k.flags & 4096));
       const drifting = k.flags & 64;
       const driftDir = k.flags & 512 ? -1 : 1;
       const driftLevel = k.flags & 256 ? 2 : k.flags & 128 ? 1 : 0;
@@ -711,6 +730,7 @@ export class Kart3D {
     this.updateCamera(view.focus, dt, t);
     if (this.composer) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
+    if (this.warm) { this.items.coolDown(this.warm); this.warm = null; }
   }
 
   updateCamera(focus, dt, t) {

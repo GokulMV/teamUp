@@ -25,6 +25,7 @@ const BOUNCER = { speed: 880, life: 6, bounces: 5, radius: 8 };
 // Comet: climbs, flies over the track to the leader (arena: the top scorer) and dives onto them.
 const COMET = { speed: 1900, altitude: 110, climb: 0.45, dive: 0.5, divePoint: 380, radius: 190, life: 15 };
 const INK_RADIUS = 900; // arena: how far ink reaches
+const STAR_RAM_GAP = 0.8; // seconds before the same star kart can ram the same victim again
 const SHOCK_RADIUS = 360;
 const GUN_TIME = 2;
 const BANANA_LIFE = 40;
@@ -282,9 +283,21 @@ class KartBattle {
     this.shots.push(comet);
   }
 
-  // Race: the best placed rival still racing. Arena: the top scorer among rivals.
+  // Race: the best placed rival still racing. Arena: the top scorer among rivals; a tie (everyone
+  // on 0 kills at the start, say) is broken at random rather than by join order.
   cometTarget(owner) {
-    return this.rankings().find((k) => k !== owner && k.dead <= 0 && !k.finished && !this.isFriendly(k.id, owner.id)) || null;
+    const rivals = this.rankings().filter((k) => k !== owner && k.dead <= 0 && !k.finished && !this.isFriendly(k.id, owner.id));
+    if (!this.arena || rivals.length < 2) return rivals[0] || null;
+    const top = rivals.filter((k) => k.kills === rivals[0].kills && k.deaths === rivals[0].deaths);
+    return top[Math.floor(Math.random() * top.length)];
+  }
+
+  // Race: is any rival still racing ahead of this kart? (Ink and comets only ever go forwards.)
+  rivalAhead(kart) {
+    for (const k of this.karts.values()) {
+      if (k !== kart && !k.finished && k.dead <= 0 && k.progress > kart.progress && !this.isFriendly(k.id, kart.id)) return true;
+    }
+    return false;
   }
 
   useItem(kart, opts = {}) {
@@ -374,10 +387,16 @@ class KartBattle {
         odds[item] = (RACE_ODDS_FRONT[item] || 0) * (1 - behind) + (RACE_ODDS_BACK[item] || 0) * behind;
       }
     }
-    for (const item of Object.keys(RARE_COOLDOWN)) {
-      if (odds[item] && this.time - this.lastRare[item] < RARE_COOLDOWN[item]) odds[item] = 0;
+    const skip = Object.keys(RARE_COOLDOWN).filter((item) => this.time - this.lastRare[item] < RARE_COOLDOWN[item]);
+    // The race leader never rolls ink (nobody ahead to splat) or a comet (it would have to fly a
+    // whole lap round to reach 2nd place), whatever the catch-up setting.
+    if (!this.arena && !this.rivalAhead(kart)) skip.push('ink', 'comet');
+    for (const item of skip) if (odds[item]) odds[item] = 0;
+    if (!Object.values(odds).some((w) => w > 0)) {
+      // Nothing left in the odds table: any allowed item, still avoiding the ones skipped above if possible.
+      const pool = this.items.filter((item) => !skip.includes(item));
+      for (const item of pool.length ? pool : this.items) odds[item] = 1;
     }
-    if (!Object.values(odds).some((w) => w > 0)) for (const item of this.items) odds[item] = 1;
     const item = weightedPick(odds);
     if (RARE_COOLDOWN[item]) this.lastRare[item] = this.time;
     return item;
@@ -658,13 +677,17 @@ class KartBattle {
   }
 
   // A star kart rams a rival: race, they spin out; arena, they take damage and get knocked away.
+  // One hit per ram: the same star kart can't hit the same victim again for STAR_RAM_GAP seconds
+  // (a per-pair cooldown, so the victim stays open to everyone else's attacks meanwhile).
   starRam(star, victim, nx, ny) {
     if (this.isFriendly(star.id, victim.id)) return;
+    if (victim.ramBy === star.id && this.time - victim.ramAt < STAR_RAM_GAP) return;
     if (!this.damage(victim, DAMAGE.star, star, 'star')) return;
+    victim.ramBy = star.id;
+    victim.ramAt = this.time;
     victim.x += nx * 14;
     victim.y += ny * 14;
     victim.speed *= 0.4;
-    if (this.arena && victim.dead <= 0) victim.invuln = Math.max(victim.invuln, 0.8); // one hit per ram
   }
 
   // Is (x, y) past the walls (or inside an obstacle)? `shot.ti` keeps race lookups local and cheap.
@@ -738,8 +761,10 @@ class KartBattle {
   }
 
   // A banana or mine held behind your kart soaks up a shell coming from behind (and is used up).
+  // Only when the shell would have hurt: star power, a shield or post-hit invulnerability keep the item.
   trailBlock(k, s) {
     if ((k.item !== 'banana' && k.item !== 'mine') || k.roulette > 0) return false;
+    if (k.star > 0 || k.shield > 0 || k.invuln > 0 || k.finished) return false;
     if ((s.x - k.x) * Math.cos(k.angle) + (s.y - k.y) * Math.sin(k.angle) > -4) return false;
     k.ammo--;
     if (k.ammo <= 0) { k.item = null; k.ammo = 0; }

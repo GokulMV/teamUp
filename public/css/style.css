@@ -532,7 +532,8 @@ textarea { resize: vertical; min-height: 70px; }
 .kart-flash.on { animation: thunder-flash 0.7s ease-out; }
 @keyframes thunder-flash { 0% { opacity: 0.95; } 12% { opacity: 0.15; } 22% { opacity: 0.75; } 100% { opacity: 0; } }
 .feed-icon { width: 1.35em; height: 1.35em; vertical-align: -0.35em; margin: 0 2px; }
-.kart-help { position: absolute; bottom: 10px; left: 12px; color: #fff; font-size: 0.85rem; opacity: 0.9; text-shadow: 0 1px 3px #000; pointer-events: none; }
+.kart-help { position: absolute; bottom: 10px; left: 12px; max-width: calc(50% - 110px); color: #fff; font-size: 0.85rem; line-height: 1.3; opacity: 0.9; text-shadow: 0 1px 3px #000; pointer-events: none; } /* wraps before it reaches the map-name pill */
+.kart-help span { white-space: nowrap; }
 .kart-big { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-size: 7rem; font-weight: 800; font-style: italic; color: #fff; text-shadow: 0 6px 0 rgba(0,0,0,0.35), 0 0 30px rgba(255,79,139,0.8); pointer-events: none; }
 .kart-board { position: absolute; top: 12px; right: 12px; background: rgba(15,10,35,0.55); color: #fff; border-radius: 12px; padding: 8px 10px; font-size: 0.82rem; pointer-events: none; min-width: 170px; backdrop-filter: blur(6px); }
 .kart-board div { display: flex; justify-content: space-between; gap: 10px; white-space: nowrap; padding: 1px 0; }
@@ -582,7 +583,12 @@ textarea { resize: vertical; min-height: 70px; }
   .touch-controls { display: flex; }
   .kart-help, .kart-board { display: none; }
   .kart-minimap { top: 12px; bottom: auto; width: 110px; height: 110px; }
-  .kart-timer { margin-left: 0; top: 96px; font-size: 1.2rem; }
+  /* Phones: the fire button shows the item, so no name under the slot; the arena timer sits under the minimap. */
+  .kart-item-name { display: none; }
+  .kart-timer { margin-left: 0; top: 128px; left: auto; right: 12px; width: 110px; text-align: center; transform: none; font-size: 1.2rem; padding: 4px 0; }
+  .kart-timer.urgent { animation: none; }
+  .kart-warn { top: 166px; font-size: 0.8rem; }
+  .kart-warn .item-icon { width: 24px; height: 24px; }
 }
 
 .toast {

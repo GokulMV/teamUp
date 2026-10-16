@@ -225,8 +225,10 @@ async function arenaGame(n, settings = {}) {
   game.raceStart = game.time;
   ctx.game = game;
   ctx.kart = (i) => game.karts.get(ctx.players[i].id);
-  // Two karts face to face in open space, nothing protecting them.
-  const fresh = { speed: 0, shield: 0, invuln: 0, spin: 0, ghost: 0, angle: 0, heading: 0 };
+  // Two karts face to face in open space, nothing protecting them. Placing a kart also empties its
+  // item slot: karts parked on an item box pick up random items (a held banana or mine would block
+  // shells from behind and make tests flaky).
+  const fresh = { speed: 0, shield: 0, invuln: 0, spin: 0, ghost: 0, angle: 0, heading: 0, item: null, ammo: 0, roulette: 0 };
   ctx.place = (i, x, y) => Object.assign(ctx.kart(i), fresh, { x, y });
   return ctx;
 }
@@ -1121,22 +1123,111 @@ test('a banana or mine held behind the kart blocks a shell from behind', async (
   game.useItem(a);
   step(game, 6);
   assert.strictEqual(b.hp, 30);
+  // Only a hit that would have hurt uses the item up: star power, a shield or invulnerability keep it.
+  for (const guard of [{ star: 3 }, { shield: 3 }, { invuln: 1 }]) {
+    const what = Object.keys(guard)[0];
+    place(0, 1000, 400); place(1, 1100, 400);
+    Object.assign(b, { hp: 100, star: 0, item: 'banana', ammo: 1, ...guard });
+    Object.assign(a, { item: 'rocket', ammo: 1 });
+    game.useItem(a);
+    step(game, 6);
+    assert.strictEqual(game.shots.length, 0, `${what}: the rocket is gone`);
+    assert.strictEqual(b.hp, 100, `${what}: no damage`);
+    assert.strictEqual(b.item, 'banana', `${what}: the banana is kept`);
+    if (what === 'shield') assert.strictEqual(b.shield, 0, 'the shield took the hit instead');
+  }
   room.destroy();
+});
+
+test('the race leader never rolls ink or a comet (nobody ahead to hit), with or without catch-up', async () => {
+  for (const kartCatchup of [true, false]) {
+    const c = await kartGame(3, { kartItems: 'custom', kartItemList: ['ink', 'comet', 'banana'], kartCatchup });
+    const [lead, mid, last] = c.players.map((p) => c.game.karts.get(p.id));
+    lead.progress = 900; mid.progress = 500; last.progress = 0;
+    const rolls = (k) => {
+      const seen = new Set();
+      for (let i = 0; i < 400; i++) { c.game.time += 30; seen.add(c.game.rollItem(k)); }
+      return seen;
+    };
+    assert.deepStrictEqual([...rolls(lead)], ['banana'], `catch-up ${kartCatchup}: the leader`);
+    const back = rolls(last);
+    assert.ok(back.has('ink') && back.has('comet'), `catch-up ${kartCatchup}: last place rolled ${[...back]}`);
+    // Only teammates ahead: you are leading as far as ink and comets are concerned.
+    if (!kartCatchup) {
+      c.room.settings.teamMode = true;
+      setTeams(c, [0, 0, 1]);
+      mid.progress = 1000;
+      assert.deepStrictEqual([...rolls(lead)], ['banana'], 'only a teammate ahead');
+    }
+    c.room.destroy();
+  }
+  // A list with nothing else in it still hands out ink.
+  const solo = await kartGame(2, { kartItems: 'custom', kartItemList: ['ink'] });
+  const k = solo.game.karts.get(solo.players[0].id);
+  k.progress = 900;
+  assert.strictEqual(solo.game.rollItem(k), 'ink');
+  solo.room.destroy();
+});
+
+test('arena comets go for the top scorer, picking at random between rivals tied on top', async () => {
+  const ar = await arenaGame(4);
+  const [o, b, c] = [0, 1, 2].map(ar.kart);
+  ar.place(0, 400, 400); ar.place(1, 2200, 400); ar.place(2, 2200, 2200); ar.place(3, 400, 2200);
+  // Everyone on 0 kills (the start of every battle): not always the first player who joined.
+  const targets = new Set();
+  for (let i = 0; i < 12; i++) {
+    Object.assign(o, { item: 'comet', ammo: 1 });
+    assert.ok(ar.game.useItem(o));
+    targets.add(ar.game.shots.pop().target);
+  }
+  assert.ok(targets.size >= 2, `comets spread over the tied rivals (${targets.size} targeted)`);
+  assert.ok(!targets.has(o.id), 'never the owner');
+  // A clear leader is always the target; on equal kills, fewer deaths wins.
+  c.kills = 2;
+  for (let i = 0; i < 20; i++) assert.strictEqual(ar.game.cometTarget(o), c);
+  b.kills = 2; c.deaths = 1;
+  for (let i = 0; i < 20; i++) assert.strictEqual(ar.game.cometTarget(o), b);
+  assert.notStrictEqual(ar.game.cometTarget(b), b);
+  ar.room.destroy();
+});
+
+test('a star ram hits once per ram without making the victim immune to everyone else', async () => {
+  const ar = await arenaGame(3);
+  const [s, v, c] = [0, 1, 2].map(ar.kart);
+  ar.place(0, 1000, 400); ar.place(1, 1025, 400); ar.place(2, 1000, 2200);
+  Object.assign(s, { item: 'star', ammo: 1 });
+  ar.game.useItem(s);
+  step(ar.game, 1);
+  assert.strictEqual(v.hp, 60, 'rammed');
+  assert.strictEqual(v.invuln, 0);
+  assert.ok(ar.game.damage(v, 20, c, 'rocket'), 'a follow-up hit from someone else lands');
+  assert.strictEqual(v.hp, 40);
+  Object.assign(v, { x: s.x + 25, y: s.y }); // still touching the same star kart: no second hit yet
+  step(ar.game, 3);
+  assert.strictEqual(v.hp, 40);
+  ar.game.time += 1; // a moment later, a fresh ram hits again
+  Object.assign(v, { x: s.x + 25, y: s.y });
+  step(ar.game, 1);
+  assert.strictEqual(v.hp, 0, 'second ram');
+  assert.ok(v.dead > 0);
+  assert.strictEqual(s.kills, 1);
+  ar.room.destroy();
 });
 
 test('new items: weapons-only and custom lists, catch-up odds and rare-item cooldowns', async () => {
   for (const kartMode of ['race', 'arena']) {
     const c = await kartGame(3, { kartMode, kartItems: 'weapons' });
+    [...c.game.karts.values()].forEach((k, j) => { k.progress = 300 - j * 100; }); // spread out: someone to aim at
     const seen = new Set();
     for (const k of c.game.karts.values()) for (let i = 0; i < 400; i++) { c.game.time += 1; seen.add(c.game.rollItem(k)); }
     for (const it of ['bouncer', 'comet', 'thunder']) assert.ok(seen.has(it), `${kartMode}: weapons mode rolls ${it}`);
     for (const it of ['star', 'ink', 'boost']) assert.ok(!seen.has(it), `${kartMode}: weapons mode never rolls ${it}`);
     c.room.destroy();
   }
-  const custom = await kartGame(2, { kartItems: 'custom', kartItemList: ['star', 'ink', 'nope', 'thunder'] });
-  assert.deepStrictEqual(custom.room.settings.kartItemList, ['star', 'ink', 'thunder']);
-  assert.deepStrictEqual(custom.init.itemList, ['star', 'ink', 'thunder']);
-  // Catch-up: the leader never gets the comeback items; the last kart does.
+  const custom = await kartGame(2, { kartItems: 'custom', kartItemList: ['star', 'ink', 'nope', 'thunder', 'banana'] });
+  assert.deepStrictEqual(custom.room.settings.kartItemList, ['banana', 'star', 'ink', 'thunder']);
+  assert.deepStrictEqual(custom.init.itemList, ['banana', 'star', 'ink', 'thunder']);
+  // Catch-up: the leader never gets the comeback items (nor ink: nobody is ahead); the last kart does.
   const [lead, last] = custom.players.map((p) => custom.game.karts.get(p.id));
   lead.progress = 500; last.progress = 0;
   const leadRolls = new Set();
@@ -1146,8 +1237,8 @@ test('new items: weapons-only and custom lists, catch-up odds and rare-item cool
     leadRolls.add(custom.game.rollItem(lead));
     lastRolls.add(custom.game.rollItem(last));
   }
-  assert.deepStrictEqual([...leadRolls], ['ink']);
-  assert.ok(lastRolls.has('star') && lastRolls.has('thunder'));
+  assert.deepStrictEqual([...leadRolls], ['banana']);
+  assert.ok(lastRolls.has('star') && lastRolls.has('thunder') && lastRolls.has('ink'));
   custom.room.destroy();
   // At most one comet per cooldown, however many boxes get hit.
   const cd = await kartGame(2, { kartMode: 'arena', kartItems: 'custom', kartItemList: ['comet', 'banana'] });
