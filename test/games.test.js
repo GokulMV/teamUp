@@ -824,3 +824,357 @@ test('results include CPU drivers with their stats and team scores', async () =>
   assert.strictEqual(final.teams.reduce((sum, tm) => sum + tm.members, 0), 5);
   room.destroy();
 });
+
+// ---------- Power-ups: item roulette and the five newer items ----------
+const KC = require('../public/js/shared/kart-core');
+const CALM = { speed: 0, shield: 0, invuln: 0, spin: 0, ghost: 0, star: 0, shrink: 0, ink: 0, boost: 0, drift: 0, item: null, ammo: 0, roulette: 0 };
+// Park a race kart on lap 1 at centerline sample i (lateral -1..1), facing down the track.
+function onTrack(game, k, i, lateral = 0) {
+  const [x, y] = game.map.trackPoint(i, lateral);
+  const t = game.map.tangents[i];
+  const angle = Math.atan2(t[1], t[0]);
+  Object.assign(k, CALM, { x, y, angle, heading: angle, trackIndex: i, lap: 1, progress: i, input: { up: false, down: false, left: false, right: false, drift: false } });
+}
+const setTeams = (ctx, teams) => ctx.players.forEach((p, i) => { ctx.room.players.get(p.id).team = teams[i]; });
+const latestRow = async (ctx, idx) => {
+  const state = once(ctx.host, 'game:kart:state');
+  ctx.game.broadcast();
+  const s = await state;
+  return { row: s.k.find((r) => r[0] === idx), state: s };
+};
+
+test('item roulette: the item is decided at pickup but can only be used once the roulette stops', async () => {
+  assert.deepStrictEqual(KC.ITEMS.slice(0, 10), ['boost', 'rocket', 'banana', 'shield', 'triple', 'mine', 'minigun', 'bomb', 'shock', 'ghost'], 'old wire codes are unchanged');
+  assert.deepStrictEqual(KC.ITEMS.slice(10), ['bouncer', 'comet', 'star', 'ink', 'thunder']);
+  const c = await kartGame(1, { kartItems: 'custom', kartItemList: ['boost'] });
+  assert.deepStrictEqual(c.init.itemList, ['boost'], 'the roulette knows which items can come up');
+  const k = c.game.karts.get(c.players[0].id);
+  const box = c.game.map.itemBoxes[0];
+  Object.assign(k, { x: box.x, y: box.y, speed: 0 });
+  c.run(1 / 30);
+  assert.strictEqual(k.item, 'boost');
+  assert.ok(k.roulette > 1 && k.roulette <= KC.ITEM_FX.roulette, `roulette started (${k.roulette})`);
+  const { row } = await latestRow(c, k.idx);
+  assert.strictEqual(row[7], KC.ITEMS.indexOf('boost') + 1);
+  assert.strictEqual(row[13], 110, 'hundredths of a second of roulette left, at the end of the row');
+  assert.strictEqual(c.game.useItem(k), false, 'cannot use the item while the roulette spins');
+  c.run(0.6);
+  assert.strictEqual(c.game.useItem(k), false);
+  assert.strictEqual(k.item, 'boost');
+  c.run(0.6);
+  assert.strictEqual(k.roulette, 0);
+  assert.strictEqual((await latestRow(c, k.idx)).row[13], 0);
+  assert.strictEqual(c.game.useItem(k), true);
+  assert.ok(k.boost > 0);
+  assert.strictEqual(k.item, null);
+  c.room.destroy();
+});
+
+test('bouncer: bounces off walls and obstacles, comes back for its owner, breaks after a few bounces', async () => {
+  const { room, game, kart, place } = await arenaGame(3);
+  const [a, b, c] = [kart(0), kart(1), kart(2)];
+  place(1, 2300, 2300); place(2, 2300, 300);
+  // Fired at the west wall: it bounces straight back, then off a crate.
+  place(0, 300, 1000);
+  Object.assign(a, { angle: Math.PI, heading: Math.PI, item: 'bouncer', ammo: 1 });
+  assert.ok(game.useItem(a));
+  const shell = game.shots.find((s) => s.kind === 'bouncer');
+  assert.ok(Math.cos(shell.angle) < -0.99, 'fired straight ahead');
+  place(0, 300, 2100); // out of its way
+  step(game, 15);
+  assert.ok(shell.bounced && shell.bounces === 4, `bounced off the wall (${shell.bounces} left)`);
+  assert.ok(Math.cos(shell.angle) > 0.99, 'reflected back east');
+  step(game, 50);
+  assert.strictEqual(shell.bounces, 3, 'bounced off the crate at (1600, 1000)');
+  assert.ok(Math.cos(shell.angle) < -0.99, 'heading west again');
+  assert.ok(shell.x > 48 && shell.x < 1600 - 45, 'never inside the wall or the crate');
+  // Out of bounces: the next wall breaks it.
+  shell.bounces = 0;
+  const booms = [];
+  const emit = room.emit.bind(room);
+  room.emit = (event, data) => { if (event === 'game:kart:boom') booms.push(data); return emit(event, data); };
+  step(game, 60);
+  assert.ok(!game.shots.includes(shell), 'shattered');
+  assert.ok(booms.some((e) => e.kind === 'bouncer'), 'with a little blast');
+
+  // A rival in its path takes the hit.
+  place(0, 1000, 400); place(1, 1250, 400);
+  Object.assign(a, { item: 'bouncer', ammo: 1 });
+  game.useItem(a);
+  step(game, 12);
+  assert.strictEqual(b.hp, 100 - 50);
+  assert.strictEqual(game.shots.filter((s) => s.kind === 'bouncer').length, 0);
+
+  // Fired at a wall right in front of you, it comes back and hits you.
+  place(0, 200, 1300);
+  Object.assign(a, { angle: Math.PI, heading: Math.PI, item: 'bouncer', ammo: 1, hp: 100 });
+  game.useItem(a);
+  step(game, 20);
+  assert.strictEqual(a.hp, 50, 'own shell after a bounce');
+
+  // Braking throws it backwards.
+  place(0, 1000, 1900);
+  Object.assign(a, { item: 'bouncer', ammo: 1, input: { down: true } });
+  game.useItem(a);
+  const back = game.shots.find((s) => s.kind === 'bouncer');
+  assert.ok(Math.cos(back.angle) < -0.99, 'thrown backwards');
+  assert.ok(back.x < a.x);
+  assert.strictEqual(c.hp, 100);
+  room.destroy();
+
+  // Race: the shell bounces off the barrier instead of leaving the track.
+  const r = await kartGame(1, { kartMap: 'grandprix' });
+  const k = r.game.karts.get(r.players[0].id);
+  onTrack(r.game, k, 30, 0.6);
+  const t = r.game.map.tangents[30];
+  Object.assign(k, { angle: Math.atan2(t[0], -t[1]), item: 'bouncer', ammo: 1 }); // facing the outside barrier
+  k.heading = k.angle;
+  k.x -= Math.cos(k.angle) * 200; // keep the kart out of the rebound's way
+  k.y -= Math.sin(k.angle) * 200;
+  r.game.useItem(k);
+  const rs = r.game.shots.find((s) => s.kind === 'bouncer');
+  let far = 0;
+  for (let i = 0; i < 30; i++) { r.run(1 / 30); far = Math.max(far, r.game.map.nearestIndex(rs.x, rs.y).dist); }
+  assert.ok(rs.bounced, 'bounced off the race barrier');
+  assert.ok(far <= r.game.map.width / 2 + KC.WALL_PAD + 1, `stayed inside the walls (${Math.round(far)})`);
+  r.room.destroy();
+});
+
+test('comet: flies over the track to the race leader and blasts them and anyone next to them', async () => {
+  const c = await kartGame(4, { kartMap: 'grandprix' });
+  const [a, mid, lead, near] = c.players.map((p) => c.game.karts.get(p.id));
+  onTrack(c.game, a, 10); onTrack(c.game, mid, 60, -0.6); onTrack(c.game, lead, 140); onTrack(c.game, near, 139, 0.6);
+  Object.assign(a, { item: 'comet', ammo: 1 });
+  assert.ok(c.game.useItem(a));
+  const comet = c.game.shots.find((s) => s.kind === 'comet');
+  assert.strictEqual(comet.target, lead.id, 'targets the leader');
+  let maxAlt = 0;
+  let offTrack = 0;
+  let row = null;
+  for (let i = 0; i < 30 * 10 && c.game.shots.includes(comet); i++) {
+    c.run(1 / 30);
+    maxAlt = Math.max(maxAlt, comet.alt);
+    if (comet.age > 1 && comet.phase === 'cruise') offTrack = Math.max(offTrack, c.game.map.nearestIndex(comet.x, comet.y).dist);
+    if (i === 20) row = (await latestRow(c, a.idx)).state.s.find((s) => s[1] === 5);
+  }
+  assert.ok(!c.game.shots.includes(comet), 'the comet landed');
+  assert.ok(maxAlt > 100, `flew high (${Math.round(maxAlt)})`);
+  assert.ok(offTrack < c.game.map.width / 2, `followed the track (${Math.round(offTrack)} off the centerline)`);
+  assert.deepStrictEqual([row.length, row[6]], [7, lead.idx], 'snapshot: [.., altitude, target idx]');
+  assert.ok(row[5] > 70, 'altitude in the snapshot');
+  assert.ok(lead.spin > 0, 'leader blasted');
+  assert.ok(near.spin > 0, 'the kart next to the leader is caught in the blast');
+  assert.strictEqual(mid.spin, 0, 'flew over karts on the way');
+  assert.strictEqual(a.spin, 0);
+  c.room.destroy();
+
+  // Arena: goes for the top scorer, skipping teammates, and blasts whoever is close to them.
+  const ar = await arenaGame(4, { teamMode: true, teamCount: 2 });
+  setTeams(ar, [0, 0, 1, 1]);
+  const [o, mate, top, side] = [ar.kart(0), ar.kart(1), ar.kart(2), ar.kart(3)];
+  ar.place(0, 400, 400); ar.place(1, 2200, 400); ar.place(2, 2200, 2200); ar.place(3, 2120, 2200);
+  mate.kills = 5; top.kills = 3;
+  Object.assign(o, { item: 'comet', ammo: 1 });
+  ar.game.useItem(o);
+  const ac = ar.game.shots.find((s) => s.kind === 'comet');
+  assert.strictEqual(ac.target, top.id, 'the top scoring rival, not a teammate');
+  for (let i = 0; i < 30 * 6 && ar.game.shots.includes(ac); i++) step(ar.game, 1);
+  assert.ok(!ar.game.shots.includes(ac));
+  assert.strictEqual(top.hp, 100 - 90);
+  assert.ok(side.hp < 100 && side.hp > top.hp, `splash damage nearby (${side.hp})`);
+  assert.strictEqual(mate.hp, 100);
+  assert.strictEqual(o.hp, 100);
+  ar.room.destroy();
+});
+
+test('star: invincible and faster; ramming spins rivals out (race) or damages them (arena)', async () => {
+  const c = await kartGame(3, { kartMap: 'grandprix' });
+  const [a, b, d] = c.players.map((p) => c.game.karts.get(p.id));
+  onTrack(c.game, a, 40); onTrack(c.game, b, 40); onTrack(c.game, d, 25);
+  b.x += Math.cos(b.angle) * 26; // right in front of a
+  b.y += Math.sin(b.angle) * 26;
+  Object.assign(a, { item: 'star', ammo: 1 });
+  assert.ok(c.game.useItem(a));
+  assert.strictEqual(a.star, KC.ITEM_FX.starTime);
+  c.run(1 / 30);
+  assert.ok(b.spin > 0, 'rammed rival spins out');
+  assert.strictEqual(a.spin, 0);
+  assert.strictEqual(a.hits, 1);
+  // Rockets do nothing to a star kart.
+  onTrack(c.game, b, 90);
+  Object.assign(d, { item: 'rocket', ammo: 1 });
+  c.game.useItem(d);
+  c.run(1);
+  assert.strictEqual(a.spin, 0, 'invincible');
+  assert.ok((await latestRow(c, a.idx)).row[9] & 4096, 'star flag');
+  c.run(5.1);
+  assert.strictEqual(a.star, 0, 'wears off');
+  c.room.destroy();
+
+  const ar = await arenaGame(3, { teamMode: true, teamCount: 2 });
+  setTeams(ar, [0, 1, 0]);
+  const [s, v, mate] = [ar.kart(0), ar.kart(1), ar.kart(2)];
+  ar.place(0, 1000, 400); ar.place(1, 1025, 400); ar.place(2, 1000, 2200);
+  Object.assign(s, { item: 'star', ammo: 1 });
+  ar.game.useItem(s);
+  step(ar.game, 1);
+  assert.strictEqual(v.hp, 100 - 40);
+  Object.assign(v, { x: s.x + 25, y: s.y }); // still touching: one ram, one hit
+  step(ar.game, 3);
+  assert.strictEqual(v.hp, 60);
+  ar.place(2, s.x - 25, s.y);
+  step(ar.game, 1);
+  assert.strictEqual(mate.hp, 100, 'teammates are never rammed');
+  // Faster: top speed rises by ITEM_FX.starSpeed (the browser's prediction uses the same factor).
+  ar.place(0, 1300, 300); ar.place(1, 2300, 2300); ar.place(2, 300, 2300);
+  Object.assign(s, { star: 6, input: { up: true } });
+  step(ar.game, 45);
+  assert.ok(s.speed > KC.PHYS.maxSpeed * 1.15, `star top speed (${Math.round(s.speed)})`);
+  ar.room.destroy();
+});
+
+test('ink: splats only the karts ahead (race) or rivals nearby (arena), never yourself or teammates', async () => {
+  const c = await kartGame(6, { kartMap: 'grandprix', teamMode: true, teamCount: 2 });
+  setTeams(c, [0, 1, 1, 0, 1, 1]);
+  const [a, ahead, behind, mate, ghost, shielded] = c.players.map((p) => c.game.karts.get(p.id));
+  onTrack(c.game, a, 50); onTrack(c.game, ahead, 90); onTrack(c.game, behind, 20); onTrack(c.game, mate, 120);
+  onTrack(c.game, ghost, 150); onTrack(c.game, shielded, 180);
+  ghost.ghost = 3; shielded.shield = 3;
+  Object.assign(a, { item: 'ink', ammo: 1 });
+  const ev = once(c.host, 'game:kart:ink');
+  c.game.useItem(a);
+  assert.deepStrictEqual((await ev).hit, [ahead.idx]);
+  assert.strictEqual(ahead.ink, KC.ITEM_FX.inkTime);
+  for (const k of [a, behind, mate, ghost, shielded]) assert.strictEqual(k.ink, 0);
+  const { state } = await latestRow(c, a.idx);
+  for (const r of state.k) assert.strictEqual(!!(r[9] & 16384), r[0] === ahead.idx, 'only the inked kart carries the ink flag');
+  c.run(KC.ITEM_FX.inkTime + 0.1);
+  assert.strictEqual(ahead.ink, 0, 'ink wears off');
+  c.room.destroy();
+
+  const ar = await arenaGame(3);
+  ar.place(0, 1000, 400); ar.place(1, 1400, 500); ar.place(2, 2300, 2300);
+  Object.assign(ar.kart(0), { item: 'ink', ammo: 1 });
+  ar.game.useItem(ar.kart(0));
+  assert.deepStrictEqual([ar.kart(0).ink > 0, ar.kart(1).ink > 0, ar.kart(2).ink > 0], [false, true, false]);
+  ar.room.destroy();
+});
+
+test('thunder: rivals spin out, shrink, slow down and lose their item; teammates, ghosts, stars and shields are spared', async () => {
+  const c = await kartGame(7, { kartMap: 'grandprix', teamMode: true, teamCount: 2 });
+  setTeams(c, [0, 1, 1, 0, 1, 1, 1]);
+  const [a, holder, rolling, mate, ghost, star, shield] = c.players.map((p) => c.game.karts.get(p.id));
+  [a, holder, rolling, mate, ghost, star, shield].forEach((k, i) => onTrack(c.game, k, 10 + i * 25));
+  Object.assign(holder, { item: 'rocket', ammo: 1 });
+  Object.assign(rolling, { item: 'banana', ammo: 1, roulette: 0.5 });
+  Object.assign(mate, { item: 'boost', ammo: 1 });
+  Object.assign(ghost, { ghost: 3 });
+  Object.assign(star, { star: 3 });
+  Object.assign(shield, { shield: 3 });
+  Object.assign(a, { item: 'thunder', ammo: 1 });
+  const ev = once(c.host, 'game:kart:thunder');
+  assert.ok(c.game.useItem(a));
+  assert.deepStrictEqual((await ev).hit, [holder.idx, rolling.idx]);
+  for (const k of [holder, rolling]) {
+    assert.ok(k.spin > 0, 'spun out');
+    assert.strictEqual(k.shrink, KC.ITEM_FX.shrinkTime);
+    assert.strictEqual(k.item, null, 'item lost');
+    assert.strictEqual(k.roulette, 0);
+  }
+  assert.strictEqual(mate.item, 'boost');
+  for (const k of [a, mate, ghost, star, shield]) { assert.strictEqual(k.spin, 0); assert.strictEqual(k.shrink, 0); }
+  assert.strictEqual(shield.shield, 0, 'the shield took the strike');
+  assert.ok((await latestRow(c, holder.idx)).row[9] & 8192, 'shrunk flag');
+  assert.strictEqual(a.hits, 1);
+  c.run(KC.ITEM_FX.shrinkTime + 0.1);
+  assert.strictEqual(holder.shrink, 0, 'back to full size');
+  c.room.destroy();
+
+  // Arena: damages everyone else. Shrunk karts have a lower top speed.
+  const ar = await arenaGame(3);
+  ar.place(0, 1000, 400); ar.place(1, 1400, 500); ar.place(2, 2300, 2300);
+  Object.assign(ar.kart(0), { item: 'thunder', ammo: 1 });
+  ar.game.useItem(ar.kart(0));
+  assert.deepStrictEqual([ar.kart(0).hp, ar.kart(1).hp, ar.kart(2).hp], [100, 65, 65]);
+  const k = ar.kart(1);
+  ar.place(1, 1300, 300);
+  Object.assign(k, { shrink: 3, input: { up: true } });
+  step(ar.game, 45);
+  assert.ok(Math.abs(k.speed - KC.PHYS.maxSpeed * KC.ITEM_FX.shrinkSpeed) < 5, `shrunk top speed (${Math.round(k.speed)})`);
+  ar.room.destroy();
+});
+
+test('a banana or mine held behind the kart blocks a shell from behind', async () => {
+  const { room, game, kart, place } = await arenaGame(2);
+  const [a, b] = [kart(0), kart(1)];
+  place(0, 1000, 400); place(1, 1100, 400); // a fires at b's back
+  Object.assign(b, { item: 'banana', ammo: 1 });
+  Object.assign(a, { item: 'rocket', ammo: 1 });
+  game.useItem(a);
+  step(game, 6);
+  assert.strictEqual(b.hp, 100);
+  assert.strictEqual(b.item, null, 'the banana was used up');
+  // Still rolling: no protection yet.
+  place(0, 1000, 400); place(1, 1100, 400);
+  Object.assign(b, { item: 'mine', ammo: 1, roulette: 0.5 });
+  Object.assign(a, { item: 'rocket', ammo: 1 });
+  game.useItem(a);
+  step(game, 6);
+  assert.strictEqual(b.hp, 30);
+  room.destroy();
+});
+
+test('new items: weapons-only and custom lists, catch-up odds and rare-item cooldowns', async () => {
+  for (const kartMode of ['race', 'arena']) {
+    const c = await kartGame(3, { kartMode, kartItems: 'weapons' });
+    const seen = new Set();
+    for (const k of c.game.karts.values()) for (let i = 0; i < 400; i++) { c.game.time += 1; seen.add(c.game.rollItem(k)); }
+    for (const it of ['bouncer', 'comet', 'thunder']) assert.ok(seen.has(it), `${kartMode}: weapons mode rolls ${it}`);
+    for (const it of ['star', 'ink', 'boost']) assert.ok(!seen.has(it), `${kartMode}: weapons mode never rolls ${it}`);
+    c.room.destroy();
+  }
+  const custom = await kartGame(2, { kartItems: 'custom', kartItemList: ['star', 'ink', 'nope', 'thunder'] });
+  assert.deepStrictEqual(custom.room.settings.kartItemList, ['star', 'ink', 'thunder']);
+  assert.deepStrictEqual(custom.init.itemList, ['star', 'ink', 'thunder']);
+  // Catch-up: the leader never gets the comeback items; the last kart does.
+  const [lead, last] = custom.players.map((p) => custom.game.karts.get(p.id));
+  lead.progress = 500; last.progress = 0;
+  const leadRolls = new Set();
+  const lastRolls = new Set();
+  for (let i = 0; i < 300; i++) {
+    custom.game.time += 30;
+    leadRolls.add(custom.game.rollItem(lead));
+    lastRolls.add(custom.game.rollItem(last));
+  }
+  assert.deepStrictEqual([...leadRolls], ['ink']);
+  assert.ok(lastRolls.has('star') && lastRolls.has('thunder'));
+  custom.room.destroy();
+  // At most one comet per cooldown, however many boxes get hit.
+  const cd = await kartGame(2, { kartMode: 'arena', kartItems: 'custom', kartItemList: ['comet', 'banana'] });
+  const k = cd.game.karts.get(cd.players[0].id);
+  let comets = 0;
+  for (let i = 0; i < 300; i++) if (cd.game.rollItem(k) === 'comet') comets++;
+  assert.ok(comets <= 1, `${comets} comets in one cooldown`);
+  cd.game.time += 13;
+  comets = 0;
+  for (let i = 0; i < 300; i++) if (cd.game.rollItem(k) === 'comet') comets++;
+  assert.strictEqual(comets, 1, 'available again after the cooldown');
+  cd.room.destroy();
+});
+
+test('CPU drivers use the new items in races and battles', async () => {
+  for (const kartMode of ['race', 'arena']) {
+    const c = await kartGame(1, {
+      kartMode, kartBots: 7, kartBotSkill: 'hard', kartBoxRespawn: 'frequent',
+      kartItems: 'custom', kartItemList: ['bouncer', 'comet', 'star', 'ink', 'thunder'],
+    });
+    const used = new Set();
+    const emit = c.room.emit.bind(c.room);
+    c.room.emit = (event, data) => { if (event === 'game:kart:use') used.add(data.item); return emit(event, data); };
+    c.run(45);
+    assert.strictEqual(c.game.botError, false);
+    for (const kk of c.game.karts.values()) assert.ok(Number.isFinite(kk.x) && Number.isFinite(kk.y));
+    assert.ok(used.size >= 4, `${kartMode}: bots used ${[...used]}`);
+    c.room.destroy();
+  }
+});

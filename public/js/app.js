@@ -21,7 +21,7 @@
   //   type: toggle | stepper | seg | slider | cards | maps | items | text
   //   block: full-width control under its label (otherwise a compact row: label left, control right)
   //   adv: shown under "More options"; show(s): only when it applies; def: value until the server sends one
-  const ITEM_IDS = ['boost', 'rocket', 'triple', 'banana', 'shield', 'mine', 'minigun', 'bomb', 'shock', 'ghost'];
+  const ITEM_IDS = ['boost', 'rocket', 'triple', 'bouncer', 'banana', 'shield', 'mine', 'minigun', 'bomb', 'shock', 'ghost', 'star', 'ink', 'comet', 'thunder'];
   const SETTINGS = {
     pictionary: [
       {

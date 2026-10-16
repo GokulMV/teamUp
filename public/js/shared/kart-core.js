@@ -27,8 +27,19 @@
     padBoost: 0.8,
   };
 
-  // Item codes on the wire are index + 1.
-  const ITEMS = ['boost', 'rocket', 'banana', 'shield', 'triple', 'mine', 'minigun', 'bomb', 'shock', 'ghost'];
+  // Item codes on the wire are index + 1. New items are only ever appended.
+  const ITEMS = ['boost', 'rocket', 'banana', 'shield', 'triple', 'mine', 'minigun', 'bomb', 'shock', 'ghost',
+    'bouncer', 'comet', 'star', 'ink', 'thunder'];
+
+  // Item timings and the speed changes items cause. The server and the browser's
+  // prediction both scale stepKart's `opts.speed` with itemSpeed(), so they agree.
+  const ITEM_FX = {
+    roulette: 1.1, // seconds the item roulette spins before the item can be used
+    starTime: 6, starSpeed: 1.2,
+    shrinkTime: 3, shrinkSpeed: 0.7, // thunder victims (race)
+    inkTime: 4,
+  };
+  const itemSpeed = (star, shrunk) => (star ? ITEM_FX.starSpeed : 1) * (shrunk ? ITEM_FX.shrinkSpeed : 1);
 
   function driftLevel(t) {
     if (t >= PHYS.driftLevels[1]) return 2;
@@ -435,7 +446,7 @@
   }
 
   return {
-    KART_RADIUS, WALL_PAD, CURB, RUNOFF, PHYS, ITEMS, MAPS, DEFAULT_MAP,
-    getMap, mapList, stepKart, driftLevel,
+    KART_RADIUS, WALL_PAD, CURB, RUNOFF, PHYS, ITEMS, ITEM_FX, MAPS, DEFAULT_MAP,
+    getMap, mapList, stepKart, driftLevel, itemSpeed,
   };
 });

@@ -118,7 +118,11 @@ function setSteer(input, err, dead) {
 function threatened(game, k) {
   let bullets = 0;
   for (const s of game.shots) {
-    if (s.owner === k.id || game.isFriendly(s.owner, k.id)) continue;
+    if (s.kind === 'comet') {
+      if (s.target === k.id && s.age > 0.6) return true; // a comet is coming for us
+      continue;
+    }
+    if ((s.owner === k.id && !s.bounced) || game.isFriendly(s.owner, k.id)) continue;
     const dx = k.x - s.x;
     const dy = k.y - s.y;
     const d2 = dx * dx + dy * dy;
@@ -130,7 +134,7 @@ function threatened(game, k) {
     }
     if (d2 > 520 * 520) continue;
     const rel = Math.abs(wrap(Math.atan2(dy, dx) - s.angle));
-    if (s.kind === 'rocket' && rel < 0.6) return true;
+    if ((s.kind === 'rocket' || s.kind === 'bouncer') && rel < 0.6) return true;
     if (s.kind === 'bullet' && rel < 0.15 && ++bullets >= 3) return true;
   }
   return false;
@@ -259,6 +263,16 @@ function raceDrive(game, k, ai, sk, input) {
   setSteer(input, err, 0.05);
 }
 
+// Rivals ahead of this kart in the race (by track progress).
+function rivalsAhead(game, k) {
+  let n = 0;
+  for (const r of game.karts.values()) {
+    if (r !== k && !r.finished && r.progress > k.progress && !game.isFriendly(r.id, k.id)) n++;
+  }
+  return n;
+}
+
+// true = use it now, 'back' = use it backwards (bouncer), false = keep it.
 function raceItems(game, k, ai, sk) {
   const item = k.item;
   const s = scan(game, k, sk.aim * 1.3);
@@ -267,6 +281,17 @@ function raceItems(game, k, ai, sk) {
   const straight = Math.abs(T.turn[(idx + T.w) % T.n]) < 0.3 && Math.abs(T.turn[(idx + 2 * T.w) % T.n]) < 0.3;
   const holdTooLong = ai.hold > sk.holdMax;
   switch (item) {
+    case 'bouncer':
+      if (s.front && s.frontD < 700) return true;
+      if (s.behind && s.behindD < 300) return 'back';
+      return holdTooLong;
+    case 'comet':
+    case 'thunder':
+      return rivalsAhead(game, k) > 0 || holdTooLong;
+    case 'ink':
+      return rivalsAhead(game, k) >= 2 || (rivalsAhead(game, k) > 0 && ai.hold > 2) || holdTooLong;
+    case 'star':
+      return threatened(game, k) || (s.front && s.frontD < 450) || (straight && k.speed > 250) || holdTooLong;
     case 'rocket':
     case 'triple':
       return (s.front && s.frontD < 1000) || holdTooLong;
@@ -425,6 +450,17 @@ function arenaItems(game, k, ai, sk) {
   const hpFrac = k.hp / (game.hpMax || 100);
   const holdTooLong = ai.hold > sk.holdMax;
   switch (item) {
+    case 'bouncer':
+      if (s.front && s.frontD < 800) return true;
+      if (s.behind && s.behindD < 280) return 'back';
+      return holdTooLong;
+    case 'comet':
+    case 'thunder':
+      return !!s.near || holdTooLong;
+    case 'ink':
+      return s.nearD < 700 || holdTooLong;
+    case 'star':
+      return threatened(game, k) || s.nearD < 520 || holdTooLong;
     case 'rocket':
     case 'triple':
       return !!(s.front && s.frontD < 850);
@@ -463,7 +499,9 @@ function think(game, k, dt) {
   ai.clock -= dt;
   if (ai.clock <= 0) {
     ai.clock = sk.react * (0.7 + Math.random() * 0.6);
-    ai.wobble = sk.noise ? (Math.random() - 0.5) * 2 * sk.noise : 0;
+    // Ink on the windscreen makes even the best bots wobble.
+    const noise = sk.noise + (k.ink > 0 ? 0.35 : 0);
+    ai.wobble = noise ? (Math.random() - 0.5) * 2 * noise : 0;
     if (game.arena) pickArenaGoal(game, k, ai, sk);
   }
 
@@ -489,11 +527,11 @@ function think(game, k, dt) {
   // Items, at the bot's reaction speed.
   ai.shotCd -= dt;
   ai.itemClock -= dt;
-  if (k.item && ai.itemClock <= 0 && ai.shotCd <= 0 && k.spin <= 0) {
+  if (k.item && k.roulette <= 0 && ai.itemClock <= 0 && ai.shotCd <= 0 && k.spin <= 0) {
     ai.itemClock = sk.react * (0.7 + Math.random() * 0.6);
     const want = game.arena ? arenaItems(game, k, ai, sk) : raceItems(game, k, ai, sk);
     if (want && (ai.hold > sk.holdMax || Math.random() < sk.itemChance)) {
-      game.useItem(k);
+      game.useItem(k, { back: want === 'back' });
       ai.shotCd = 0.35;
       if (!k.item) ai.hold = 0;
     }

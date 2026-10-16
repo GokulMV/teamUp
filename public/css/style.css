@@ -473,14 +473,65 @@ textarea { resize: vertical; min-height: 70px; }
 }
 .kart-timer.urgent { background: #dc2626; animation: pulse 0.5s infinite alternate; }
 @keyframes pulse { to { transform: translateX(-50%) scale(1.08); } }
+/* Item slot: glass box with a gradient rim; spins a slot-machine reel while the roulette runs. */
 .kart-item {
-  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); width: 76px; height: 76px; border-radius: 18px;
-  background: linear-gradient(135deg, rgba(250,204,21,0.9), rgba(236,72,153,0.9)); border: 4px solid #fff; color: #fff; font-size: 2.4rem;
-  display: flex; align-items: center; justify-content: center; pointer-events: none; box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+  --cell: 68px;
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); width: 80px; height: 80px; border-radius: 20px; padding: 6px;
+  background: radial-gradient(120% 90% at 30% 20%, rgba(255,255,255,0.28), rgba(255,255,255,0) 55%), linear-gradient(160deg, rgba(40,28,92,0.88), rgba(15,10,35,0.82));
+  border: 3px solid rgba(255,255,255,0.85); color: #fff;
+  display: flex; align-items: center; justify-content: center; pointer-events: none; overflow: hidden;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.4), inset 0 -6px 14px rgba(0,0,0,0.35), inset 0 2px 0 rgba(255,255,255,0.35);
 }
-.kart-item.empty { background: rgba(15,10,35,0.45); border-color: rgba(255,255,255,0.5); }
-.kart-item small { position: absolute; bottom: 2px; right: 6px; font-size: 0.95rem; font-weight: 900; }
-.kart-item-name { position: absolute; top: 92px; left: 50%; transform: translateX(-50%); color: #fff; font-weight: 800; font-size: 0.85rem; text-shadow: 0 1px 4px #000; pointer-events: none; white-space: nowrap; }
+.kart-item.empty { background: rgba(15,10,35,0.42); border-color: rgba(255,255,255,0.45); box-shadow: 0 6px 16px rgba(0,0,0,0.25); }
+.kart-item.empty::after { content: ''; width: 40%; height: 40%; border-radius: 50%; border: 3px dashed rgba(255,255,255,0.35); }
+.kart-item .item-icon { width: 100%; height: 100%; filter: drop-shadow(0 3px 3px rgba(0,0,0,0.45)); }
+.kart-item-icon { width: var(--cell); height: var(--cell); display: none; }
+.kart-item.ready .kart-item-icon { display: block; }
+.kart-reel { position: absolute; left: 6px; right: 6px; top: 6px; display: none; will-change: transform; }
+.kart-reel .cell { height: var(--cell); display: flex; align-items: center; justify-content: center; }
+.kart-reel .item-icon { width: 86%; height: 86%; }
+.kart-item.rolling { border-color: #fde047; }
+.kart-item.rolling .kart-reel { display: block; }
+.kart-item.rolling::before {
+  content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: linear-gradient(rgba(15,10,35,0.85), rgba(15,10,35,0) 30%, rgba(15,10,35,0) 70%, rgba(15,10,35,0.85));
+}
+.kart-item.ready { border-color: #fff; animation: item-ready 1.1s ease-in-out infinite; }
+.kart-item.landed .kart-item-icon { animation: item-land 0.38s cubic-bezier(.3, 1.6, .5, 1); }
+@keyframes item-ready {
+  0%, 100% { box-shadow: 0 8px 22px rgba(0,0,0,0.4), 0 0 0 0 rgba(253,224,71,0.0), inset 0 -6px 14px rgba(0,0,0,0.35); }
+  50% { box-shadow: 0 8px 22px rgba(0,0,0,0.4), 0 0 0 6px rgba(253,224,71,0.45), 0 0 26px 6px rgba(255,140,220,0.55), inset 0 -6px 14px rgba(0,0,0,0.35); }
+}
+@keyframes item-land { 0% { transform: scale(0.4) rotate(-12deg); } 70% { transform: scale(1.18) rotate(4deg); } 100% { transform: scale(1); } }
+.kart-ammo {
+  position: absolute; bottom: 3px; right: 3px; z-index: 2; min-width: 26px; padding: 1px 6px; border-radius: 999px; font-size: 0.85rem; font-weight: 900;
+  background: linear-gradient(#ff5f7e, #e11d48); border: 2px solid #fff; color: #fff; text-align: center; box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.kart-ammo:empty { display: none; }
+.kart-item-name { position: absolute; top: 96px; left: 50%; transform: translateX(-50%); color: #fff; font-weight: 800; font-size: 0.85rem; text-shadow: 0 1px 4px #000; pointer-events: none; white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.kart-item-name kbd {
+  font: 900 0.68rem/1 var(--font); letter-spacing: 0.06em; padding: 4px 7px 3px; border-radius: 6px; color: #1e1b4b; text-shadow: none;
+  background: linear-gradient(#fff, #dcd8f5); box-shadow: 0 2px 0 #8b84c9, 0 3px 6px rgba(0,0,0,0.35);
+}
+.kart-warn {
+  position: absolute; top: 128px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 6px 14px 6px 8px; border-radius: 999px;
+  background: linear-gradient(90deg, rgba(67,56,202,0.92), rgba(190,24,93,0.92)); color: #fff; font-weight: 900; font-style: italic; letter-spacing: 0.04em; text-transform: uppercase;
+  font-size: 0.9rem; pointer-events: none; animation: warn-blink 0.52s steps(2, jump-none) infinite; box-shadow: 0 0 22px rgba(129,140,248,0.8);
+}
+.kart-warn .item-icon { width: 30px; height: 30px; }
+@keyframes warn-blink { 50% { opacity: 0.55; transform: translateX(-50%) scale(1.06); } }
+/* Ink on your screen (never on the HUD). Each blot splats in, drips a little, and the whole layer fades out. */
+.kart-stage > .kart-ink { position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: 0; overflow: hidden; }
+.kart-ink.on { opacity: 1; }
+.kart-ink.fading { opacity: 0; transition: opacity 0.9s ease-in; }
+.kart-ink .blot { position: absolute; aspect-ratio: 140 / 160; transform: translate(-50%, -50%) rotate(var(--r)); animation: splat 0.34s cubic-bezier(.2, 1.5, .5, 1) both, drip 4s 0.35s ease-in both; }
+.kart-ink .blot svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 6px 10px rgba(0,0,0,0.35)); }
+@keyframes splat { from { transform: translate(-50%, -50%) rotate(var(--r)) scale(0.15); } to { transform: translate(-50%, -50%) rotate(var(--r)) scale(1); } }
+@keyframes drip { to { margin-top: 3%; } }
+.kart-stage > .kart-flash { position: absolute; inset: 0; z-index: 4; pointer-events: none; opacity: 0; background: radial-gradient(circle at 50% 30%, #fff, #dbeafe 60%, #a5b4fc); mix-blend-mode: screen; }
+.kart-flash.on { animation: thunder-flash 0.7s ease-out; }
+@keyframes thunder-flash { 0% { opacity: 0.95; } 12% { opacity: 0.15; } 22% { opacity: 0.75; } 100% { opacity: 0; } }
+.feed-icon { width: 1.35em; height: 1.35em; vertical-align: -0.35em; margin: 0 2px; }
 .kart-help { position: absolute; bottom: 10px; left: 12px; color: #fff; font-size: 0.85rem; opacity: 0.9; text-shadow: 0 1px 3px #000; pointer-events: none; }
 .kart-big { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--font-display); font-size: 7rem; font-weight: 800; font-style: italic; color: #fff; text-shadow: 0 6px 0 rgba(0,0,0,0.35), 0 0 30px rgba(255,79,139,0.8); pointer-events: none; }
 .kart-board { position: absolute; top: 12px; right: 12px; background: rgba(15,10,35,0.55); color: #fff; border-radius: 12px; padding: 8px 10px; font-size: 0.82rem; pointer-events: none; min-width: 170px; backdrop-filter: blur(6px); }
@@ -500,6 +551,11 @@ textarea { resize: vertical; min-height: 70px; }
   mask-image: radial-gradient(circle at 50% 55%, transparent 28%, #000 70%);
 }
 .kart-speedlines.on { opacity: 1; animation: speedlines 0.25s linear infinite; }
+.kart-speedlines.star {
+  background: repeating-conic-gradient(from 0deg at 50% 55%, rgba(255,255,255,0) 0deg 4deg, rgba(255,120,220,0.3) 4.5deg 5deg, rgba(255,255,255,0) 5.5deg 8deg, rgba(120,220,255,0.3) 8.5deg 9deg, rgba(255,255,255,0) 9.5deg 13deg);
+  animation: speedlines 0.25s linear infinite, star-hue 0.8s linear infinite;
+}
+@keyframes star-hue { to { filter: hue-rotate(360deg); } }
 @keyframes speedlines { 50% { transform: rotate(1.5deg) scale(1.03); } }
 .kart-announce {
   position: absolute; top: 28%; left: 0; right: 0; text-align: center; font-family: var(--font-display); font-size: 3.4rem; font-weight: 800; font-style: italic;
@@ -519,6 +575,9 @@ textarea { resize: vertical; min-height: 70px; }
   touch-action: none; user-select: none; -webkit-user-select: none;
 }
 .touch-controls button.on { background: rgba(255,255,255,0.6); }
+.touch-controls button.use { display: flex; align-items: center; justify-content: center; padding: 10px; }
+.touch-controls button.use .item-icon { width: 100%; height: 100%; }
+.touch-controls button.use.ready { background: rgba(253,224,71,0.45); box-shadow: 0 0 0 3px rgba(255,255,255,0.8), 0 0 18px rgba(253,224,71,0.8); }
 @media (pointer: coarse) {
   .touch-controls { display: flex; }
   .kart-help, .kart-board { display: none; }

@@ -8,6 +8,7 @@
       <path d="M-9 2 L-16 14 L-9 12Z M9 2 L16 14 L9 12Z" fill="#b91c1c"/>
       <path d="M-5 10 Q0 26 5 10Z" fill="#fbbf24"/><path d="M-2.5 10 Q0 19 2.5 10Z" fill="#fff7cc"/>
     </g>`;
+  const sparkle = (x, y, r, fill = '#fff') => `<path d="M${x} ${y - r} Q${x + r * 0.2} ${y - r * 0.2} ${x + r} ${y} Q${x + r * 0.2} ${y + r * 0.2} ${x} ${y + r} Q${x - r * 0.2} ${y + r * 0.2} ${x - r} ${y} Q${x - r * 0.2} ${y - r * 0.2} ${x} ${y - r}Z" fill="${fill}"/>`;
   const ICONS = {
     boost: () => `${defs('ib', [[0, '#fff3b0'], [0.5, '#ffb547'], [1, '#ff4f1f']])}
       <path d="M14 14 L34 32 L14 50 L22 50 L42 32 L22 14Z" fill="url(#ib)"/>
@@ -40,15 +41,63 @@
       <path d="M14 54 V28 C14 16 22 8 32 8 C42 8 50 16 50 28 V54 L44 48 L38 54 L32 48 L26 54 L20 48Z" fill="url(#ih)" stroke="#818cf8" stroke-width="2.5" stroke-linejoin="round"/>
       <ellipse cx="25" cy="28" rx="3.5" ry="5" fill="#312e81"/><ellipse cx="39" cy="28" rx="3.5" ry="5" fill="#312e81"/>
       <ellipse cx="32" cy="38" rx="4" ry="3" fill="#312e81"/>`,
+    // A domed shell with hex plates on a white rim, plus bounce marks.
+    bouncer: () => `${defs('ic', [[0, '#86f7cf'], [0.55, '#10b981'], [1, '#047857']])}
+      <path d="M5 21 Q8 13 14 15 M50 9 Q56 5 59 11" stroke="#6ee7b7" stroke-width="2.6" fill="none" stroke-linecap="round"/>
+      <ellipse cx="32" cy="51" rx="22" ry="4.5" fill="#000" opacity="0.2"/>
+      <path d="M9 42 C9 25 19 14 32 14 C45 14 55 25 55 42Z" fill="url(#ic)" stroke="#064e3b" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M32 19 L40 23.5 L40 32 L32 36.5 L24 32 L24 23.5Z" fill="#d1fae5" fill-opacity="0.45" stroke="#064e3b" stroke-width="1.6"/>
+      <path d="M24 32 L17 37 M40 32 L47 37 M32 36.5 V41 M24 23.5 L17 21 M40 23.5 L47 21" stroke="#064e3b" stroke-width="1.6"/>
+      <path d="M18 24 C20 19 24 16.5 28 16" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.75"/>
+      <rect x="6" y="39" width="52" height="9" rx="4.5" fill="#f8fafc" stroke="#064e3b" stroke-width="2.5"/>`,
+    // A blazing core with a long tail, diving from the top right.
+    comet: () => `<defs><linearGradient id="ie" x1="1" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e0e7ff"/><stop offset="0.45" stop-color="#818cf8" stop-opacity="0.85"/><stop offset="1" stop-color="#4338ca" stop-opacity="0"/></linearGradient>
+      <radialGradient id="io"><stop offset="0" stop-color="#ffffff"/><stop offset="0.45" stop-color="#bae6fd"/><stop offset="1" stop-color="#3b82f6"/></radialGradient></defs>
+      <path d="M33 12 C20 25 10 40 3 61 C19 52 35 44 52 31Z" fill="url(#ie)"/>
+      <path d="M12 45 L24 34 M19 53 L31 43 M28 26 L22 31" stroke="#eef2ff" stroke-width="2.4" stroke-linecap="round" opacity="0.85"/>
+      <path d="M43 3 L46 13 L56 10 L50 18 L60 23 L49 25 L52 35 L44 29 L39 38 L37 28 L27 29 L34 22 L28 14 L38 16Z" fill="#fde047" stroke="#f59e0b" stroke-width="1.5" stroke-linejoin="round"/>
+      <circle cx="42" cy="21" r="8.5" fill="url(#io)" stroke="#fff" stroke-width="2"/>`,
+    // Rainbow star with sparkles.
+    star: () => `<defs><linearGradient id="iy" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff59d"/><stop offset="0.28" stop-color="#fbbf24"/><stop offset="0.52" stop-color="#f472b6"/><stop offset="0.76" stop-color="#a78bfa"/><stop offset="1" stop-color="#38bdf8"/></linearGradient></defs>
+      <path d="M32 5 L40 22 L59 24.5 L45 37.5 L49 57 L32 47.5 L15 57 L19 37.5 L5 24.5 L24 22Z" fill="url(#iy)" stroke="#fff" stroke-width="3" stroke-linejoin="round"/>
+      <path d="M32 15 L36.5 25 L47 26.5 L39 33.5 L41 44 L32 39 L23 44 L25 33.5 L17 26.5 L27.5 25Z" fill="#fff" opacity="0.28"/>
+      <path d="M26 21 L31 11" stroke="#fff" stroke-width="3" stroke-linecap="round" opacity="0.8"/>
+      ${sparkle(55, 8, 5)}${sparkle(8, 9, 3.5, '#fde68a')}${sparkle(57, 50, 3.5, '#bae6fd')}`,
+    // A glossy ink splat with drips.
+    ink: () => `<defs><linearGradient id="ik" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c3aed"/><stop offset="0.5" stop-color="#3b0764"/><stop offset="1" stop-color="#0f0a1e"/></linearGradient></defs>
+      <path d="M30 7 C36 7 37 14 42 13 C49 11 55 17 51 23 C49 27 57 30 55 36 C54 43 46 42 44 47 C42 52 36 56 30 52 C25 49 20 55 15 50 C10 45 15 39 11 35 C6 30 9 23 15 22 C20 21 18 14 23 10 C25 8 27 7 30 7Z" fill="url(#ik)" stroke="#c4b5fd" stroke-width="2"/>
+      <path d="M36 50 Q39 61 35 62 Q31 61 33 51Z M20 50 Q21 57 18 58 Q15 57 17 51Z" fill="#2e1065"/>
+      <circle cx="56" cy="12" r="3.5" fill="#5b21b6"/><circle cx="7" cy="48" r="3" fill="#4c1d95"/><circle cx="52" cy="54" r="2.5" fill="#4c1d95"/>
+      <path d="M20 21 Q24 15 31 15.5" stroke="#ede9fe" stroke-width="3" stroke-linecap="round" fill="none" opacity="0.85"/>
+      <circle cx="37" cy="20" r="2" fill="#ede9fe" opacity="0.7"/>`,
+    // Storm cloud with a lightning bolt.
+    thunder: () => `<defs><linearGradient id="iw" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8fafc"/><stop offset="1" stop-color="#94a3b8"/></linearGradient>
+      <linearGradient id="iu" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fffbeb"/><stop offset="0.5" stop-color="#fde047"/><stop offset="1" stop-color="#f59e0b"/></linearGradient></defs>
+      <path d="M33 30 L21 48 H30 L25 62 L45 39 H36 L42 30Z" fill="url(#iu)" stroke="#b45309" stroke-width="2" stroke-linejoin="round"/>
+      <path d="M16 35 C8 35 6 25 13 22 C13 13 24 9 29 15 C32 7 45 7 47 17 C55 16 59 25 55 30 C58 34 55 38 50 38 L18 38 C17 38 16 37 16 35Z" fill="url(#iw)" stroke="#475569" stroke-width="2.2" stroke-linejoin="round"/>
+      <path d="M20 22 C21 17 26 15 30 18" stroke="#fff" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+      <path d="M12 46 L8 50 M52 45 L57 49 M47 54 L50 58" stroke="#fde047" stroke-width="2.6" stroke-linecap="round"/>`,
+  };
+  // Kill feed only (not items).
+  const EXTRA = {
+    lava: () => `${defs('iL', [[0, '#fde047'], [0.5, '#f97316'], [1, '#b91c1c']])}
+      <path d="M32 4 C40 18 53 24 50 40 C48 54 40 60 32 60 C24 60 16 54 14 40 C12 26 26 20 32 4Z" fill="url(#iL)"/>
+      <path d="M32 30 C36 38 43 41 40 48 C38 55 26 55 24 48 C22 41 30 38 32 30Z" fill="#fff3b0"/>`,
+    boom: () => `${defs('iB', [[0, '#fff3b0'], [0.5, '#fb923c'], [1, '#dc2626']])}
+      <path d="M32 4 L37 20 L52 10 L45 26 L61 30 L46 37 L55 52 L39 45 L34 61 L28 45 L12 54 L19 38 L3 32 L19 26 L11 11 L27 19Z" fill="url(#iB)" stroke="#9a3412" stroke-width="2" stroke-linejoin="round"/>
+      <circle cx="32" cy="32" r="8" fill="#fffbeb"/>`,
   };
   const NAMES = {
     boost: 'Boost', rocket: 'Homing rocket', triple: 'Triple rockets', banana: 'Banana', shield: 'Shield',
     mine: 'Mine', minigun: 'Minigun', bomb: 'Bomb', shock: 'Shock wave', ghost: 'Ghost',
+    bouncer: 'Bouncer shell', comet: 'Comet', star: 'Star power', ink: 'Ink splat', thunder: 'Thunder',
   };
   const DESCRIPTIONS = {
     boost: 'Instant burst of speed', rocket: 'Locks on to the rival ahead', triple: 'Three homing rockets', banana: 'Drop behind to spin out chasers',
     shield: 'Blocks the next hit', mine: 'Hidden trap, big blast', minigun: 'Two seconds of rapid fire', bomb: 'Lob it over karts, area blast',
     shock: 'Zaps everyone around you', ghost: 'Untouchable for 4 seconds',
+    bouncer: 'Ricochets off walls. Brake to throw it back', comet: 'Hunts down the leader from the sky',
+    star: 'Invincible and faster. Ram rivals', ink: 'Blots out the screens of karts ahead', thunder: 'Strikes every rival: spin, shrink, slow',
   };
   let uid = 0;
   window.ItemIcons = {
@@ -57,7 +106,8 @@
     description: (id) => DESCRIPTIONS[id] || '',
     // Gradient ids are made unique per icon so many icons can share a page.
     svg(id, cls = 'item-icon') {
-      const body = ICONS[id] ? ICONS[id]() : '';
+      const make = ICONS[id] || EXTRA[id];
+      const body = make ? make() : '';
       const n = ++uid;
       return `<svg viewBox="0 0 64 64" class="${cls}" aria-hidden="true">${body.replace(/id="(i\w)"/g, `id="$1${n}"`).replace(/url\(#(i\w)\)/g, `url(#$1${n})`)}</svg>`;
     },
