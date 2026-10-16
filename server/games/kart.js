@@ -24,6 +24,9 @@ const MINE = { arm: 0.8, life: 60, trigger: 40, radius: 95 };
 const SHOCK_RADIUS = 360;
 const GUN_TIME = 2;
 const BANANA_LIFE = 40;
+// Race tracks have height: karts flying higher than this pass over bananas and mines (item boxes float higher).
+const GROUND_CLEAR = 18;
+const BOX_CLEAR = 40;
 
 // Damage in the arena (karts have 100 hp). In a race every hit except bullets spins you out.
 const DAMAGE = { rocket: 70, triple: 45, bullet: 9, banana: 35, mine: 100, bomb: 100, shock: 45, lava: 1000 }; // lava is instant death
@@ -223,7 +226,7 @@ class KartBattle {
   }
 
   useItem(kart) {
-    if (!kart.item || kart.spin > 0 || kart.dead > 0 || kart.finished) return;
+    if (!kart.item || kart.spin > 0 || kart.dead > 0 || kart.finished || kart.fall > 0) return;
     const item = kart.item;
     const cos = Math.cos(kart.angle);
     const sin = Math.sin(kart.angle);
@@ -235,18 +238,29 @@ class KartBattle {
       case 'rocket':
       case 'triple': this.fire('rocket', kart); break;
       case 'bomb': this.fire('bomb', kart); break;
-      case 'banana':
-        this.bananas.push({ id: this.nextId++, x: kart.x - cos * 34, y: kart.y - sin * 34, life: BANANA_LIFE, owner: kart.id, safe: 0.6 });
+      case 'banana': {
+        const [x, y] = [kart.x - cos * 34, kart.y - sin * 34];
+        if (this.solidGround(x, y, kart)) this.bananas.push({ id: this.nextId++, x, y, life: BANANA_LIFE, owner: kart.id, safe: 0.6 });
         break;
-      case 'mine':
-        this.mines.push({ id: this.nextId++, x: kart.x - cos * 36, y: kart.y - sin * 36, owner: kart.id, arm: MINE.arm, life: MINE.life });
+      }
+      case 'mine': {
+        const [x, y] = [kart.x - cos * 36, kart.y - sin * 36];
+        if (this.solidGround(x, y, kart)) this.mines.push({ id: this.nextId++, x, y, owner: kart.id, arm: MINE.arm, life: MINE.life });
         break;
+      }
       case 'shock': this.shock(kart); break;
       default:
     }
     this.room.emit('game:kart:use', { idx: kart.idx, item });
     kart.ammo--;
     if (kart.ammo <= 0) { kart.item = null; kart.ammo = 0; }
+  }
+
+  // Can a dropped item lie here? Over a gap, water or lava it just falls in.
+  solidGround(x, y, kart) {
+    if (this.arena) return true;
+    const q = this.map.nearestIndex(x, y, kart.trackIndex);
+    return !this.map.gap[q.index] && !this.map.hazardAt(x, y, q);
   }
 
   shock(kart) {
@@ -365,7 +379,7 @@ class KartBattle {
 
   explode(x, y, radius, maxDmg, attacker, kind) {
     for (const k of this.karts.values()) {
-      const d = Math.hypot(k.x - x, k.y - y);
+      const d = Math.hypot(k.x - x, k.y - y, k.air || 0); // blasts are on the ground: high flyers escape
       if (d > radius) continue;
       if (attacker && k.id === attacker.id) continue; // your own blasts never hurt you
       this.damage(k, Math.round(maxDmg * (1 - 0.5 * (d / radius))), attacker, kind);
@@ -501,7 +515,7 @@ class KartBattle {
       if (this.boxes[i] > 0) { this.boxes[i] = Math.max(0, this.boxes[i] - dt); continue; }
       const box = this.map.itemBoxes[i];
       for (const k of alive) {
-        if ((k.x - box.x) ** 2 + (k.y - box.y) ** 2 < 32 * 32) {
+        if ((k.air || 0) < BOX_CLEAR && (k.x - box.x) ** 2 + (k.y - box.y) ** 2 < 32 * 32) {
           this.boxes[i] = this.boxRespawn;
           if (!k.item && !k.finished) {
             k.item = this.rollItem(k);
@@ -519,7 +533,7 @@ class KartBattle {
       m.life -= dt;
       if (m.arm > 0) { m.arm -= dt; continue; }
       for (const k of alive) {
-        if (k.ghost > 0 || k.dead > 0 || k.id === m.owner || this.isFriendly(k.id, m.owner)) continue;
+        if (k.ghost > 0 || k.dead > 0 || k.air > GROUND_CLEAR || k.id === m.owner || this.isFriendly(k.id, m.owner)) continue;
         if ((k.x - m.x) ** 2 + (k.y - m.y) ** 2 < MINE.trigger ** 2) {
           m.life = 0;
           this.explode(m.x, m.y, MINE.radius, DAMAGE.mine, this.karts.get(m.owner), 'mine');
@@ -534,7 +548,7 @@ class KartBattle {
       b.life -= dt;
       if (b.safe > 0) b.safe -= dt;
       for (const k of alive) {
-        if (k.ghost > 0 || k.dead > 0 || (b.safe > 0 && k.id === b.owner) || this.isFriendly(k.id, b.owner)) continue;
+        if (k.ghost > 0 || k.dead > 0 || k.air > GROUND_CLEAR || (b.safe > 0 && k.id === b.owner) || this.isFriendly(k.id, b.owner)) continue;
         if ((k.x - b.x) ** 2 + (k.y - b.y) ** 2 < (K.KART_RADIUS + 10) ** 2) {
           if (k.invuln > 0 && k.shield <= 0) continue;
           this.damage(k, DAMAGE.banana, this.karts.get(b.owner), 'banana');
