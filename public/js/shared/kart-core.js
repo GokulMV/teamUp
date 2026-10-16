@@ -98,9 +98,70 @@
     turnRate: 3.1,
   };
 
+  // ---------- Arena (battle mode) ----------
+  const ARENA_SIZE = 2600;
+  const AC = ARENA_SIZE / 2;
+  const ARENA = {
+    size: ARENA_SIZE,
+    obstacles: [
+      { x: AC, y: AC, r: 170, kind: 'tower' },
+      { x: 700, y: 700, r: 80, kind: 'pillar' }, { x: 1900, y: 700, r: 80, kind: 'pillar' },
+      { x: 700, y: 1900, r: 80, kind: 'pillar' }, { x: 1900, y: 1900, r: 80, kind: 'pillar' },
+      { x: AC, y: 520, r: 55, kind: 'crate' }, { x: AC, y: 2080, r: 55, kind: 'crate' },
+      { x: 520, y: AC, r: 55, kind: 'crate' }, { x: 2080, y: AC, r: 55, kind: 'crate' },
+      { x: 1000, y: 1600, r: 45, kind: 'crate' }, { x: 1600, y: 1000, r: 45, kind: 'crate' },
+    ],
+    itemBoxes: [],
+    spawns: [],
+  };
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+    ARENA.itemBoxes.push({ x: AC + Math.cos(a) * 430, y: AC + Math.sin(a) * 430 });
+  }
+  for (const [x, y] of [[300, 300], [2300, 300], [300, 2300], [2300, 2300], [AC, 260], [AC, 2340], [260, AC], [2340, AC]]) {
+    ARENA.itemBoxes.push({ x, y });
+  }
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2;
+    const rad = i % 2 ? 1050 : 650;
+    // Face roughly toward the middle.
+    ARENA.spawns.push({ x: AC + Math.cos(a) * rad, y: AC + Math.sin(a) * rad, angle: a + Math.PI });
+  }
+
+  function collideArena(kart) {
+    const r = KART_RADIUS;
+    let bumped = false;
+    const min = 40 + r;
+    const max = ARENA_SIZE - 40 - r;
+    if (kart.x < min) { kart.x = min; bumped = true; }
+    if (kart.x > max) { kart.x = max; bumped = true; }
+    if (kart.y < min) { kart.y = min; bumped = true; }
+    if (kart.y > max) { kart.y = max; bumped = true; }
+    for (const o of ARENA.obstacles) {
+      const dx = kart.x - o.x;
+      const dy = kart.y - o.y;
+      const d = Math.hypot(dx, dy);
+      const minD = o.r + r;
+      if (d < minD && d > 0.001) {
+        kart.x = o.x + (dx / d) * minD;
+        kart.y = o.y + (dy / d) * minD;
+        bumped = true;
+      }
+    }
+    if (bumped) kart.speed *= 0.6;
+  }
+
+  // Is the point inside an arena wall/obstacle? (used for projectiles)
+  function arenaBlocked(x, y, pad = 0) {
+    if (x < 40 || y < 40 || x > ARENA_SIZE - 40 || y > ARENA_SIZE - 40) return true;
+    return ARENA.obstacles.some((o) => (x - o.x) ** 2 + (y - o.y) ** 2 < (o.r + pad) ** 2);
+  }
+
   // Advance a kart by dt seconds. `input` = {up, down, left, right}.
   // Mutates and returns kart {x, y, angle, speed, boost, spin, trackIndex}.
-  function stepKart(kart, input, dt) {
+  // `map` is 'race' (default) or 'arena'.
+  function stepKart(kart, input, dt, map) {
+    const arena = map === 'arena';
     const spinning = kart.spin > 0;
     if (spinning) {
       kart.angle += 9 * dt;
@@ -115,9 +176,12 @@
       kart.angle += steer * PHYS.turnRate * grip * dt * (kart.speed >= 0 ? 1 : -1);
     }
 
-    const near = nearestIndex(kart.x, kart.y, kart.trackIndex);
-    kart.trackIndex = near.index;
-    const offTrack = near.dist > TRACK_WIDTH / 2;
+    let offTrack = false;
+    if (!arena) {
+      const near = nearestIndex(kart.x, kart.y, kart.trackIndex);
+      kart.trackIndex = near.index;
+      offTrack = near.dist > TRACK_WIDTH / 2;
+    }
     let max = kart.boost > 0 ? PHYS.boostSpeed : PHYS.maxSpeed;
     if (offTrack && kart.boost <= 0) max = PHYS.offTrackMax;
     if (kart.boost > 0 && !spinning) kart.speed = Math.max(kart.speed, PHYS.boostSpeed * 0.95);
@@ -127,18 +191,22 @@
     kart.x += Math.cos(kart.angle) * kart.speed * dt;
     kart.y += Math.sin(kart.angle) * kart.speed * dt;
 
-    // Hard wall far outside the track so nobody gets lost.
-    const after = nearestIndex(kart.x, kart.y, kart.trackIndex);
-    const wall = TRACK_WIDTH / 2 + 160;
-    if (after.dist > wall) {
-      const c = CENTERLINE[after.index];
-      const k = wall / after.dist;
-      kart.x = c[0] + (kart.x - c[0]) * k;
-      kart.y = c[1] + (kart.y - c[1]) * k;
-      kart.speed *= 0.5;
+    if (arena) {
+      collideArena(kart);
+    } else {
+      // Hard wall far outside the track so nobody gets lost.
+      const after = nearestIndex(kart.x, kart.y, kart.trackIndex);
+      const wall = TRACK_WIDTH / 2 + 160;
+      if (after.dist > wall) {
+        const c = CENTERLINE[after.index];
+        const k = wall / after.dist;
+        kart.x = c[0] + (kart.x - c[0]) * k;
+        kart.y = c[1] + (kart.y - c[1]) * k;
+        kart.speed *= 0.5;
+      }
+      kart.x = Math.max(0, Math.min(WORLD.w, kart.x));
+      kart.y = Math.max(0, Math.min(WORLD.h, kart.y));
     }
-    kart.x = Math.max(0, Math.min(WORLD.w, kart.x));
-    kart.y = Math.max(0, Math.min(WORLD.h, kart.y));
 
     if (kart.boost > 0) kart.boost = Math.max(0, kart.boost - dt);
     if (kart.spin > 0) kart.spin = Math.max(0, kart.spin - dt);
@@ -159,6 +227,6 @@
 
   return {
     TRACK_WIDTH, KART_RADIUS, WORLD, CENTERLINE, TANGENTS, N, PHYS, ITEM_BOXES, ITEMS,
-    nearestIndex, trackPoint, gridPosition, stepKart,
+    ARENA, nearestIndex, trackPoint, gridPosition, stepKart, arenaBlocked,
   };
 });

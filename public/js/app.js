@@ -5,7 +5,7 @@
 
   const MODE_HELP = {
     pictionary: 'Each turn one player draws while everyone else guesses in chat. Faster guesses earn more points. In team mode, teams take turns drawing and scores are pooled per team.',
-    kart: 'Arrow keys / WASD to drive, Space to use items. Item boxes give boosts, rockets, bananas, shields and triple rockets. In team mode rockets don’t hit teammates and team points are combined.',
+    kart: 'Arrow keys / WASD to drive, Space to fire items. Race: first across the line after all laps wins, hits earn bonus points. Arena battle: a timed free-for-all where every rocket or banana hit is a kill and you respawn after a moment. In team mode rockets don’t hit teammates and team scores are combined.',
     telephone: 'Everyone writes a prompt, then books pass around: draw what you read, describe what you see. In team mode, books stay inside each team. No scores, just laughs.',
   };
   const MODE_NAMES = { pictionary: 'Pictionary', kart: 'Kart Battle', telephone: 'Telephone' };
@@ -224,10 +224,14 @@
     setIfIdle('set-turns', s.pictionaryTurns);
     setIfIdle('set-drawtime', s.drawTime);
     setIfIdle('set-laps', s.kartLaps);
+    setIfIdle('set-kartmode', s.kartMode);
+    setIfIdle('set-arenatime', s.arenaTime);
     setIfIdle('set-steps', s.telephoneSteps);
     document.querySelectorAll('.settings input, .settings select, #btn-shuffle').forEach((el) => { el.disabled = !host; });
     document.querySelectorAll('.team-only').forEach((el) => el.classList.toggle('hidden', !s.teamMode));
     document.querySelectorAll('.setting[class*="mode-"]').forEach((el) => el.classList.toggle('hidden', !el.classList.contains(`mode-${s.mode}`)));
+    document.querySelectorAll('.kart-race').forEach((el) => s.kartMode !== 'race' && el.classList.add('hidden'));
+    document.querySelectorAll('.kart-arena').forEach((el) => s.kartMode !== 'arena' && el.classList.add('hidden'));
     $('mode-help').textContent = MODE_HELP[s.mode];
     $('btn-start').classList.toggle('hidden', !host);
     $('lobby-wait').classList.toggle('hidden', host);
@@ -263,6 +267,8 @@
   $('set-turns').onchange = (e) => updateSettings({ pictionaryTurns: e.target.value });
   $('set-drawtime').onchange = (e) => updateSettings({ drawTime: e.target.value });
   $('set-laps').onchange = (e) => updateSettings({ kartLaps: e.target.value });
+  $('set-kartmode').onchange = (e) => updateSettings({ kartMode: e.target.value });
+  $('set-arenatime').onchange = (e) => updateSettings({ arenaTime: e.target.value });
   $('set-steps').onchange = (e) => updateSettings({ telephoneSteps: e.target.value });
   $('btn-shuffle').onclick = () => emit('lobby:shuffle');
   $('teams').addEventListener('click', (e) => {
@@ -289,13 +295,15 @@
       $('results-players').innerHTML = '';
       return;
     }
-    $('results-title').textContent = `${r.mode === 'kart' ? '🏁' : '🎨'} ${MODE_NAMES[r.mode]} results`;
+    $('results-title').textContent = r.map === 'arena' ? '💥 Arena battle results' : `${r.mode === 'kart' ? '🏁' : '🎨'} ${MODE_NAMES[r.mode]} results`;
     $('results-teams').innerHTML = (r.teams || []).map((t, i) => `
       <div class="team-score" style="background:${t.color}">${i === 0 ? '🏆 ' : ''}${t.name}<b>${t.score}</b></div>`).join('');
     const medal = ['🥇', '🥈', '🥉'];
     $('results-players').innerHTML = r.players.map((p, i) => {
       let extra = '';
-      if (r.mode === 'kart') {
+      if (r.mode === 'kart' && r.map === 'arena') {
+        extra = `${p.kills} kill${p.kills === 1 ? '' : 's'} · ${p.deaths} death${p.deaths === 1 ? '' : 's'}`;
+      } else if (r.mode === 'kart') {
         extra = p.finished ? `${p.time.toFixed(1)}s` : 'DNF';
         if (p.hits) extra += ` · ${p.hits} hit${p.hits > 1 ? 's' : ''}`;
       }

@@ -6,25 +6,37 @@ const COUNTDOWN_S = 4;
 const FINISH_GRACE_S = 25;
 const ROCKET_SPEED = 1000;
 const ROCKET_LIFE = 1.8;
+const ROCKET_HOMING = 2.2; // rad/s turn toward the nearest target in front
 const BANANA_LIFE = 40;
 const SPIN_TIME = 1.4;
 const SHIELD_TIME = 4;
 const BOOST_TIME = 1.6;
 const BOX_RESPAWN = 3;
+const RESPAWN_TIME = 2.5; // arena: seconds dead before respawning
+const SPAWN_SHIELD = 2;
+const KILL_POINTS = 100;
 
+const NO_INPUT = { up: false, down: false, left: false, right: false };
+
+// Kart Battle has two variants:
+//  - race:  laps around a circuit, items, points for placement + hits
+//  - arena: timed deathmatch in an arena; a hit destroys the kart, it respawns
 class KartBattle {
   static minPlayers = 1;
 
   constructor(room) {
     this.room = room;
+    this.map = room.settings.kartMode === 'arena' ? 'arena' : 'race';
     this.laps = room.settings.kartLaps;
+    this.duration = room.settings.arenaTime;
     this.phase = 'countdown';
     this.time = 0;
     this.karts = new Map();
     this.order = []; // kart index -> player id
     this.rockets = [];
     this.bananas = [];
-    this.boxes = K.ITEM_BOXES.map(() => 0); // respawn timer, 0 = available
+    this.boxPositions = this.map === 'arena' ? K.ARENA.itemBoxes : K.ITEM_BOXES;
+    this.boxes = this.boxPositions.map(() => 0); // respawn timer, 0 = available
     this.finishOrder = [];
     this.firstFinishAt = null;
     this.tickCount = 0;
@@ -40,7 +52,13 @@ class KartBattle {
   }
 
   addKart(player, slot) {
-    const g = K.gridPosition(slot);
+    let g;
+    if (this.map === 'arena') {
+      const s = K.ARENA.spawns[slot % K.ARENA.spawns.length];
+      g = { x: s.x, y: s.y, angle: s.angle, index: null };
+    } else {
+      g = K.gridPosition(slot);
+    }
     this.karts.set(player.id, {
       idx: this.order.length,
       id: player.id,
@@ -48,18 +66,21 @@ class KartBattle {
       trackIndex: g.index,
       lap: 0,
       boost: 0, spin: 0, shield: 0, invuln: 0,
+      dead: 0,
       item: null, ammo: 0,
-      input: { up: false, down: false, left: false, right: false },
+      input: { ...NO_INPUT },
       finished: false, finishTime: null,
-      hits: 0,
-      progress: g.index - K.N,
+      hits: 0, kills: 0, deaths: 0,
+      progress: this.map === 'race' ? g.index - K.N : 0,
     });
     this.order.push(player.id);
   }
 
   initPayload() {
     return {
+      map: this.map,
       laps: this.laps,
+      duration: this.duration,
       phase: this.phase,
       countdown: Math.max(0, COUNTDOWN_S - this.time),
       karts: this.order.map((id, idx) => {
@@ -74,13 +95,13 @@ class KartBattle {
   }
 
   onPlayerJoin(player) {
-    // Late joiners spectate this race; they'll be on the grid for the next one.
+    // Late joiners spectate this round; they'll be in the next one.
     this.room.emitTo(player.id, 'game:kart:init', this.initPayload());
   }
 
   onPlayerLeave(player) {
     const kart = this.karts.get(player.id);
-    if (kart) kart.input = { up: false, down: false, left: false, right: false };
+    if (kart) kart.input = { ...NO_INPUT };
   }
 
   onPlayerDisconnect(player) {
@@ -99,7 +120,7 @@ class KartBattle {
   }
 
   useItem(kart) {
-    if (!kart.item || kart.spin > 0 || kart.finished) return;
+    if (!kart.item || kart.spin > 0 || kart.dead > 0 || kart.finished) return;
     const item = kart.item;
     const cos = Math.cos(kart.angle);
     const sin = Math.sin(kart.angle);
@@ -110,10 +131,11 @@ class KartBattle {
     } else if (item === 'banana') {
       this.bananas.push({ id: this.nextProjectileId++, x: kart.x - cos * 34, y: kart.y - sin * 34, life: BANANA_LIFE, owner: kart.id, safe: 0.6 });
     } else if (item === 'rocket' || item === 'triple') {
+      const speed = ROCKET_SPEED + Math.max(0, kart.speed);
       this.rockets.push({
         id: this.nextProjectileId++,
         x: kart.x + cos * 26, y: kart.y + sin * 26,
-        vx: cos * (ROCKET_SPEED + Math.max(0, kart.speed)), vy: sin * (ROCKET_SPEED + Math.max(0, kart.speed)),
+        angle: kart.angle, speed,
         life: ROCKET_LIFE, owner: kart.id,
       });
     }
@@ -122,11 +144,19 @@ class KartBattle {
   }
 
   rollItem(kart) {
+    const r = Math.random();
+    if (this.map === 'arena') {
+      // Arena is about combat: mostly weapons.
+      if (r < 0.4) return 'rocket';
+      if (r < 0.58) return 'triple';
+      if (r < 0.74) return 'banana';
+      if (r < 0.88) return 'shield';
+      return 'boost';
+    }
     // Karts further behind get better odds of boosts and rockets (rubber banding).
     const ranked = this.rankings();
-    const pos = ranked.findIndex((r) => r.id === kart.id);
+    const pos = ranked.findIndex((k) => k.id === kart.id);
     const behind = ranked.length > 1 ? pos / (ranked.length - 1) : 0;
-    const r = Math.random();
     if (r < 0.15 + behind * 0.25) return 'boost';
     if (r < 0.45 + behind * 0.1) return 'rocket';
     if (r < 0.65) return 'banana';
@@ -142,14 +172,44 @@ class KartBattle {
   }
 
   hitKart(target, attackerId) {
+    if (target.dead > 0) return;
     if (target.shield > 0) { target.shield = 0; target.invuln = 0.5; return; }
     if (target.invuln > 0 || target.finished) return;
-    target.spin = SPIN_TIME;
-    target.invuln = SPIN_TIME + 1;
-    target.boost = 0;
     const attacker = attackerId && attackerId !== target.id ? this.karts.get(attackerId) : null;
-    if (attacker) attacker.hits++;
-    this.room.emit('game:kart:hit', { target: target.idx, by: attacker ? attacker.idx : -1 });
+    if (this.map === 'arena') {
+      target.dead = RESPAWN_TIME;
+      target.deaths++;
+      target.speed = 0;
+      target.boost = 0;
+      target.item = null;
+      target.ammo = 0;
+      // Banana kills on teammates don't count for the dropper.
+      if (attacker && !this.isFriendly(attacker.id, target.id)) attacker.kills++;
+    } else {
+      target.spin = SPIN_TIME;
+      target.invuln = SPIN_TIME + 1;
+      target.boost = 0;
+      if (attacker) attacker.hits++;
+    }
+    this.room.emit('game:kart:hit', {
+      target: target.idx, by: attacker ? attacker.idx : -1, x: Math.round(target.x), y: Math.round(target.y), kill: this.map === 'arena',
+    });
+  }
+
+  respawn(kart) {
+    // Pick the spawn point furthest from every living enemy.
+    let best = K.ARENA.spawns[0];
+    let bestScore = -Infinity;
+    for (const s of K.ARENA.spawns) {
+      let nearest = Infinity;
+      for (const k of this.karts.values()) {
+        if (k === kart || k.dead > 0) continue;
+        nearest = Math.min(nearest, (k.x - s.x) ** 2 + (k.y - s.y) ** 2);
+      }
+      const score = nearest + Math.random() * 1000;
+      if (score > bestScore) { bestScore = score; best = s; }
+    }
+    Object.assign(kart, { x: best.x, y: best.y, angle: best.angle, speed: 0, spin: 0, dead: 0, shield: SPAWN_SHIELD, invuln: 0 });
   }
 
   tick(dt) {
@@ -160,10 +220,15 @@ class KartBattle {
       if (this.time >= COUNTDOWN_S) { this.phase = 'racing'; this.raceStart = this.time; }
     } else if (this.phase === 'racing') {
       this.simulate(dt);
-      const allDone = [...this.karts.values()].every((k) => k.finished || !this.room.players.get(k.id)?.connected);
-      const graceOver = this.firstFinishAt !== null && this.time - this.firstFinishAt > FINISH_GRACE_S;
-      const hardLimit = this.time - this.raceStart > this.laps * 120 + 60;
-      if (allDone || graceOver || hardLimit) this.endRace();
+      const elapsed = this.time - this.raceStart;
+      if (this.map === 'arena') {
+        if (elapsed >= this.duration) this.endRace();
+      } else {
+        const allDone = [...this.karts.values()].every((k) => k.finished || !this.room.players.get(k.id)?.connected);
+        const graceOver = this.firstFinishAt !== null && this.time - this.firstFinishAt > FINISH_GRACE_S;
+        const hardLimit = elapsed > this.laps * 120 + 60;
+        if (allDone || graceOver || hardLimit) this.endRace();
+      }
     }
 
     if (this.tickCount % SEND_EVERY === 0) this.broadcast();
@@ -172,35 +237,27 @@ class KartBattle {
   simulate(dt) {
     const karts = [...this.karts.values()];
     for (const k of karts) {
+      if (k.dead > 0) {
+        k.dead -= dt;
+        if (k.dead <= 0) this.respawn(k);
+        continue;
+      }
       const input = k.finished ? { up: false, down: true } : k.input;
       const prevIndex = k.trackIndex;
-      K.stepKart(k, input, dt);
+      K.stepKart(k, input, dt, this.map);
       if (k.shield > 0) k.shield = Math.max(0, k.shield - dt);
       if (k.invuln > 0) k.invuln = Math.max(0, k.invuln - dt);
 
-      // Lap counting: crossing index 0 forwards/backwards.
-      const delta = k.trackIndex - prevIndex;
-      if (delta < -K.N / 2) k.lap++;
-      else if (delta > K.N / 2) k.lap--;
-      k.progress = k.lap * K.N + k.trackIndex - K.N;
-
-      if (!k.finished && k.lap > this.laps) {
-        k.finished = true;
-        k.finishTime = this.time - this.raceStart;
-        this.finishOrder.push(k.id);
-        if (this.firstFinishAt === null) this.firstFinishAt = this.time;
-        const p = this.room.players.get(k.id);
-        this.room.emit('game:kart:finish', { idx: k.idx, place: this.finishOrder.length, time: k.finishTime });
-        if (p) this.room.systemMessage(`🏁 ${p.name} finished #${this.finishOrder.length}`);
-      }
+      if (this.map === 'race') this.trackLaps(k, prevIndex);
     }
+    const alive = karts.filter((k) => k.dead <= 0);
 
     // Kart-kart collisions: simple circle separation.
     const r2 = (K.KART_RADIUS * 2) ** 2;
-    for (let i = 0; i < karts.length; i++) {
-      for (let j = i + 1; j < karts.length; j++) {
-        const a = karts[i];
-        const b = karts[j];
+    for (let i = 0; i < alive.length; i++) {
+      for (let j = i + 1; j < alive.length; j++) {
+        const a = alive[i];
+        const b = alive[j];
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const d2 = dx * dx + dy * dy;
@@ -219,9 +276,9 @@ class KartBattle {
     // Item boxes.
     for (let i = 0; i < this.boxes.length; i++) {
       if (this.boxes[i] > 0) { this.boxes[i] = Math.max(0, this.boxes[i] - dt); continue; }
-      const box = K.ITEM_BOXES[i];
-      for (const k of karts) {
-        if ((k.x - box.x) ** 2 + (k.y - box.y) ** 2 < 30 * 30) {
+      const box = this.boxPositions[i];
+      for (const k of alive) {
+        if ((k.x - box.x) ** 2 + (k.y - box.y) ** 2 < 32 * 32) {
           this.boxes[i] = BOX_RESPAWN;
           if (!k.item && !k.finished) {
             k.item = this.rollItem(k);
@@ -232,21 +289,41 @@ class KartBattle {
       }
     }
 
-    // Rockets.
+    // Rockets: fly forward, gently home in on the nearest enemy ahead.
     for (const r of this.rockets) {
-      r.x += r.vx * dt;
-      r.y += r.vy * dt;
-      r.life -= dt;
-      for (const k of karts) {
+      let target = null;
+      let bestD = 700 * 700;
+      for (const k of alive) {
         if (k.id === r.owner || this.isFriendly(k.id, r.owner)) continue;
+        const dx = k.x - r.x;
+        const dy = k.y - r.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > bestD) continue;
+        let da = Math.atan2(dy, dx) - r.angle;
+        da = Math.atan2(Math.sin(da), Math.cos(da));
+        if (Math.abs(da) < Math.PI / 4) { bestD = d2; target = da; }
+      }
+      if (target !== null) r.angle += Math.max(-ROCKET_HOMING * dt, Math.min(ROCKET_HOMING * dt, target));
+      r.x += Math.cos(r.angle) * r.speed * dt;
+      r.y += Math.sin(r.angle) * r.speed * dt;
+      r.life -= dt;
+      for (const k of alive) {
+        if (k.id === r.owner || this.isFriendly(k.id, r.owner) || k.dead > 0) continue;
         if ((k.x - r.x) ** 2 + (k.y - r.y) ** 2 < (K.KART_RADIUS + 8) ** 2) {
           this.hitKart(k, r.owner);
           r.life = 0;
           break;
         }
       }
-      // Rockets explode when they leave the track area.
-      if (r.life > 0 && K.nearestIndex(r.x, r.y).dist > K.TRACK_WIDTH / 2 + 120) r.life = 0;
+      if (r.life > 0) {
+        const blocked = this.map === 'arena'
+          ? K.arenaBlocked(r.x, r.y)
+          : K.nearestIndex(r.x, r.y).dist > K.TRACK_WIDTH / 2 + 120;
+        if (blocked) {
+          r.life = 0;
+          this.room.emit('game:kart:boom', { x: Math.round(r.x), y: Math.round(r.y) });
+        }
+      }
     }
     this.rockets = this.rockets.filter((r) => r.life > 0);
 
@@ -254,8 +331,8 @@ class KartBattle {
     for (const b of this.bananas) {
       b.life -= dt;
       if (b.safe > 0) b.safe -= dt;
-      for (const k of karts) {
-        if (b.safe > 0 && k.id === b.owner) continue;
+      for (const k of alive) {
+        if (k.dead > 0 || (b.safe > 0 && k.id === b.owner)) continue;
         if ((k.x - b.x) ** 2 + (k.y - b.y) ** 2 < (K.KART_RADIUS + 10) ** 2) {
           if (k.invuln > 0 && k.shield <= 0) continue;
           this.hitKart(k, b.owner);
@@ -267,8 +344,28 @@ class KartBattle {
     this.bananas = this.bananas.filter((b) => b.life > 0);
   }
 
+  trackLaps(k, prevIndex) {
+    // Lap counting: crossing index 0 forwards/backwards.
+    const delta = k.trackIndex - prevIndex;
+    if (delta < -K.N / 2) k.lap++;
+    else if (delta > K.N / 2) k.lap--;
+    k.progress = k.lap * K.N + k.trackIndex - K.N;
+
+    if (!k.finished && k.lap > this.laps) {
+      k.finished = true;
+      k.finishTime = this.time - this.raceStart;
+      this.finishOrder.push(k.id);
+      if (this.firstFinishAt === null) this.firstFinishAt = this.time;
+      const p = this.room.players.get(k.id);
+      this.room.emit('game:kart:finish', { idx: k.idx, place: this.finishOrder.length, time: k.finishTime });
+      if (p) this.room.systemMessage(`🏁 ${p.name} finished #${this.finishOrder.length}`);
+    }
+  }
+
   rankings() {
-    return [...this.karts.values()].sort((a, b) => {
+    const list = [...this.karts.values()];
+    if (this.map === 'arena') return list.sort((a, b) => b.kills - a.kills || a.deaths - b.deaths || a.idx - b.idx);
+    return list.sort((a, b) => {
       if (a.finished && b.finished) return a.finishTime - b.finishTime;
       if (a.finished) return -1;
       if (b.finished) return 1;
@@ -280,18 +377,22 @@ class KartBattle {
     const ranked = this.rankings();
     const place = new Map(ranked.map((k, i) => [k.id, i + 1]));
     const itemCode = (it) => (it ? K.ITEMS.indexOf(it) + 1 : 0);
+    const elapsed = this.raceStart !== undefined ? this.time - this.raceStart : 0;
     this.room.emit('game:kart:state', {
       t: Math.round(this.time * 1000),
       phase: this.phase,
       countdown: this.phase === 'countdown' ? COUNTDOWN_S - this.time : 0,
-      elapsed: this.raceStart !== undefined ? this.time - this.raceStart : 0,
-      // [idx, x, y, angle*1000, speed, lap, place, item, ammo, flags]
+      elapsed,
+      timeLeft: this.map === 'arena' ? Math.max(0, this.duration - elapsed) : null,
+      // [idx, x, y, angle*1000, speed, lap, place, item, ammo, flags, kills, deaths]
       k: [...this.karts.values()].map((k) => [
         k.idx, Math.round(k.x), Math.round(k.y), Math.round(k.angle * 1000), Math.round(k.speed),
         Math.max(1, Math.min(this.laps, k.lap)), place.get(k.id), itemCode(k.item), k.ammo,
-        (k.spin > 0 ? 1 : 0) | (k.boost > 0 ? 2 : 0) | (k.shield > 0 ? 4 : 0) | (k.finished ? 8 : 0) | (k.invuln > 0 ? 16 : 0),
+        (k.spin > 0 ? 1 : 0) | (k.boost > 0 ? 2 : 0) | (k.shield > 0 ? 4 : 0) | (k.finished ? 8 : 0)
+          | (k.invuln > 0 ? 16 : 0) | (k.dead > 0 ? 32 : 0),
+        k.kills, k.deaths,
       ]),
-      r: this.rockets.map((r) => [r.id, Math.round(r.x), Math.round(r.y), Math.round(Math.atan2(r.vy, r.vx) * 1000)]),
+      r: this.rockets.map((r) => [r.id, Math.round(r.x), Math.round(r.y), Math.round(r.angle * 1000)]),
       b: this.bananas.map((b) => [b.id, Math.round(b.x), Math.round(b.y)]),
       x: this.boxes.map((t) => (t > 0 ? 0 : 1)),
     });
@@ -306,12 +407,16 @@ class KartBattle {
     const scores = new Map();
     const details = {};
     ranked.forEach((k, i) => {
-      const placePts = (n - i) * 10;
-      scores.set(k.id, placePts + k.hits * 5);
-      details[k.id] = { place: i + 1, time: k.finishTime, hits: k.hits, finished: k.finished };
+      scores.set(k.id, this.map === 'arena' ? k.kills * KILL_POINTS : (n - i) * 10 + k.hits * 5);
+      details[k.id] = {
+        place: i + 1, time: k.finishTime, hits: k.hits, finished: k.finished, kills: k.kills, deaths: k.deaths,
+      };
     });
     const results = this.room.buildResults(scores);
     results.players.forEach((p) => Object.assign(p, details[p.id] || {}));
+    results.map = this.map;
+    // Arena ties on kills are broken by fewer deaths.
+    if (this.map === 'arena') results.players.sort((a, b) => b.score - a.score || a.deaths - b.deaths);
     this.endTimer = setTimeout(() => this.room.finishGame(this, results), 2500);
   }
 

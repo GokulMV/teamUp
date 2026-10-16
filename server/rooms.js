@@ -32,6 +32,8 @@ const DEFAULT_SETTINGS = {
   pictionaryTurns: 8,
   drawTime: 80,
   kartLaps: 3,
+  kartMode: 'race', // race | arena
+  arenaTime: 180, // seconds
   telephoneSteps: 8,
 };
 
@@ -289,6 +291,8 @@ class Room {
         }
         if (data?.pictionaryTurns !== undefined) s.pictionaryTurns = clampInt(data.pictionaryTurns, 1, 30, s.pictionaryTurns);
         if (data?.drawTime !== undefined) s.drawTime = clampInt(data.drawTime, 30, 180, s.drawTime);
+        if (data?.kartMode === 'race' || data?.kartMode === 'arena') s.kartMode = data.kartMode;
+        if (data?.arenaTime !== undefined) s.arenaTime = clampInt(data.arenaTime, 60, 600, s.arenaTime);
         if (data?.kartLaps !== undefined) s.kartLaps = clampInt(data.kartLaps, 1, 10, s.kartLaps);
         if (data?.telephoneSteps !== undefined) s.telephoneSteps = clampInt(data.telephoneSteps, 0, 30, s.telephoneSteps);
         this.broadcastState();

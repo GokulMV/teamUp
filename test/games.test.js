@@ -212,3 +212,66 @@ test('players can reconnect with their token and keep their identity', async () 
   assert.strictEqual(room.players.get(p.id).connected, true);
   room.destroy();
 });
+
+test('arena battle: rocket hit is a kill, victim respawns, results rank by kills', async () => {
+  const { host, players, room } = await makeRoom(4);
+  await call(host, 'lobby:settings', { mode: 'kart', kartMode: 'arena', arenaTime: 60, teamMode: true, teamCount: 2 });
+  const init = once(host, 'game:kart:init');
+  await call(host, 'game:start');
+  assert.strictEqual((await init).map, 'arena');
+
+  const game = room.game;
+  game.stop();
+  game.phase = 'racing';
+  game.raceStart = game.time;
+  const [a, b] = [game.karts.get(players[0].id), game.karts.get(players[1].id)];
+  room.players.get(players[0].id).team = 0;
+  room.players.get(players[1].id).team = 1;
+
+  // Put b right in front of a and fire.
+  Object.assign(a, { x: 600, y: 1300, angle: 0, speed: 0 });
+  Object.assign(b, { x: 680, y: 1300, angle: 0, speed: 0, shield: 0 });
+  a.item = 'rocket'; a.ammo = 1;
+  const hit = once(host, 'game:kart:hit');
+  game.useItem(a);
+  for (let i = 0; i < 5; i++) game.simulate(1 / 30);
+  const h = await hit;
+  assert.strictEqual(h.kill, true);
+  assert.strictEqual(a.kills, 1);
+  assert.strictEqual(b.deaths, 1);
+  assert.ok(b.dead > 0);
+
+  // Respawns with a spawn shield after the timer.
+  for (let i = 0; i < 90; i++) game.simulate(1 / 30);
+  assert.strictEqual(b.dead <= 0, true);
+  assert.ok(b.shield > 0);
+
+  // Teammates are immune to each other's rockets.
+  room.players.get(players[1].id).team = 0;
+  b.shield = 0; b.invuln = 0;
+  Object.assign(a, { x: 600, y: 1300, angle: 0 });
+  Object.assign(b, { x: 680, y: 1300, angle: 0, speed: 0 });
+  a.item = 'rocket'; a.ammo = 1;
+  game.useItem(a);
+  for (let i = 0; i < 5; i++) game.simulate(1 / 30);
+  assert.strictEqual(b.deaths, 1);
+
+  const results = once(host, 'room:state', (s) => s.state === 'results', 8000);
+  game.endRace();
+  const final = await results;
+  assert.strictEqual(final.results.map, 'arena');
+  assert.strictEqual(final.results.players[0].id, players[0].id);
+  assert.strictEqual(final.results.players[0].score, 100);
+  room.destroy();
+});
+
+test('arena physics keeps karts inside walls and out of obstacles', () => {
+  const K = require('../public/js/shared/kart-core');
+  const kart = { x: 200, y: 200, angle: Math.PI * 1.25, speed: 500, boost: 0, spin: 0 };
+  for (let i = 0; i < 120; i++) K.stepKart(kart, { up: true }, 1 / 30, 'arena');
+  assert.ok(kart.x >= 40 && kart.y >= 40);
+  const tower = K.ARENA.obstacles[0];
+  const k2 = { x: tower.x - 400, y: tower.y, angle: 0, speed: 500, boost: 0, spin: 0 };
+  for (let i = 0; i < 120; i++) K.stepKart(k2, { up: true }, 1 / 30, 'arena');
+  assert.ok(Math.hypot(k2.x - tower.x, k2.y - tower.y) >= tower.r + K.KART_RADIUS - 0.01);
+});

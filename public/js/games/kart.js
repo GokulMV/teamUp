@@ -1,34 +1,40 @@
 /* global KartCore */
 window.Games = window.Games || {};
 
+// Kart Battle client: networking, input, prediction and HUD.
+// The 3D world is drawn by Kart3D (js/games/kart3d.js).
 window.Games.kart = {
   mount(el, api) {
     const K = KartCore;
     const ITEM_ICONS = ['', '⚡', '🚀', '🍌', '🛡️', '🚀'];
+    const ITEM_NAMES = ['', 'Boost', 'Rocket', 'Banana', 'Shield', 'Triple rockets'];
     const INTERP_DELAY = 110; // ms behind the server for smooth remote karts
 
     el.innerHTML = `
       <div class="game-wrap">
         <div class="stage kart-stage" data-stage>
-          <canvas></canvas>
           <div class="kart-hud"><div class="place" data-place></div><div class="lap" data-lap></div><div data-time></div></div>
-          <div class="kart-item" data-item></div>
+          <div class="kart-timer" data-timer></div>
+          <div class="kart-item" data-item><span data-item-icon></span><small data-item-ammo></small></div>
+          <div class="kart-item-name" data-item-name></div>
           <div class="kart-board" data-board></div>
+          <div class="kart-feed" data-feed></div>
           <div class="kart-big" data-big></div>
-          <div class="kart-help">Arrows / WASD to drive · Space to use item</div>
+          <div class="kart-dead hidden" data-dead><h2>💥 Destroyed!</h2><p data-dead-by></p><p class="muted">Respawning…</p></div>
+          <canvas class="kart-minimap" data-minimap width="180" height="180"></canvas>
+          <div class="kart-help">Arrows / WASD to drive · Space to fire</div>
           <div class="touch-controls">
             <div class="grp"><button data-key="left">◀</button><button data-key="right">▶</button></div>
-            <div class="grp"><button data-key="down">▼</button><button data-key="use">⚡</button><button data-key="up">▲</button></div>
+            <div class="grp"><button data-key="down">▼</button><button data-key="use">🔥</button><button data-key="up">▲</button></div>
           </div>
         </div>
       </div>`;
     const q = (s) => el.querySelector(s);
-    const canvas = q('canvas');
-    const ctx = canvas.getContext('2d');
+    const stage = q('[data-stage]');
 
     let info = null; // init payload
     let kartsByIdx = new Map();
-    const snapshots = []; // { t, recv, data }
+    const snapshots = []; // { t, data }
     let clockOffset = null; // localNow - serverT (minimum observed)
     let latest = null;
     let myIdx = -1;
@@ -36,13 +42,25 @@ window.Games.kart = {
     let rtt = 80;
     let lastFrame = performance.now();
     let raf = 0;
-    let hitFlash = 0;
+    let view3d = null;
+    let snapCamera = true;
     const input = { up: false, down: false, left: false, right: false };
+    const teamMode = () => !!api.room()?.settings.teamMode;
+    const colorOf = (meta) => (teamMode() ? api.teamById(meta?.team)?.color : meta?.color) || '#fff';
 
-    // ---------- Track geometry (built once) ----------
-    const trackPath = new Path2D();
-    K.CENTERLINE.forEach(([x, y], i) => (i ? trackPath.lineTo(x, y) : trackPath.moveTo(x, y)));
-    trackPath.closePath();
+    // ---------- 3D renderer (ES module, may finish loading after mount) ----------
+    function createRenderer() {
+      if (!info || view3d || !window.Kart3D) return;
+      try {
+        view3d = new window.Kart3D(stage, { map: info.map });
+        view3d.setKarts(info.karts, myIdx, (meta) => (teamMode() ? api.teamById(meta.team)?.color : null));
+      } catch (err) {
+        console.error(err);
+        q('[data-big]').innerHTML = '<span style="font-size:1.4rem">Your browser couldn’t start 3D graphics (WebGL).</span>';
+      }
+    }
+    const onReady = () => createRenderer();
+    window.addEventListener('kart3d-ready', onReady);
 
     // ---------- Input ----------
     const keyMap = {
@@ -92,11 +110,16 @@ window.Games.kart = {
 
     // ---------- Network ----------
     function onInit(data) {
+      const sameRound = info && info.map === data.map && info.karts.length === data.karts.length;
       info = data;
       kartsByIdx = new Map(data.karts.map((k) => [k.idx, k]));
       const mine = data.karts.find((k) => k.id === api.myId());
       myIdx = mine ? mine.idx : -1;
       local = null;
+      snapCamera = true;
+      if (view3d && !sameRound) { view3d.dispose(); view3d = null; }
+      createRenderer();
+      q('[data-timer]').classList.toggle('hidden', data.map !== 'arena');
     }
 
     function onState(s) {
@@ -114,10 +137,11 @@ window.Games.kart = {
       if (!row) return;
       const [, x, y, a1000, speed, , , , , flags] = row;
       const angle = a1000 / 1000;
-      if (!local) {
-        local = { x, y, angle, speed, boost: 0, spin: 0, trackIndex: null };
+      if (!local || flags & 32) {
+        local = { x, y, angle, speed, boost: 0, spin: 0, trackIndex: null, dead: !!(flags & 32) };
         return;
       }
+      if (local.dead) { local.dead = false; Object.assign(local, { x, y, angle, speed }); snapCamera = true; return; }
       // Server state is ~half an RTT old; project it forward before comparing.
       const lead = Math.min(0.25, rtt / 2000);
       const sx = x + Math.cos(angle) * speed * lead;
@@ -140,7 +164,7 @@ window.Games.kart = {
       }
     }
 
-    // Interpolated kart rows for rendering.
+    // Interpolated positions for rendering.
     function interpolated() {
       if (!snapshots.length || clockOffset === null) return null;
       const target = performance.now() - clockOffset - INTERP_DELAY;
@@ -155,275 +179,168 @@ window.Games.kart = {
       const prev = new Map(a.data.k.map((r) => [r[0], r]));
       const karts = b.data.k.map((r) => {
         const p = prev.get(r[0]) || r;
+        // Don't slide across the map when a kart respawns.
+        const jump = Math.hypot(r[1] - p[1], r[2] - p[2]) > 200;
+        const ff = jump ? 1 : f;
         let da = (r[3] - p[3]) / 1000;
         da = Math.atan2(Math.sin(da), Math.cos(da));
-        return { idx: r[0], x: p[1] + (r[1] - p[1]) * f, y: p[2] + (r[2] - p[2]) * f, angle: p[3] / 1000 + da * f, flags: r[9] };
+        return {
+          idx: r[0], x: p[1] + (r[1] - p[1]) * ff, y: p[2] + (r[2] - p[2]) * ff,
+          angle: p[3] / 1000 + da * ff, speed: r[4], flags: r[9],
+        };
       });
       const prevR = new Map(a.data.r.map((r) => [r[0], r]));
       const rockets = b.data.r.map((r) => {
         const p = prevR.get(r[0]);
-        return p ? [p[1] + (r[1] - p[1]) * f, p[2] + (r[2] - p[2]) * f, r[3] / 1000] : [r[1], r[2], r[3] / 1000];
+        return p ? [r[0], p[1] + (r[1] - p[1]) * f, p[2] + (r[2] - p[2]) * f, r[3] / 1000] : [r[0], r[1], r[2], r[3] / 1000];
       });
-      return { karts, rockets };
+      return { karts, rockets, bananas: b.data.b, boxes: b.data.x };
     }
 
-    // ---------- Rendering ----------
-    function resize() {
-      const r = canvas.getBoundingClientRect();
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      canvas.width = Math.max(1, Math.round(r.width * dpr));
-      canvas.height = Math.max(1, Math.round(r.height * dpr));
-    }
-    const ro = new ResizeObserver(resize);
-    ro.observe(canvas);
-
-    function drawTrack() {
-      ctx.fillStyle = '#2f6d2b';
-      ctx.fillRect(-500, -500, K.WORLD.w + 1000, K.WORLD.h + 1000);
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-      ctx.strokeStyle = '#4c9a44';
-      ctx.lineWidth = K.TRACK_WIDTH + 320;
-      ctx.stroke(trackPath);
-      ctx.strokeStyle = '#e5e7eb';
-      ctx.lineWidth = K.TRACK_WIDTH + 18;
-      ctx.stroke(trackPath);
-      ctx.setLineDash([40, 40]);
-      ctx.strokeStyle = '#dc2626';
-      ctx.stroke(trackPath);
-      ctx.setLineDash([]);
-      ctx.strokeStyle = '#4b5563';
-      ctx.lineWidth = K.TRACK_WIDTH;
-      ctx.stroke(trackPath);
-      ctx.setLineDash([30, 40]);
-      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
-      ctx.lineWidth = 4;
-      ctx.stroke(trackPath);
-      ctx.setLineDash([]);
-
-      // Checkered start/finish line at sample 0.
-      const t = K.TANGENTS[0];
-      const c = K.CENTERLINE[0];
+    // ---------- HUD ----------
+    function drawMinimap(karts) {
+      const c = q('[data-minimap]');
+      const ctx = c.getContext('2d');
+      const W = c.width;
+      ctx.clearRect(0, 0, W, W);
+      ctx.fillStyle = 'rgba(15,10,35,0.55)';
+      ctx.beginPath(); ctx.roundRect(0, 0, W, W, 14); ctx.fill();
+      const arena = info.map === 'arena';
+      const size = arena ? K.ARENA.size : K.WORLD.w;
+      const pad = 12;
+      const s = (W - pad * 2) / size;
       ctx.save();
-      ctx.translate(c[0], c[1]);
-      ctx.rotate(Math.atan2(t[1], t[0]));
-      const sq = 13;
-      for (let i = -K.TRACK_WIDTH / 2; i < K.TRACK_WIDTH / 2; i += sq) {
-        for (let j = 0; j < 2; j++) {
-          ctx.fillStyle = (Math.round(i / sq) + j) % 2 ? '#fff' : '#111';
-          ctx.fillRect(j * sq - sq, i, sq, sq);
-        }
-      }
-      ctx.restore();
-    }
-
-    function drawBoxes(boxes, now) {
-      K.ITEM_BOXES.forEach((b, i) => {
-        if (boxes && !boxes[i]) return;
-        ctx.save();
-        ctx.translate(b.x, b.y);
-        ctx.rotate(now / 600 + i);
-        ctx.fillStyle = 'rgba(255,255,255,0.25)';
-        ctx.fillRect(-15, -15, 30, 30);
-        const g = ctx.createLinearGradient(-12, -12, 12, 12);
-        g.addColorStop(0, '#facc15'); g.addColorStop(0.5, '#ec4899'); g.addColorStop(1, '#3b82f6');
-        ctx.fillStyle = g;
-        ctx.fillRect(-11, -11, 22, 22);
-        ctx.rotate(-(now / 600 + i));
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 16px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('?', 0, 1);
-        ctx.restore();
-      });
-    }
-
-    function drawKart(k, meta, isMe, now) {
-      const teamMode = api.room()?.settings.teamMode;
-      const team = teamMode ? api.teamById(meta.team) : null;
-      ctx.save();
-      ctx.translate(k.x, k.y);
-      // Name label (unrotated).
-      ctx.font = `${isMe ? 'bold ' : ''}14px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      const label = isMe ? 'YOU' : meta.name;
-      const w = ctx.measureText(label).width + 10;
-      ctx.fillRect(-w / 2, -42, w, 18);
-      ctx.fillStyle = team ? team.color : '#fff';
-      ctx.fillText(label, 0, -28);
-
-      if (k.flags & 4) { // shield
-        ctx.strokeStyle = 'rgba(96,165,250,0.9)';
-        ctx.lineWidth = 4;
-        ctx.beginPath(); ctx.arc(0, 0, 28 + Math.sin(now / 100) * 2, 0, Math.PI * 2); ctx.stroke();
-      }
-      ctx.rotate(k.angle);
-      if (k.flags & 2) { // boost flame
-        ctx.fillStyle = Math.random() > 0.5 ? '#f97316' : '#facc15';
-        ctx.beginPath(); ctx.moveTo(-18, -7); ctx.lineTo(-38 - Math.random() * 12, 0); ctx.lineTo(-18, 7); ctx.fill();
-      }
-      if ((k.flags & 16) && !(k.flags & 1) && Math.floor(now / 100) % 2) ctx.globalAlpha = 0.5;
-      // Wheels
-      ctx.fillStyle = '#111';
-      ctx.fillRect(-15, -14, 9, 5); ctx.fillRect(-15, 9, 9, 5);
-      ctx.fillRect(7, -13, 8, 4); ctx.fillRect(7, 9, 8, 4);
-      // Body
-      ctx.fillStyle = meta.color;
-      ctx.strokeStyle = team ? team.color : (isMe ? '#fff' : '#111');
-      ctx.lineWidth = team || isMe ? 3 : 1.5;
-      ctx.beginPath();
-      ctx.roundRect(-17, -10, 34, 20, 6);
-      ctx.fill(); ctx.stroke();
-      // Driver
-      ctx.fillStyle = '#fde68a';
-      ctx.beginPath(); ctx.arc(-2, 0, 5.5, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(10, -6, 5, 12);
-      ctx.restore();
-      if (k.flags & 1) {
-        ctx.font = '22px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('💫', k.x, k.y - 50);
-      }
-    }
-
-    function drawMinimap(karts, cw, ch, dpr) {
-      const size = Math.min(170, Math.min(cw, ch) / dpr * 0.28) * dpr;
-      const pad = 12 * dpr;
-      const s = size / K.WORLD.w;
-      ctx.save();
-      ctx.translate(cw - size - pad, ch - size - pad);
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.beginPath(); ctx.roundRect(-6 * dpr, -6 * dpr, size + 12 * dpr, size + 12 * dpr, 10 * dpr); ctx.fill();
+      ctx.translate(pad, pad);
       ctx.scale(s, s);
-      ctx.strokeStyle = 'rgba(255,255,255,0.7)';
-      ctx.lineWidth = K.TRACK_WIDTH * 0.6;
-      ctx.lineJoin = 'round';
-      ctx.stroke(trackPath);
+      if (arena) {
+        ctx.strokeStyle = '#facc15';
+        ctx.lineWidth = 40;
+        ctx.strokeRect(20, 20, size - 40, size - 40);
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        for (const o of K.ARENA.obstacles) { ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2); ctx.fill(); }
+      } else {
+        ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+        ctx.lineWidth = K.TRACK_WIDTH * 0.6;
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        K.CENTERLINE.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+        ctx.stroke();
+      }
       for (const k of karts) {
+        if (k.flags & 32) continue;
         const meta = kartsByIdx.get(k.idx);
-        if (!meta) continue;
         const me = k.idx === myIdx;
-        const team = api.room()?.settings.teamMode ? api.teamById(meta.team) : null;
-        ctx.fillStyle = team ? team.color : meta.color;
-        ctx.beginPath(); ctx.arc(k.x, k.y, me ? 110 : 70, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = colorOf(meta);
+        ctx.beginPath(); ctx.arc(k.x, k.y, me ? 110 : 65, 0, Math.PI * 2); ctx.fill();
         if (me) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 40; ctx.stroke(); }
       }
       ctx.restore();
     }
 
     let boardUpdate = 0;
-    function updateHud(now) {
+    function updateHud(now, karts) {
       if (!latest || !info) return;
+      const arena = info.map === 'arena';
       const big = q('[data-big]');
       if (latest.phase === 'countdown') {
         const n = Math.ceil(latest.countdown - 1);
         big.textContent = n > 0 ? n : 'GO!';
       } else if (latest.phase === 'racing' && latest.elapsed < 1) big.textContent = 'GO!';
+      else if (latest.phase === 'done') big.textContent = arena ? 'TIME!' : 'FINISH!';
       else big.textContent = '';
+
+      if (arena && latest.timeLeft !== null) {
+        const t = Math.ceil(latest.timeLeft);
+        q('[data-timer]').textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+        q('[data-timer]').classList.toggle('urgent', t <= 10);
+      }
 
       const row = latest.k.find((r) => r[0] === myIdx);
       if (row) {
-        const [, , , , , lap, place, item, ammo, flags] = row;
-        q('[data-place]').textContent = flags & 8 ? `🏁 #${place}` : `#${place}`;
-        q('[data-lap]').textContent = `Lap ${lap}/${info.laps}`;
-        q('[data-item]').innerHTML = item ? `${ITEM_ICONS[item]}${ammo > 1 ? `<small>x${ammo}</small>` : ''}` : '';
-        q('[data-item]').style.opacity = item ? '1' : '0.35';
+        const [, , , , , lap, place, item, ammo, flags, kills, deaths] = row;
+        if (arena) {
+          q('[data-place]').textContent = `#${place}`;
+          q('[data-lap]').textContent = `💥 ${kills} kills`;
+          q('[data-time]').textContent = `☠️ ${deaths} deaths`;
+        } else {
+          q('[data-place]').textContent = flags & 8 ? `🏁 #${place}` : `#${place}`;
+          q('[data-lap]').textContent = `Lap ${lap}/${info.laps}`;
+          q('[data-time]').textContent = latest.phase === 'racing' ? `${latest.elapsed.toFixed(1)}s` : '';
+        }
+        q('[data-item-icon]').textContent = item ? ITEM_ICONS[item] : '';
+        q('[data-item-ammo]').textContent = ammo > 1 ? `x${ammo}` : '';
+        q('[data-item]').classList.toggle('empty', !item);
+        q('[data-item-name]').textContent = item ? `${ITEM_NAMES[item]} · Space` : '';
+        q('[data-dead]').classList.toggle('hidden', !(flags & 32));
       } else {
         q('[data-place]').textContent = '👀';
         q('[data-lap]').textContent = 'Spectating';
         q('[data-item]').style.display = 'none';
       }
-      q('[data-time]').textContent = latest.phase === 'racing' ? `${latest.elapsed.toFixed(1)}s` : '';
 
       if (now - boardUpdate > 300) {
         boardUpdate = now;
+        drawMinimap(karts);
         const rows = [...latest.k].sort((a, b) => a[6] - b[6]);
-        const shown = rows.slice(0, 10);
-        if (row && row[6] > 10) shown.push(row);
+        const shown = rows.slice(0, 8);
+        if (row && row[6] > 8) shown.push(row);
         q('[data-board]').innerHTML = shown.map((r) => {
           const meta = kartsByIdx.get(r[0]);
-          const team = api.room()?.settings.teamMode ? api.teamById(meta?.team) : null;
-          return `<div class="${r[0] === myIdx ? 'me' : ''}">${r[6]}. <span style="color:${team ? team.color : meta?.color}">●</span> ${api.escapeHtml(meta?.name || '?')}${r[9] & 8 ? ' 🏁' : ''}</div>`;
+          const tail = arena ? `<b>${r[10]}</b>` : (r[9] & 8 ? '🏁' : '');
+          return `<div class="${r[0] === myIdx ? 'me' : ''}"><span>${r[6]}. <i style="color:${colorOf(meta)}">●</i> ${api.escapeHtml(meta?.name || '?')}</span>${tail}</div>`;
         }).join('');
       }
     }
 
+    function feed(html) {
+      const f = q('[data-feed]');
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      f.prepend(div);
+      while (f.children.length > 5) f.lastChild.remove();
+      setTimeout(() => div.remove(), 5000);
+    }
+
+    // ---------- Frame loop ----------
     function frame(now) {
       raf = requestAnimationFrame(frame);
       const dt = Math.min(0.05, (now - lastFrame) / 1000);
       lastFrame = now;
-      const cw = canvas.width;
-      const ch = canvas.height;
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.fillStyle = '#2f6d2b';
-      ctx.fillRect(0, 0, cw, ch);
       if (!info) return;
 
       // Predict my kart locally so steering feels instant.
-      if (local && latest?.phase === 'racing') {
-        const row = latest.k.find((r) => r[0] === myIdx);
-        const finished = row && row[9] & 8;
-        K.stepKart(local, finished ? { down: true } : input, dt);
+      const myRow = latest?.k.find((r) => r[0] === myIdx);
+      if (local && !local.dead && latest?.phase === 'racing') {
+        const finished = myRow && myRow[9] & 8;
+        K.stepKart(local, finished ? { down: true } : input, dt, info.map);
       }
 
       const view = interpolated();
       const karts = view ? view.karts : [];
-      if (local) {
-        const me = karts.find((k) => k.idx === myIdx);
-        if (me) { me.x = local.x; me.y = local.y; me.angle = local.angle; }
+      const me = karts.find((k) => k.idx === myIdx);
+      if (local && me && !(me.flags & 32)) {
+        me.x = local.x; me.y = local.y; me.angle = local.angle; me.speed = local.speed;
       }
 
-      // Camera: follow me, or the leader when spectating.
-      let focus = karts.find((k) => k.idx === myIdx);
-      if (!focus && latest) {
+      // Camera follows me, or the leader when spectating.
+      let focusKart = me && !(me.flags & 32) ? me : null;
+      if (!focusKart && !me && latest) {
         const leader = latest.k.find((r) => r[6] === 1);
-        focus = karts.find((k) => leader && k.idx === leader[0]);
+        focusKart = karts.find((k) => leader && k.idx === leader[0]);
       }
-      const fx = focus ? focus.x : K.WORLD.w / 2;
-      const fy = focus ? focus.y : K.WORLD.h / 2;
-      const zoom = Math.min(cw, ch) / 1000;
-      ctx.setTransform(zoom, 0, 0, zoom, cw / 2 - fx * zoom, ch / 2 - fy * zoom);
-
-      drawTrack();
-      drawBoxes(latest?.x, now);
-      if (latest) {
-        ctx.font = '26px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        for (const b of latest.b) ctx.fillText('🍌', b[1], b[2]);
+      if (view3d && view) {
+        view3d.update({
+          ...view,
+          karts,
+          focus: focusKart ? {
+            x: focusKart.x, y: focusKart.y, angle: focusKart.angle,
+            spinning: !!(focusKart.flags & 1), boost: !!(focusKart.flags & 2), snap: snapCamera,
+          } : (me && myRow ? { x: myRow[1], y: myRow[2], angle: myRow[3] / 1000, spinning: true } : null),
+        }, dt, now);
+        if (focusKart) snapCamera = false;
       }
-      if (view) {
-        for (const [x, y, a] of view.rockets) {
-          ctx.save();
-          ctx.translate(x, y);
-          ctx.rotate(a);
-          ctx.fillStyle = '#ef4444';
-          ctx.beginPath(); ctx.moveTo(14, 0); ctx.lineTo(-10, -7); ctx.lineTo(-10, 7); ctx.fill();
-          ctx.fillStyle = '#facc15';
-          ctx.beginPath(); ctx.moveTo(-10, -4); ctx.lineTo(-20 - Math.random() * 8, 0); ctx.lineTo(-10, 4); ctx.fill();
-          ctx.restore();
-        }
-      }
-      ctx.textBaseline = 'alphabetic';
-      // Draw me last so I'm always on top.
-      const ordered = [...karts].sort((a, b) => (a.idx === myIdx) - (b.idx === myIdx));
-      for (const k of ordered) {
-        const meta = kartsByIdx.get(k.idx);
-        if (meta) drawKart(k, meta, k.idx === myIdx, now);
-      }
-
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      if (hitFlash > 0) {
-        hitFlash -= dt;
-        ctx.fillStyle = `rgba(239,68,68,${Math.max(0, hitFlash) * 0.5})`;
-        ctx.fillRect(0, 0, cw, ch);
-      }
-      drawMinimap(karts, cw, ch, dpr);
-      updateHud(now);
+      updateHud(now, karts);
     }
     raf = requestAnimationFrame(frame);
 
@@ -432,9 +349,19 @@ window.Games.kart = {
       onEvent(event, data) {
         if (event === 'game:kart:init') onInit(data);
         else if (event === 'game:kart:state') onState(data);
+        else if (event === 'game:kart:boom') view3d?.explode(data.x, data.y, false);
         else if (event === 'game:kart:hit') {
-          if (data.target === myIdx) { hitFlash = 0.8; api.toast('💥 You got hit!'); }
-          else if (data.by === myIdx) api.toast(`🎯 You hit ${kartsByIdx.get(data.target)?.name || 'someone'}!`);
+          view3d?.explode(data.x, data.y, data.kill);
+          const victim = kartsByIdx.get(data.target);
+          const killer = data.by >= 0 ? kartsByIdx.get(data.by) : null;
+          const name = (m) => `<b style="color:${colorOf(m)}">${api.escapeHtml(m?.name || '?')}</b>`;
+          if (data.kill) feed(killer ? `${name(killer)} 💥 ${name(victim)}` : `${name(victim)} 🍌 slipped`);
+          if (data.target === myIdx) {
+            q('[data-dead-by]').innerHTML = killer ? `by ${name(killer)}` : '';
+            if (!data.kill) api.toast('💥 You got hit!');
+          } else if (data.by === myIdx) {
+            api.toast(`🎯 You ${data.kill ? 'destroyed' : 'hit'} ${victim?.name || 'someone'}!`);
+          }
         } else if (event === 'game:kart:finish' && data.idx === myIdx) {
           api.toast(`🏁 You finished #${data.place} in ${data.time.toFixed(1)}s!`);
         }
@@ -443,7 +370,8 @@ window.Games.kart = {
         cancelAnimationFrame(raf);
         clearInterval(resend);
         clearInterval(pinger);
-        ro.disconnect();
+        view3d?.dispose();
+        window.removeEventListener('kart3d-ready', onReady);
         window.removeEventListener('keydown', kd);
         window.removeEventListener('keyup', ku);
         window.removeEventListener('blur', blur);

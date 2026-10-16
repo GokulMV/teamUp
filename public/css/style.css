@@ -188,22 +188,39 @@ input:focus, select:focus { border-color: var(--accent); }
 .tool-btn.active { background: var(--ink); color: #fff; }
 
 /* Kart */
-.kart-stage { background: #3f8f3a; }
-.kart-stage canvas { width: 100%; height: 100%; display: block; }
-.kart-hud { position: absolute; top: 10px; left: 10px; color: #fff; font-weight: 800; text-shadow: 0 2px 4px rgba(0,0,0,0.6); pointer-events: none; }
-.kart-hud .place { font-size: 2.6rem; line-height: 1; }
-.kart-hud .lap { font-size: 1.2rem; }
-.kart-item {
-  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); width: 70px; height: 70px; border-radius: 14px;
-  background: rgba(0,0,0,0.45); border: 3px solid #fff; color: #fff; font-size: 2.2rem; display: flex; align-items: center; justify-content: center;
-  pointer-events: none;
+.kart-stage { background: #87c4f0; }
+.kart-canvas { position: absolute; inset: 0; display: block; }
+.kart-stage > div, .kart-stage > canvas.kart-minimap { z-index: 2; }
+.kart-hud { position: absolute; top: 12px; left: 14px; color: #fff; font-weight: 800; text-shadow: 0 2px 6px rgba(0,0,0,0.7); pointer-events: none; }
+.kart-hud .place { font-size: 3rem; line-height: 1; font-style: italic; }
+.kart-hud .lap { font-size: 1.25rem; }
+.kart-timer {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); margin-left: -90px; background: rgba(15,10,35,0.6); color: #fff;
+  font-weight: 900; font-size: 1.6rem; padding: 6px 14px; border-radius: 12px; pointer-events: none; font-variant-numeric: tabular-nums;
 }
-.kart-item small { position: absolute; bottom: 2px; right: 6px; font-size: 0.9rem; }
-.kart-help { position: absolute; bottom: 10px; left: 10px; color: #fff; font-size: 0.85rem; opacity: 0.85; text-shadow: 0 1px 2px #000; pointer-events: none; }
-.kart-big { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 7rem; font-weight: 900; color: #fff; text-shadow: 0 6px 0 rgba(0,0,0,0.4); pointer-events: none; }
-.kart-board { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.45); color: #fff; border-radius: 10px; padding: 6px 10px; font-size: 0.8rem; max-height: 45%; overflow: hidden; pointer-events: none; min-width: 140px; }
-.kart-board div { white-space: nowrap; }
+.kart-timer.urgent { background: #dc2626; animation: pulse 0.5s infinite alternate; }
+@keyframes pulse { to { transform: translateX(-50%) scale(1.08); } }
+.kart-item {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); width: 76px; height: 76px; border-radius: 18px;
+  background: linear-gradient(135deg, rgba(250,204,21,0.9), rgba(236,72,153,0.9)); border: 4px solid #fff; color: #fff; font-size: 2.4rem;
+  display: flex; align-items: center; justify-content: center; pointer-events: none; box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+}
+.kart-item.empty { background: rgba(15,10,35,0.45); border-color: rgba(255,255,255,0.5); }
+.kart-item small { position: absolute; bottom: 2px; right: 6px; font-size: 0.95rem; font-weight: 900; }
+.kart-item-name { position: absolute; top: 92px; left: 50%; transform: translateX(-50%); color: #fff; font-weight: 800; font-size: 0.85rem; text-shadow: 0 1px 4px #000; pointer-events: none; white-space: nowrap; }
+.kart-help { position: absolute; bottom: 10px; left: 12px; color: #fff; font-size: 0.85rem; opacity: 0.9; text-shadow: 0 1px 3px #000; pointer-events: none; }
+.kart-big { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 7rem; font-weight: 900; font-style: italic; color: #fff; text-shadow: 0 6px 0 rgba(0,0,0,0.35), 0 0 30px rgba(255,79,139,0.8); pointer-events: none; }
+.kart-board { position: absolute; top: 12px; right: 12px; background: rgba(15,10,35,0.55); color: #fff; border-radius: 12px; padding: 8px 10px; font-size: 0.82rem; pointer-events: none; min-width: 170px; }
+.kart-board div { display: flex; justify-content: space-between; gap: 10px; white-space: nowrap; padding: 1px 0; }
+.kart-board i { font-style: normal; }
 .kart-board .me { color: var(--accent-2); font-weight: 800; }
+.kart-feed { position: absolute; top: 120px; left: 14px; display: flex; flex-direction: column; gap: 4px; pointer-events: none; }
+.kart-feed div { background: rgba(15,10,35,0.6); color: #fff; padding: 4px 10px; border-radius: 8px; font-size: 0.85rem; animation: pop 0.25s ease-out; }
+.kart-dead { position: absolute; inset: 0; background: rgba(120,0,20,0.35); color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; text-shadow: 0 2px 8px #000; pointer-events: none; }
+.kart-dead h2 { font-size: 3rem; margin: 0; }
+.kart-dead p { margin: 4px 0; font-size: 1.2rem; }
+.kart-dead .muted { color: #fde2e8; }
+.kart-minimap { position: absolute; bottom: 12px; right: 12px; width: 180px; height: 180px; pointer-events: none; }
 .touch-controls { position: absolute; bottom: 12px; left: 0; right: 0; display: none; justify-content: space-between; padding: 0 12px; pointer-events: none; }
 .touch-controls .grp { display: flex; gap: 10px; pointer-events: auto; }
 .touch-controls button {
@@ -213,7 +230,9 @@ input:focus, select:focus { border-color: var(--accent); }
 .touch-controls button.on { background: rgba(255,255,255,0.6); }
 @media (pointer: coarse) {
   .touch-controls { display: flex; }
-  .kart-help { display: none; }
+  .kart-help, .kart-board { display: none; }
+  .kart-minimap { top: 12px; bottom: auto; width: 110px; height: 110px; }
+  .kart-timer { margin-left: 0; top: 96px; font-size: 1.2rem; }
 }
 
 /* Telephone */

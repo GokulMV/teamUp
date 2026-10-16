@@ -56,7 +56,7 @@
                 </button>
                 <button class="mode-card" data-mode="kart">
                   <div class="emoji">🏎️</div><h3>Kart Battle</h3>
-                  <p>Race laps, grab item boxes, fire rockets and drop bananas.</p>
+                  <p>3D karts: race laps or battle in the arena with rockets, bananas and shields.</p>
                 </button>
                 <button class="mode-card" data-mode="telephone">
                   <div class="emoji">📞</div><h3>Telephone</h3>
@@ -77,8 +77,17 @@
                 <label class="setting mode-pictionary mode-telephone">Draw time (s)
                   <input type="number" id="set-drawtime" min="30" max="180" step="10">
                 </label>
-                <label class="setting mode-kart">Laps
+                <label class="setting mode-kart">Kart mode
+                  <select id="set-kartmode">
+                    <option value="race">🏁 Race</option>
+                    <option value="arena">💥 Arena battle</option>
+                  </select>
+                </label>
+                <label class="setting mode-kart kart-race">Laps
                   <input type="number" id="set-laps" min="1" max="10">
+                </label>
+                <label class="setting mode-kart kart-arena">Battle time (s)
+                  <input type="number" id="set-arenatime" min="60" max="600" step="30">
                 </label>
                 <label class="setting mode-telephone">Chain length (0 = everyone)
                   <input type="number" id="set-steps" min="0" max="30">
@@ -130,6 +139,10 @@
 
   <div id="toast" class="toast"></div>
 
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/build/three.module.min.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+  </script>
+  <script type="module" src="/js/games/kart3d.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/shared/kart-core.js"></script>
   <script src="/js/draw-board.js"></script>

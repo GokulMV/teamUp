@@ -8,6 +8,8 @@ const PORT = process.env.PORT || 3000;
 
 const app = express();
 app.use(express.static(path.join(__dirname, '..', 'public')));
+// Three.js (3D kart rendering) served straight from node_modules.
+app.use('/vendor/three', express.static(path.join(__dirname, '..', 'node_modules', 'three')));
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 const server = http.createServer(app);

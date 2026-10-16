@@ -6,7 +6,7 @@ No installs for players: share a 4-letter room code or invite link and everyone 
 | Mode | Inspired by | How it plays |
 |------|-------------|--------------|
 | 🎨 **Pictionary** | Skribbl / Pictionary | One player draws, everyone guesses in chat. Faster guesses score more, hint letters reveal over time. In team mode, teams take turns drawing and scores are pooled. |
-| 🏎️ **Kart Battle** | Mario Kart / Smash Karts | Top-down racing for up to 30 karts. Item boxes give ⚡ boosts, 🚀 rockets, 🍌 bananas, 🛡️ shields and triple rockets. Points for placement + hits. In team mode rockets don't hit teammates and team points combine. |
+| 🏎️ **Kart Battle** | Mario Kart / Smash Karts | **3D** karts (Three.js) with a chase camera, shadows and explosions. Two modes: **Race** (laps on a circuit, points for placement + hits) and **Arena battle** (timed deathmatch: every hit is a kill, you respawn after 2.5 s). Item boxes give ⚡ boosts, 🚀 homing rockets, 🍌 bananas, 🛡️ shields and triple rockets. In team mode rockets don't hit teammates and team points combine. |
 | 📞 **Telephone** | Gartic Phone | Write a prompt → the next player draws it → the next describes the drawing → … then the host flips through every album. In team mode, books circulate inside each team. |
 
 ## Run it
@@ -35,12 +35,13 @@ public/                     browser client (plain HTML/CSS/JS, no build step)
   js/app.js                 home, lobby, teams, chat, results
   js/draw-board.js          shared drawing canvas (normalized coordinates)
   js/games/*.js             per-mode client UI
+  js/games/kart3d.js        Three.js 3D renderer for Kart Battle (track, arena, karts, particles)
   js/shared/kart-core.js    track + kart physics shared by server and client
 server/
   index.js                  Express + Socket.IO
   rooms.js                  rooms (30 max), host controls, teams, reconnects
   games/pictionary.js       turns, word choice, hints, scoring
-  games/kart.js             authoritative 30 Hz race simulation, items, laps
+  games/kart.js             authoritative 30 Hz simulation: race laps or arena deathmatch, items
   games/telephone.js        chained write/draw/describe steps + reveal
 ```
 
@@ -55,7 +56,8 @@ Any Node 18+ host that supports WebSockets works (Render, Railway, Fly.io, a VPS
 
 ## Ideas for next steps
 
-- More kart tracks and a track picker; battle-arena mode (last kart standing)
+- More kart tracks and arenas, plus a picker
+- Kart customization (colors, hats, bodies)
 - Custom word lists for Pictionary
 - Download Telephone albums as GIFs
 - Sound effects and music
