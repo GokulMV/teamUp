@@ -616,13 +616,13 @@ test('CPU drivers join the race and lap the grand prix at hard', async () => {
   assert.strictEqual(new Set(botMeta.map((b) => b.name)).size, 5, 'bot names are unique');
 
   const start = new Map(bots().map((k) => [k.id, [k.x, k.y]]));
-  run(60);
+  run(75);
   assert.strictEqual(game.botError, false);
   for (const k of bots()) {
     assert.ok(Number.isFinite(k.x) && Number.isFinite(k.y), `${k.name} position is finite`);
     const [x0, y0] = start.get(k.id);
     assert.ok(Math.hypot(k.x - x0, k.y - y0) > 100 || k.lap > 1, `${k.name} moved`);
-    assert.ok(k.lap >= 2, `${k.name} completed a lap within 60 s (lap ${k.lap})`);
+    assert.ok(k.lap >= 2, `${k.name} completed a lap within 75 s (lap ${k.lap})`);
   }
   room.destroy();
 });
@@ -794,8 +794,8 @@ test('reverse races: mirrored map, laps count the other way round', async () => 
   const t = rev.tangents[me.trackIndex];
   assert.ok(Math.cos(me.angle) * t[0] + Math.sin(me.angle) * t[1] > 0.99);
   assert.ok(me.trackIndex > rev.n - 20);
-  // Bots drive the reversed circuit and finish the lap.
-  run(45);
+  // Bots drive the reversed circuit and finish the lap (~50 s laps on the big tracks).
+  run(75);
   assert.ok(bots().every((k) => k.finished), `bots finished: ${bots().map((k) => k.lap)}`);
   // Driving the forward direction across the line does not count as a lap.
   Object.assign(me, { lap: 1, finished: false });
@@ -823,4 +823,238 @@ test('results include CPU drivers with their stats and team scores', async () =>
   assert.strictEqual(team.score, 300);
   assert.strictEqual(final.teams.reduce((sum, tm) => sum + tm.members, 0), 5);
   room.destroy();
+});
+
+// ---------- Race tracks: scale, heights, jumps, falls ----------
+const raceIds = () => {
+  const K = require('../public/js/shared/kart-core');
+  return Object.keys(K.MAPS).filter((id) => K.MAPS[id].type === 'race');
+};
+
+test('race tracks are long, wide and never cross or crowd themselves', () => {
+  const K = require('../public/js/shared/kart-core');
+  const ids = raceIds();
+  assert.ok(ids.length >= 6, 'six race tracks');
+  for (const id of ['coast', 'lavapeak']) {
+    const m = K.MAPS[id];
+    assert.ok(m && m.type === 'race' && m.name && m.emoji && m.theme && m.blurb, `${id} is a full race map`);
+  }
+  for (const id of ids) {
+    for (const reverse of [false, true]) {
+      const m = K.getMap(id, 'race', { reverse });
+      assert.ok(m.length >= 16000 && m.length <= 22000, `${id}: lap ${Math.round(m.length)} units`);
+      assert.ok(m.width >= 260, `${id}: width ${m.width}`);
+      assert.ok(m.spacing > 24 && m.spacing < 40, `${id}: sample spacing ${m.spacing}`);
+      // Stretches that are far apart along the lap are far apart on the ground: walls never meet.
+      const skip = Math.ceil(2600 / m.spacing);
+      for (let i = 0; i < m.n; i += 2) {
+        for (let j = i + skip; j < m.n; j += 2) {
+          if (m.n - (j - i) < skip) continue;
+          const d = Math.hypot(m.centerline[i][0] - m.centerline[j][0], m.centerline[i][1] - m.centerline[j][1]);
+          assert.ok(d > m.wallD[i] + m.wallD[j] + 60, `${id}: samples ${i}/${j} only ${Math.round(d)} apart`);
+        }
+      }
+      const heights = Array.from(m.heights);
+      assert.ok(Math.max(...heights) - Math.min(...heights) > 150, `${id}: real elevation changes`);
+      // Item boxes and boost pads sit on solid road, never over a gap.
+      for (const b of [...m.itemBoxes, ...m.boostPads]) {
+        const q = m.nearestIndex(b.x, b.y);
+        assert.ok(q.dist <= m.width / 2 && !m.gap[q.index], `${id}: box/pad on the road`);
+      }
+    }
+  }
+});
+
+test('heightAt is smooth along and across the road; arenas are flat', () => {
+  const K = require('../public/js/shared/kart-core');
+  for (const id of raceIds()) {
+    const m = K.MAPS[id];
+    let hint = 0;
+    let prev = null;
+    // Along the centre line, 4 units at a time (gaps are meant to be jumped).
+    for (let i = 0; i < m.n; i++) {
+      const [ax, ay] = m.centerline[i];
+      const [bx, by] = m.centerline[(i + 1) % m.n];
+      for (let s = 0; s < 8; s++) {
+        const x = ax + ((bx - ax) * s) / 8;
+        const y = ay + ((by - ay) * s) / 8;
+        const q = m.nearestIndex(x, y, hint);
+        hint = q.index;
+        const h = m.surfaceAt(x, y, q) - m.bumpAt(q); // ramps are meant to be steep
+        assert.ok(Number.isFinite(h), `${id}: finite height`);
+        if (prev !== null && !m.gap[q.index]) assert.ok(Math.abs(h - prev) < 3, `${id}: height jumps ${(h - prev).toFixed(1)} at sample ${i}`);
+        prev = h;
+      }
+    }
+    // Across the road out to the wall: no steps.
+    for (let i = 0; i < m.n; i += 7) {
+      if (m.bridge[i] || m.gap[i] || m.railed[i]) continue;
+      const t = m.tangents[i];
+      for (const side of [1, -1]) {
+        let last = null;
+        for (let d = 0; d <= m.wallD[i]; d += 4) {
+          const x = m.centerline[i][0] - t[1] * d * side;
+          const y = m.centerline[i][1] + t[0] * d * side;
+          const h = m.heightAt(x, y, i);
+          if (last !== null) assert.ok(Math.abs(h - last) < 8, `${id}: step of ${(h - last).toFixed(1)} across the road at ${i}, ${d}`);
+          last = h;
+        }
+      }
+    }
+  }
+  assert.strictEqual(K.MAPS.colosseum.heightAt(500, 500), 0);
+  assert.strictEqual(K.getMap('volcano', 'arena').heightAt(1300, 1300), 0);
+});
+
+// Drive a kart along the road from `from` samples before sample `i0`.
+function driveTo(K, map, i0, opts = {}) {
+  const n = map.n;
+  const start = (i0 - (opts.from || 20) + n) % n;
+  const p = map.centerline[start];
+  const t = map.tangents[start];
+  const kart = { x: p[0], y: p[1], angle: Math.atan2(t[1], t[0]), speed: opts.speed || K.PHYS.maxSpeed, boost: 0, spin: 0, trackIndex: start };
+  const log = [];
+  for (let s = 0; s < (opts.steps || 90); s++) {
+    if (kart.fall > 0) { log.push({ air: 0, boost: 0, trick: 0, fall: kart.fall, speed: 0 }); break; }
+    const q = map.nearestIndex(kart.x, kart.y, kart.trackIndex);
+    const ahead = map.trackPoint(q.index + 6, opts.lateral || 0);
+    let err = Math.atan2(ahead[1] - kart.y, ahead[0] - kart.x) - kart.angle;
+    err = Math.atan2(Math.sin(err), Math.cos(err));
+    const input = { up: true, left: err < -0.03, right: err > 0.03, drift: !!(opts.trick && kart.air > 0) };
+    if (opts.input) Object.assign(input, opts.input(kart));
+    K.stepKart(kart, input, 1 / 30, map, opts.physics);
+    log.push({ air: kart.air || 0, boost: kart.boost, trick: kart.trick || 0, fall: kart.fall || 0, speed: kart.speed });
+  }
+  return { kart, log };
+}
+
+test('ramps launch karts; a trick in the air pays out a mini boost; reversed they are just bumps', () => {
+  const K = require('../public/js/shared/kart-core');
+  const map = K.MAPS.grandprix;
+  const ramp = map.ramps.find((r) => r.dir === 1);
+  const plain = driveTo(K, map, ramp.i, { steps: 70 });
+  const airtime = plain.log.filter((l) => l.air > 0).length / 30;
+  assert.ok(Math.max(...plain.log.map((l) => l.air)) > 50, 'big air off the ramp');
+  assert.ok(airtime > 0.5, `airtime ${airtime.toFixed(2)} s`);
+  assert.ok(!plain.log.some((l) => l.trick > 0), 'no trick without pressing drift');
+  const landed = plain.log.findIndex((l, i) => i > 0 && plain.log[i - 1].air > 0 && l.air === 0);
+  assert.ok(landed > 0 && plain.log[landed].boost === 0, 'no boost without a trick');
+
+  const trick = driveTo(K, map, ramp.i, { steps: 70, trick: true });
+  assert.ok(trick.log.some((l) => l.trick > 0), 'drift in the air = trick');
+  const land2 = trick.log.findIndex((l, i) => i > 0 && trick.log[i - 1].air > 0 && l.air === 0);
+  assert.ok(land2 > 0 && trick.log[land2].boost > 0.4, `trick landing boost ${trick.log[land2] && trick.log[land2].boost}`);
+
+  // Steering is reduced in the air.
+  const [px, py] = map.centerline[ramp.i];
+  const flying = { x: px, y: py, angle: 0, speed: 400, air: 50, z: 300, vz: 300, trackIndex: ramp.i };
+  const driving = { x: px, y: py, angle: 0, speed: 400, trackIndex: ramp.i };
+  K.stepKart(flying, { right: true }, 1 / 30, map);
+  K.stepKart(driving, { right: true }, 1 / 30, map);
+  assert.ok(Math.abs(flying.angle) < Math.abs(driving.angle) * 0.6, 'less steering in the air');
+
+  // Driven backwards the same ramp is only a bump.
+  const rev = K.getMap('grandprix', 'race', { reverse: true });
+  const back = rev.ramps.find((r) => r.dir === -1 && !r.gap);
+  const bump = driveTo(K, rev, (back.i + 6) % rev.n, { steps: 50 });
+  assert.ok(Math.max(...bump.log.map((l) => l.air)) < 25, `reverse ramp hop ${Math.max(...bump.log.map((l) => l.air)).toFixed(1)}`);
+});
+
+test('gap jumps are cleared at speed in every class; slopes slow climbs and speed descents', () => {
+  const K = require('../public/js/shared/kart-core');
+  for (const id of ['canyon', 'neon', 'lavapeak']) {
+    for (const reverse of [false, true]) {
+      const map = K.getMap(id, 'race', { reverse });
+      const gaps = map.ramps.filter((x) => x.gap && x.dir === 1);
+      assert.ok(gaps.length >= 1, `${id}: has gap jumps`);
+      for (const r of gaps) {
+        for (const speed of [0.82, 1, 1.18]) {
+          const { log } = driveTo(K, map, r.i, { steps: 60, speed: K.PHYS.maxSpeed * speed, physics: { speed } });
+          assert.ok(!log.some((l) => l.fall > 0), `${id}${reverse ? ' rev' : ''}: cleared the gap at class ${speed}`);
+        }
+        // Crawling up to it: you drop in.
+        const slow = driveTo(K, { ...map, boostPads: [] }, r.i, { steps: 60, speed: 150, from: 1 });
+        assert.ok(slow.log.some((l) => l.fall > 0), `${id}: too slow to clear the gap`);
+      }
+    }
+  }
+  // Uphill top speed < flat < downhill top speed.
+  const map = K.MAPS.frost;
+  let up = 0;
+  let down = 0;
+  for (let i = 0; i < map.n; i++) {
+    if (map.grade[i] > map.grade[up]) up = i;
+    if (map.grade[i] < map.grade[down]) down = i;
+  }
+  const top = (i) => {
+    const p = map.centerline[i];
+    const t = map.tangents[i];
+    const k = { x: p[0], y: p[1], angle: Math.atan2(t[1], t[0]), speed: K.PHYS.maxSpeed, boost: 0, spin: 0, trackIndex: i };
+    for (let s = 0; s < 4; s++) K.stepKart(k, { up: true }, 1 / 30, map);
+    return k.speed;
+  };
+  assert.ok(top(up) < K.PHYS.maxSpeed - 5, `uphill ${top(up)}`);
+  assert.ok(top(down) > K.PHYS.maxSpeed + 5, `downhill ${top(down)}`);
+});
+
+test('falling into water, lava or a gap fishes you back onto the road', async () => {
+  const K = require('../public/js/shared/kart-core');
+  // Shared physics: steer off the beach into the sea.
+  const coast = K.MAPS.coast;
+  const i0 = Math.floor(coast.n * 0.05);
+  const { kart } = driveTo(K, coast, i0, { from: 2, steps: 80, lateral: 3.5 });
+  assert.strictEqual(kart.fallKind, 'water');
+  for (let s = 0; s < 60 && kart.fall > 0; s++) K.stepKart(kart, {}, 1 / 30, coast);
+  assert.ok(!(kart.fall > 0), 'fished out after ~1.5 s');
+  const q = coast.nearestIndex(kart.x, kart.y, kart.trackIndex);
+  assert.ok(q.dist < 2 && kart.speed === 0, 'back on the centre of the road, stopped');
+  const t = coast.tangents[q.index];
+  assert.ok(Math.cos(kart.angle) * t[0] + Math.sin(kart.angle) * t[1] > 0.99, 'facing the right way');
+  const off = (q.index - i0 + coast.n) % coast.n;
+  assert.ok(Math.min(off, coast.n - off) < 25, `near where it fell in (${off})`);
+  // Client prediction never starts a fall on its own.
+  const pred = driveTo(K, coast, i0, { from: 2, steps: 80, lateral: 3.5, physics: { noFall: true } });
+  assert.ok(!(pred.kart.fall > 0));
+
+  // Server: event, snapshot fields, invulnerability, no hits while falling.
+  const { room, game, players, host } = await kartGame(1, { kartMap: 'lavapeak' });
+  const me = game.karts.get(players[0].id);
+  const lavaRamp = game.map.ramps.find((r) => r.gap && r.dir === 1);
+  const gapAt = (lavaRamp.i + 2) % game.map.n;
+  const fall = once(host, 'game:kart:fall');
+  Object.assign(me, { x: game.map.centerline[gapAt][0], y: game.map.centerline[gapAt][1], speed: 0, trackIndex: gapAt, air: 0, z: null, safeIndex: (lavaRamp.i - 30 + game.map.n) % game.map.n });
+  game.simulate(1 / 30);
+  const ev = await fall;
+  assert.strictEqual(ev.kind, 'lava');
+  assert.ok(me.fall > 0);
+  const state = once(host, 'game:kart:state');
+  game.broadcast();
+  const row = (await state).k.find((r) => r[0] === me.idx);
+  assert.strictEqual(row.length, 15, 'air and fx appended to the kart row');
+  assert.ok(row[14] & 1 && row[14] & 4, 'falling into lava');
+  Object.assign(me, { shield: 0, invuln: 0, ghost: 0 });
+  game.damage(me, 50, null, 'rocket');
+  assert.strictEqual(me.spin, 0, 'no hits while falling');
+  for (let s = 0; s < 60 && me.fall > 0; s++) game.simulate(1 / 30);
+  assert.ok(!(me.fall > 0) && me.invuln > 0, 'respawned with a moment of invulnerability');
+  const back = game.map.nearestIndex(me.x, me.y);
+  assert.ok(back.dist < 2 && !game.map.gap[back.index]);
+  for (let a = 1; a <= 16; a++) assert.ok(!game.map.gap[(back.index + a) % game.map.n], 'a run-up of road before the gap');
+  room.destroy();
+});
+
+test('CPU drivers lap every race track, forward and reversed', async () => {
+  for (const id of raceIds()) {
+    for (const kartReverse of [false, true]) {
+      const { room, game, bots } = await kartGame(1, { kartMap: id, kartReverse, kartBots: 4, kartBotSkill: 'normal', kartLaps: 1, kartItems: 'none' });
+      assert.strictEqual(game.map.id, id);
+      for (let i = 0; i < 30 * 80 && !bots().every((k) => k.finished); i++) { game.time += 1 / 30; game.simulate(1 / 30); }
+      assert.strictEqual(game.botError, false);
+      for (const k of bots()) {
+        assert.ok(k.finished, `${id}${kartReverse ? ' (reversed)' : ''}: ${k.name} finished (lap ${k.lap}, at ${(k.trackIndex / game.map.n).toFixed(2)})`);
+        assert.ok(k.finishTime > 30 && k.finishTime < 80, `${id}: ${k.name} took ${k.finishTime.toFixed(1)} s`);
+      }
+      room.destroy();
+    }
+  }
 });

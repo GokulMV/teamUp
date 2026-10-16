@@ -1,5 +1,6 @@
 // 3D renderer for Kart Battle, built with Three.js. Game logic stays in kart.js and on the
-// server; this file only draws what it is given. Scenery lives in kart3d/world.js.
+// server; this file only draws what it is given. Scenery lives in kart3d/world.js (themes,
+// arenas) and kart3d/track.js (race tracks: terrain, bridges, ramps, water and lava).
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -7,7 +8,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { MOBILE, THEMES, tex, part, buildRace, buildArena, loadMoonlit } from './kart3d/world.js';
+import { MOBILE, THEMES, tex, part, buildArena, loadMoonlit } from './kart3d/world.js';
+import { buildRace } from './kart3d/track.js';
 
 const K = window.KartCore;
 
@@ -219,29 +221,33 @@ function buildKart(meta, accentHex, isMe, night) {
 
   const bodyMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(meta.color), roughness: 0.32, metalness: 0.35 });
   const accentMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(accentHex), roughness: 0.4, metalness: 0.2 });
-  const add = (geo, mat, parent = chassis) => {
+  // Only the big parts cast shadows; small details are hidden on far-away karts (see update()).
+  const details = [];
+  const add = (geo, mat, parent = chassis, { shadow = true, detail = false } = {}) => {
     const m = new THREE.Mesh(geo, mat);
-    m.castShadow = true;
+    m.castShadow = shadow;
     m.receiveShadow = true;
     m.userData.mat = mat;
+    m.userData.shadow = shadow;
     parent.add(m);
     meshes.push(m);
+    if (detail) details.push(m);
     return m;
   };
   add(S.bodyGeo, bodyMat);
-  add(S.accentGeo, accentMat);
+  add(S.accentGeo, accentMat, chassis, { shadow: false });
   add(S.darkGeo, S.dark);
-  add(S.metalGeo, S.metal);
-  add(S.torsoGeo, accentMat);
-  add(S.armsGeo, accentMat);
+  add(S.metalGeo, S.metal, chassis, { shadow: false, detail: true });
+  add(S.torsoGeo, accentMat, chassis, { shadow: false });
+  add(S.armsGeo, accentMat, chassis, { shadow: false, detail: true });
   let hash = 0;
   for (const ch of meta.name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
   add(S.headGeo, S.skins[hash % S.skins.length]);
-  add(S.capGeo, bodyMat);
-  add(S.eyesGeo, S.eyeWhite);
-  add(S.pupilsGeo, S.pupil);
-  add(S.headlightGeo, S.head).castShadow = false;
-  add(S.taillightGeo, S.tail).castShadow = false;
+  add(S.capGeo, bodyMat, chassis, { shadow: false });
+  add(S.eyesGeo, S.eyeWhite, chassis, { shadow: false, detail: true });
+  add(S.pupilsGeo, S.pupil, chassis, { shadow: false, detail: true });
+  add(S.headlightGeo, S.head, chassis, { shadow: false, detail: true });
+  add(S.taillightGeo, S.tail, chassis, { shadow: false, detail: true });
   S.head.emissiveIntensity = night ? 3 : 1.2;
 
   const wheels = [];
@@ -251,7 +257,7 @@ function buildKart(meta, accentHex, isMe, night) {
     const spin = new THREE.Group();
     pivot.add(spin);
     add(S.wheelGeo(r, w), S.rubber, spin);
-    add(S.hubGeo(r * 0.55, w), S.metal, spin);
+    add(S.hubGeo(r * 0.55, w), S.metal, spin, { shadow: false, detail: true });
     group.add(pivot);
     wheels.push({ pivot, spin, r, front });
   }
@@ -276,8 +282,9 @@ function buildKart(meta, accentHex, isMe, night) {
     group.add(label.sprite);
   }
   return {
-    group, chassis, wheels, flames, shield, label, meshes, ghosted: false,
+    group, chassis, wheels, flames, shield, label, meshes, details, near: true, ghosted: false,
     steer: 0, lastAngle: null, smoke: 0, slide: 0, hop: 0, wasSpin: false, wasDead: false,
+    hint: null, pitch: 0, roll: 0, lastY: null, vy: 0, prevAir: 0, squash: 0, trickT: -1, trickDir: 1, wasTrick: false, falling: false, fallT: 0,
   };
 }
 
@@ -286,7 +293,7 @@ function setGhost(kart, on) {
   kart.ghosted = on;
   for (const m of kart.meshes) {
     m.material = on ? SHARED.ghost : m.userData.mat;
-    m.castShadow = !on;
+    m.castShadow = !on && m.userData.shadow;
   }
 }
 
@@ -342,7 +349,7 @@ export class Kart3D {
     const scene = new THREE.Scene();
     this.scene = scene;
     scene.fog = new THREE.Fog(theme.fog[0], theme.fog[1], theme.fog[2]);
-    const sky = new THREE.Mesh(new THREE.SphereGeometry(9000, 24, 12), new THREE.ShaderMaterial({
+    const sky = new THREE.Mesh(new THREE.SphereGeometry(15000, 24, 12), new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false, fog: false,
       uniforms: { top: { value: new THREE.Color(theme.sky[0]) }, bottom: { value: new THREE.Color(theme.sky[1]) } },
       vertexShader: 'varying vec3 vP; void main(){ vP = (modelMatrix * vec4(position,1.0)).xyz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
@@ -362,18 +369,26 @@ export class Kart3D {
     this.sun = sun;
     scene.add(sun, sun.target);
 
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(16000, 16000), new THREE.MeshStandardMaterial({ map: theme.ground(), roughness: 1 }));
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.set(this.map.center[0], 0, this.map.center[1]);
-    ground.receiveShadow = true;
-    scene.add(ground);
+    if (this.arena) {
+      // Arenas sit on a flat plain; race tracks build their own terrain.
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(16000, 16000), new THREE.MeshStandardMaterial({ map: theme.ground(), roughness: 1 }));
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.set(this.map.center[0], 0, this.map.center[1]);
+      ground.receiveShadow = true;
+      scene.add(ground);
+    }
 
     // World-building context: things the builders hand back for animation.
-    this.ctx = { pads: [], lava: [], spinners: [], clouds: null, uniforms: { uTime: { value: 0 } }, volcanoGlow: null };
+    this.ctx = {
+      pads: [], lava: [], spinners: [], clouds: null, uniforms: { uTime: { value: 0 } }, volcanoGlow: null,
+      water: [], beams: [], flags: [], vents: [],
+    };
     if (this.arena) buildArena(scene, this.map, theme, this.ctx);
     else buildRace(scene, this.map, theme, this.ctx);
 
-    this.camera = new THREE.PerspectiveCamera(62, 1, 2, 14000);
+    this.camera = new THREE.PerspectiveCamera(62, 1, 2, 20000);
+    this.camHint = { hint: null };
+    this.camGround = null;
     if (!MOBILE) {
       // Bloom makes flames, explosions, item boxes and neon glow.
       this.composer = new EffectComposer(this.renderer);
@@ -396,6 +411,8 @@ export class Kart3D {
     this.colSnow = new THREE.Color(0xffffff);
     this.colEmber = new THREE.Color(0xff7a2a);
     this.colElectric = new THREE.Color(0x7dd3fc);
+    this.colAsh = new THREE.Color(0x8a827c);
+    this.colSplash = new THREE.Color(0xe8f7ff);
 
     // Skid marks: a ring buffer of flat dark quads.
     this.skidMax = 1600;
@@ -411,13 +428,15 @@ export class Kart3D {
     this.tmpM = new THREE.Matrix4();
     this.tmpQ = new THREE.Quaternion();
     this.tmpV = new THREE.Vector3(1, 1, 1);
+    this.skidTurn = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
     this.effects = []; // short-lived meshes (respawn beams, shockwaves)
 
     // Item boxes
     const boxMat = new THREE.MeshStandardMaterial({ map: tex.box(), transparent: true, opacity: 0.92, emissive: 0x332244, roughness: 0.3 });
     this.boxes = (opts.items === false ? [] : this.map.itemBoxes).map((b, i) => {
       const mesh = new THREE.Mesh(new RoundedBoxGeometry(24, 24, 24, 2, 3), boxMat);
-      mesh.position.set(b.x, 20, b.y);
+      mesh.userData.base = this.map.heightAt(b.x, b.y);
+      mesh.position.set(b.x, mesh.userData.base + 20, b.y);
       mesh.castShadow = true;
       mesh.userData.phase = i * 0.7;
       mesh.userData.was = true;
@@ -452,6 +471,19 @@ export class Kart3D {
     this.smoke.points.material.uniforms.scale.value = h * 0.9;
   }
 
+  // Height of whatever is under (x, z): road, bridge deck, ramp or terrain. `holder.hint` caches
+  // the nearest road sample so lookups stay cheap and never snap to a parallel stretch.
+  // `road`: anything inside the walls follows the road (projectiles fly straight over gaps).
+  groundAt(x, z, holder, road = false) {
+    if (this.arena) return 0;
+    let q = this.map.nearestIndex(x, z, holder ? holder.hint : null);
+    // A stale hint (the kart was teleported, e.g. fished out of the water) finds the wrong stretch.
+    if (holder && holder.hint !== null && q.dist > this.map.width / 2 + K.WALL_PAD + 60) q = this.map.nearestIndex(x, z);
+    if (holder) holder.hint = q.index;
+    if (road && q.dist <= this.map.wallAt(q)) return q.h;
+    return this.map.surfaceAt(x, z, q);
+  }
+
   setKarts(list, myIdx, teamColorOf) {
     for (const k of this.karts.values()) this.scene.remove(k.group);
     this.karts.clear();
@@ -471,10 +503,11 @@ export class Kart3D {
 
   // kind: rocket | mine | bomb | kill | hit | bullet
   explode(x, z, kind = 'rocket', radius = 60) {
+    const gy = this.groundAt(x, z);
     if (kind === 'bullet') {
       for (let i = 0; i < 6; i++) {
         const a = Math.random() * Math.PI * 2;
-        this.fire.emit(x, 12, z, Math.cos(a) * 140, 60 + Math.random() * 80, Math.sin(a) * 140, this.colWhite, 5, 0.25, { drag: 3, rise: -400 });
+        this.fire.emit(x, gy + 12, z, Math.cos(a) * 140, 60 + Math.random() * 80, Math.sin(a) * 140, this.colWhite, 5, 0.25, { drag: 3, rise: -400 });
       }
       return;
     }
@@ -486,78 +519,122 @@ export class Kart3D {
       const a = Math.random() * Math.PI * 2;
       const up = Math.random();
       const sp = (big ? 160 : 90) * scale * (0.4 + Math.random());
-      this.fire.emit(x, 12, z, Math.cos(a) * sp, up * sp * 1.2, Math.sin(a) * sp,
+      this.fire.emit(x, gy + 12, z, Math.cos(a) * sp, up * sp * 1.2, Math.sin(a) * sp,
         fireCols[i % 3], (big ? 26 : 16) * scale * (0.6 + Math.random()), 0.5 + Math.random() * 0.4, { grow: 1.6, drag: 2.5, rise: 40 });
     }
     const smokeCol = new THREE.Color(0x3a3a42);
     for (let i = 0; i < (big ? 35 : 12); i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = 60 * scale * Math.random();
-      this.smoke.emit(x, 14, z, Math.cos(a) * sp, 30 + Math.random() * 40, Math.sin(a) * sp,
+      this.smoke.emit(x, gy + 14, z, Math.cos(a) * sp, 30 + Math.random() * 40, Math.sin(a) * sp,
         smokeCol, (30 + Math.random() * 25) * scale, 1.2 + Math.random() * 0.8, { alpha: 0.7, grow: 1.8, drag: 1.2, rise: 25 });
     }
     const spark = new THREE.Color(0xfff3b0);
     for (let i = 0; i < (big ? 30 : 10); i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = 250 + Math.random() * 200;
-      this.fire.emit(x, 10, z, Math.cos(a) * sp, 120 + Math.random() * 200, Math.sin(a) * sp, spark, 6, 0.6, { drag: 1.2, rise: -500 });
+      this.fire.emit(x, gy + 10, z, Math.cos(a) * sp, 120 + Math.random() * 200, Math.sin(a) * sp, spark, 6, 0.6, { drag: 1.2, rise: -500 });
     }
     if (big) this.ring(x, z, 0xffb347, radius * 1.6, 0.5);
     this.shake(x, z, big ? 14 * Math.min(1.5, scale) : 6);
   }
 
   shock(x, z, radius) {
+    const gy = this.groundAt(x, z);
     this.ring(x, z, 0x7dd3fc, radius, 0.45);
     this.ring(x, z, 0xffffff, radius * 0.7, 0.3);
     for (let i = 0; i < 90; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = radius * (1.5 + Math.random());
-      this.fire.emit(x, 10 + Math.random() * 20, z, Math.cos(a) * sp, Math.random() * 60, Math.sin(a) * sp, this.colElectric, 8, 0.45, { drag: 2.5 });
+      this.fire.emit(x, gy + 10 + Math.random() * 20, z, Math.cos(a) * sp, Math.random() * 60, Math.sin(a) * sp, this.colElectric, 8, 0.45, { drag: 2.5 });
     }
     this.shake(x, z, 10);
   }
 
   block(x, z) {
+    const gy = this.groundAt(x, z);
     for (let i = 0; i < 26; i++) {
       const a = Math.random() * Math.PI * 2;
       const e = (Math.random() - 0.3) * Math.PI;
-      this.fire.emit(x + Math.cos(a) * 28, 14 + Math.sin(e) * 20, z + Math.sin(a) * 28, Math.cos(a) * 160, 40, Math.sin(a) * 160, this.colBlue, 8, 0.4, { drag: 3 });
+      this.fire.emit(x + Math.cos(a) * 28, gy + 14 + Math.sin(e) * 20, z + Math.sin(a) * 28, Math.cos(a) * 160, 40, Math.sin(a) * 160, this.colBlue, 8, 0.4, { drag: 3 });
     }
   }
 
-  sparkle(x, z) {
+  sparkle(x, z, y) {
     const cols = [0xfacc15, 0xec4899, 0x3b82f6, 0x22c55e].map((c) => new THREE.Color(c));
+    const gy = y === undefined ? this.groundAt(x, z) + 20 : y;
     for (let i = 0; i < 24; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = 80 + Math.random() * 120;
-      this.fire.emit(x, 20, z, Math.cos(a) * sp, 60 + Math.random() * 120, Math.sin(a) * sp, cols[i % 4], 9, 0.5, { drag: 2, rise: -200 });
+      this.fire.emit(x, gy, z, Math.cos(a) * sp, 60 + Math.random() * 120, Math.sin(a) * sp, cols[i % 4], 9, 0.5, { drag: 2, rise: -200 });
     }
   }
 
   ring(x, z, color, radius, life) {
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 48).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    ring.position.set(x, 3, z);
+    ring.position.set(x, this.groundAt(x, z) + 3, z);
     this.scene.add(ring);
     this.effects.push({ mesh: ring, life, max: life, kind: 'ring', radius });
   }
 
   respawnBeam(x, z) {
+    const gy = this.groundAt(x, z);
     const beam = new THREE.Mesh(new THREE.CylinderGeometry(26, 34, 500, 20, 1, true),
       new THREE.MeshBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    beam.position.set(x, 250, z);
+    beam.position.set(x, gy + 250, z);
     this.scene.add(beam);
     this.effects.push({ mesh: beam, life: 0.9, max: 0.9, kind: 'beam' });
     const col = new THREE.Color(0x9be7ff);
     for (let i = 0; i < 30; i++) {
       const a = Math.random() * Math.PI * 2;
-      this.fire.emit(x + Math.cos(a) * 30, 5, z + Math.sin(a) * 30, Math.cos(a) * 40, 150 + Math.random() * 200, Math.sin(a) * 40, col, 8, 0.8, { drag: 1 });
+      this.fire.emit(x + Math.cos(a) * 30, gy + 5, z + Math.sin(a) * 30, Math.cos(a) * 40, 150 + Math.random() * 200, Math.sin(a) * 40, col, 8, 0.8, { drag: 1 });
     }
   }
 
-  addSkid(x, z, angle) {
-    this.tmpQ.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle + Math.PI / 2);
-    this.tmpM.compose(new THREE.Vector3(x, 1.0, z), this.tmpQ, this.tmpV);
+  // Off the road into water, lava or a gap (kind from the server event or the snapshot fx bits).
+  fallFx(x, z, kind, y) {
+    const gy = y === undefined ? this.groundAt(x, z) : y;
+    if (kind === 'water') {
+      for (let i = 0; i < 70; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 60 + Math.random() * 200;
+        this.smoke.emit(x, gy + 4, z, Math.cos(a) * sp * 0.6, 220 + Math.random() * 320, Math.sin(a) * sp * 0.6, this.colSplash, 9 + Math.random() * 10, 0.9, { alpha: 0.95, drag: 0.6, rise: -900 });
+      }
+      this.ring(x, z, 0xdff6ff, 160, 0.9);
+      this.ring(x, z, 0xffffff, 90, 0.6);
+    } else if (kind === 'lava') {
+      this.explode(x, z, 'hit', 70);
+      for (let i = 0; i < 40; i++) {
+        const a = Math.random() * Math.PI * 2;
+        this.fire.emit(x + Math.cos(a) * 20, gy, z + Math.sin(a) * 20, Math.cos(a) * 60, 200 + Math.random() * 260, Math.sin(a) * 60, this.colEmber, 12, 0.8, { grow: 1.4, drag: 1.5, rise: 60 });
+      }
+      for (let i = 0; i < 20; i++) this.smoke.emit(x, gy + 20, z, (Math.random() - 0.5) * 80, 80 + Math.random() * 60, (Math.random() - 0.5) * 80, new THREE.Color(0x2a2220), 40, 2, { alpha: 0.7, grow: 1.6, rise: 30 });
+    } else {
+      // A gap: a puff of dust (desert canyon) or a burst of neon sparks (city).
+      const col = this.theme.night ? new THREE.Color(0xff4fd8) : new THREE.Color(0xd9b68a);
+      for (let i = 0; i < 40; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 80 + Math.random() * 120;
+        (this.theme.night ? this.fire : this.smoke).emit(x, gy - 20, z, Math.cos(a) * sp, 60 + Math.random() * 120, Math.sin(a) * sp, col, this.theme.night ? 8 : 24, 0.9, { alpha: 0.7, grow: 1.5, drag: 1.5 });
+      }
+    }
+  }
+
+  // Touchdown after a jump: dust under the wheels, sparkles if a trick paid out.
+  landFx(x, z, y, strength, trick) {
+    const dust = new THREE.Color(this.theme.snowfall ? 0xffffff : this.theme.night ? 0x9d8cff : 0xc8b48a);
+    for (let i = 0; i < 6 + strength * 16; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 70 + Math.random() * 120 * strength;
+      this.smoke.emit(x + Math.cos(a) * 14, y + 3, z + Math.sin(a) * 14, Math.cos(a) * sp, 20 + Math.random() * 40, Math.sin(a) * sp, dust, 14 + strength * 10, 0.7, { alpha: 0.55, grow: 2.2, drag: 2.5 });
+    }
+    if (trick) this.sparkle(x, z, y + 16);
+  }
+
+  addSkid(x, z, quat, y) {
+    this.tmpQ.copy(quat).multiply(this.skidTurn);
+    this.tmpM.compose(new THREE.Vector3(x, y + 1.0, z), this.tmpQ, this.tmpV);
     this.skids.setMatrixAt(this.skidIdx, this.tmpM);
     this.skidIdx = (this.skidIdx + 1) % this.skidMax;
     this.skids.instanceMatrix.needsUpdate = true;
@@ -585,21 +662,38 @@ export class Kart3D {
   // Weather and ambient particles around the camera.
   ambient(dt) {
     const c = this.camera.position;
+    const gy = this.camGround === null ? 0 : this.camGround;
     if (this.theme.snowfall) {
       for (let i = 0; i < (MOBILE ? 2 : 5); i++) {
-        this.smoke.emit(c.x + (Math.random() - 0.5) * 1400, 350 + Math.random() * 200, c.z + (Math.random() - 0.5) * 1400,
+        this.smoke.emit(c.x + (Math.random() - 0.5) * 1400, gy + 350 + Math.random() * 200, c.z + (Math.random() - 0.5) * 1400,
           (Math.random() - 0.5) * 30, -70 - Math.random() * 40, (Math.random() - 0.5) * 30, this.colSnow, 3 + Math.random() * 3, 6, { alpha: 0.9, drag: 0 });
       }
     }
     if (this.theme.embers) {
       for (let i = 0; i < 2; i++) {
-        this.fire.emit(c.x + (Math.random() - 0.5) * 1600, Math.random() * 40, c.z + (Math.random() - 0.5) * 1600,
+        this.fire.emit(c.x + (Math.random() - 0.5) * 1600, gy + Math.random() * 40, c.z + (Math.random() - 0.5) * 1600,
           (Math.random() - 0.5) * 20, 40 + Math.random() * 60, (Math.random() - 0.5) * 20, this.colEmber, 3 + Math.random() * 3, 4, { drag: 0.2 });
+      }
+    }
+    if (this.theme.ash) {
+      // Grey ash drifting down from the volcano.
+      for (let i = 0; i < (MOBILE ? 1 : 3); i++) {
+        this.smoke.emit(c.x + (Math.random() - 0.5) * 1500, gy + 300 + Math.random() * 250, c.z + (Math.random() - 0.5) * 1500,
+          20 + Math.random() * 30, -45 - Math.random() * 30, (Math.random() - 0.5) * 30, this.colAsh, 3 + Math.random() * 3, 7, { alpha: 0.8, drag: 0 });
+      }
+    }
+    // Smoke rising from the crater.
+    for (const v of this.ctx.vents) {
+      if (Math.random() < (MOBILE ? 0.3 : 0.7)) {
+        const a = Math.random() * Math.PI * 2;
+        const r = Math.random() * v.r;
+        this.smoke.emit(v.x + Math.cos(a) * r, v.y, v.z + Math.sin(a) * r, 20 + Math.random() * 20, 90 + Math.random() * 60, (Math.random() - 0.5) * 20,
+          new THREE.Color(0x3a302c), 160 + Math.random() * 120, 9, { alpha: 0.5, grow: 1.25, drag: 0.1, rise: 6 });
       }
     }
   }
 
-  // view: { karts:[{idx,x,y,angle,speed,flags,hp}], shots:[[id,kind,x,y,a,prog]], mines:[[id,x,y,armed]],
+  // view: { karts:[{idx,x,y,angle,speed,flags,hp,air,fx}], shots:[[id,kind,x,y,a,prog]], mines:[[id,x,y,armed]],
   //         bananas:[[id,x,y]], boxes:[0|1], focus }
   update(view, dt, now) {
     const t = now / 1000;
@@ -614,30 +708,107 @@ export class Kart3D {
       if (!kart) continue;
       seen.add(k.idx);
       const dead = k.flags & 32;
+      const fx = k.fx || 0;
       const blink = (k.flags & 16) && !(k.flags & 1) && !(k.flags & 4) && Math.floor(now / 90) % 2;
-      kart.group.visible = !dead && !blink;
-      if (dead) { kart.lastAngle = null; kart.wasDead = true; continue; }
+      if (dead) { kart.group.visible = false; kart.lastAngle = null; kart.wasDead = true; continue; }
       if (kart.wasDead) { kart.wasDead = false; this.respawnBeam(k.x, k.y); }
+      // Fell off: sink into the water/lava (or drop into the gap), then wait to be fished out.
+      if (fx & 1) {
+        if (!kart.falling) {
+          kart.falling = true;
+          kart.fallT = 0;
+          kart.fallY = kart.lastY === null ? this.groundAt(k.x, k.y, kart) : kart.lastY;
+          this.fallFx(k.x, k.y, fx & 4 ? 'lava' : fx & 8 ? 'water' : 'void', kart.fallY);
+        }
+        kart.fallT += dt;
+        const p = Math.min(1, kart.fallT / 0.6);
+        kart.group.position.set(k.x, kart.fallY - p * p * (fx & 12 ? 50 : 220), k.y);
+        kart.chassis.rotation.z += dt * (fx & 12 ? 1.5 : 5);
+        kart.group.visible = kart.fallT < 0.6;
+        kart.lastAngle = null;
+        kart.lastY = null;
+        continue;
+      }
+      if (kart.falling) { kart.falling = false; kart.chassis.rotation.set(0, 0, 0); kart.prevAir = 0; this.respawnBeam(k.x, k.y); }
+      kart.group.visible = !blink;
       setGhost(kart, !!(k.flags & 1024));
       const drifting = k.flags & 64;
       const driftDir = k.flags & 512 ? -1 : 1;
       const driftLevel = k.flags & 256 ? 2 : k.flags & 128 ? 1 : 0;
       // Drifting karts point their nose further into the turn.
       kart.slide += ((drifting ? driftDir * 0.42 : 0) - kart.slide) * Math.min(1, dt * 8);
-      kart.group.position.set(k.x, 0, k.y);
-      kart.group.rotation.y = -(k.angle + kart.slide);
+      const cos = Math.cos(k.angle);
+      const sin = Math.sin(k.angle);
+
+      // Height: the ground under the kart plus any air. Pitch and roll follow the slope under the
+      // wheels; in the air the nose follows the flight path instead.
+      const air = k.air || 0;
+      const ground = this.groundAt(k.x, k.y, kart);
+      const y = ground + air;
+      const airborne = air > 1;
+      let pitch = 0;
+      let roll = 0;
+      if (!this.arena) {
+        const hF = this.groundAt(k.x + cos * 18, k.y + sin * 18, kart);
+        const hB = this.groundAt(k.x - cos * 18, k.y - sin * 18, kart);
+        const hP = this.groundAt(k.x - sin * 12, k.y + cos * 12, kart);
+        const hM = this.groundAt(k.x + sin * 12, k.y - cos * 12, kart);
+        pitch = Math.atan2(hF - hB, 36);
+        roll = Math.atan2(hM - hP, 24);
+      }
+      if (kart.lastY !== null && dt > 0) kart.vy += ((y - kart.lastY) / dt - kart.vy) * Math.min(1, dt * 10);
+      kart.lastY = y;
+      if (airborne) {
+        pitch = Math.max(-0.55, Math.min(0.5, Math.atan2(kart.vy, Math.max(200, Math.abs(k.speed))) * 0.9));
+        roll = 0;
+      }
+      kart.pitch += (pitch - kart.pitch) * Math.min(1, dt * (airborne ? 6 : 16));
+      kart.roll += (roll - kart.roll) * Math.min(1, dt * 16);
+      // Touchdown: squash and a puff of dust (sparkles when a trick pays out).
+      if (!airborne && kart.prevAir > 10) {
+        kart.squash = 1;
+        this.landFx(k.x, k.y, ground, Math.min(1, kart.prevAir / 80), kart.tricked);
+        kart.tricked = false;
+      }
+      kart.prevAir = air;
+
       // Getting hit in a race: the kart pops up and does a flip.
       const spinNow = !!(k.flags & 1);
       if (spinNow && !kart.wasSpin) kart.hop = 0.8;
       kart.wasSpin = spinNow;
+      let hopY = 0;
       if (kart.hop > 0) {
         kart.hop = Math.max(0, kart.hop - dt);
         const p = 1 - kart.hop / 0.8;
-        kart.group.position.y = Math.sin(p * Math.PI) * 30;
+        hopY = Math.sin(p * Math.PI) * 30;
         kart.chassis.rotation.z = p * Math.PI * 2;
       } else {
         kart.chassis.rotation.z = 0;
       }
+      // Tricks: a barrel roll off the ramp.
+      const trickNow = !!(fx & 2);
+      if (trickNow && !kart.wasTrick) {
+        kart.trickT = 0;
+        kart.trickDir = -kart.trickDir;
+        kart.tricked = true;
+        this.sparkle(k.x, k.y, y + 20);
+      }
+      kart.wasTrick = trickNow;
+      let trick = 0;
+      if (kart.trickT >= 0) {
+        kart.trickT += dt;
+        const p = Math.min(1, kart.trickT / 0.45);
+        trick = kart.trickDir * Math.PI * 2 * (1 - (1 - p) ** 3);
+        if (p >= 1) { kart.trickT = -1; trick = 0; }
+      }
+      const sq = kart.squash > 0 ? Math.sin(kart.squash * Math.PI) : 0;
+      if (kart.squash > 0) kart.squash = Math.max(0, kart.squash - dt * 3.4);
+      kart.group.scale.set(1 + 0.13 * sq, 1 - 0.26 * sq, 1 + 0.13 * sq);
+      // Roll the trick about the kart's middle, not its wheels.
+      const a2 = k.angle + kart.slide;
+      const ts = Math.sin(trick) * 14;
+      kart.group.position.set(k.x + ts * Math.sin(a2), y + hopY + 14 * (1 - Math.cos(trick)), k.y - ts * Math.cos(a2));
+      kart.group.rotation.set(kart.roll + trick, -a2, kart.pitch, 'YZX');
 
       // Visual steering estimate from heading change.
       let dAng = kart.lastAngle === null ? 0 : k.angle - kart.lastAngle;
@@ -648,21 +819,24 @@ export class Kart3D {
       const targetSteer = spinning ? 0 : Math.max(-1, Math.min(1, turnRate / 2.5));
       kart.steer += (targetSteer - kart.steer) * Math.min(1, dt * 10);
       kart.chassis.rotation.x = -kart.steer * 0.12 * Math.min(1, Math.abs(k.speed) / 300);
-      kart.chassis.position.y = Math.sin(t * 18 + k.idx) * 0.35 * Math.min(1, Math.abs(k.speed) / 200);
+      kart.chassis.position.y = airborne ? 0 : Math.sin(t * 18 + k.idx) * 0.35 * Math.min(1, Math.abs(k.speed) / 200);
       for (const w of kart.wheels) {
         w.spin.rotation.z -= (k.speed * dt) / w.r;
         if (w.front) w.pivot.rotation.y = -kart.steer * 0.45;
+        // Suspension: wheels drop a little in the air.
+        w.pivot.position.y = w.r - (airborne ? 3 : 0);
       }
 
+      const camD = this.camera.position.distanceTo(kart.group.position);
+      const near = camD < 1100;
+      if (near !== kart.near) { kart.near = near; for (const m of kart.details) m.visible = near; }
       if (kart.label) {
-        const d = this.camera.position.distanceTo(kart.group.position);
+        const d = camD;
         const w = Math.max(24, Math.min(90, d * 0.11));
         kart.label.sprite.scale.set(w, w * (88 / 256), 1);
         kart.label.draw(this.arena ? k.hp : null);
       }
       const boosting = k.flags & 2;
-      const cos = Math.cos(k.angle);
-      const sin = Math.sin(k.angle);
       for (const f of kart.flames) {
         f.visible = !!boosting;
         if (boosting) f.scale.set(0.8 + Math.random() * 0.8, 1, 1);
@@ -673,7 +847,7 @@ export class Kart3D {
       // Minigun muzzle flash.
       if (k.flags & 2048) {
         for (let i = 0; i < 2; i++) {
-          this.fire.emit(k.x + cos * 30, 12, k.y + sin * 30, cos * 200 + (Math.random() - 0.5) * 80, (Math.random() - 0.5) * 40, sin * 200 + (Math.random() - 0.5) * 80,
+          this.fire.emit(k.x + cos * 30, y + 12, k.y + sin * 30, cos * 200 + (Math.random() - 0.5) * 80, (Math.random() - 0.5) * 40, sin * 200 + (Math.random() - 0.5) * 80,
             flameCol[i], 9, 0.08, { drag: 4 });
         }
       }
@@ -682,7 +856,7 @@ export class Kart3D {
       const ez = k.y - sin * 26;
       if (boosting) {
         for (let i = 0; i < 3; i++) {
-          this.fire.emit(ex + (Math.random() - 0.5) * 8, 8, ez + (Math.random() - 0.5) * 8,
+          this.fire.emit(ex + (Math.random() - 0.5) * 8, y + 8, ez + (Math.random() - 0.5) * 8,
             -cos * 120 + (Math.random() - 0.5) * 40, 20, -sin * 120 + (Math.random() - 0.5) * 40,
             flameCol[i], 14, 0.25, { grow: 0.3, drag: 3 });
         }
@@ -690,30 +864,30 @@ export class Kart3D {
         kart.smoke -= dt;
         if (kart.smoke <= 0) {
           kart.smoke = 0.09;
-          this.smoke.emit(ex, 8, ez, -cos * 30, 18, -sin * 30, smokeCol, 7, 0.6, { alpha: 0.35, grow: 2.2, drag: 1 });
+          this.smoke.emit(ex, y + 8, ez, -cos * 30, 18, -sin * 30, smokeCol, 7, 0.6, { alpha: 0.35, grow: 2.2, drag: 1 });
         }
       }
-      if (drifting) {
+      if (drifting && !airborne) {
         const sparkCol = driftLevel === 2 ? this.colOrange : driftLevel === 1 ? this.colBlue : this.colWhite;
         for (const side of [1, -1]) {
           const wx = k.x - cos * 13 - sin * 15 * side;
           const wz = k.y - sin * 13 + cos * 15 * side;
-          this.addSkid(wx, wz, k.angle + kart.slide);
+          this.addSkid(wx, wz, kart.group.quaternion, ground);
           const n = driftLevel ? 3 : 1;
           for (let i = 0; i < n; i++) {
-            this.fire.emit(wx, 3, wz, -cos * 60 + (Math.random() - 0.5) * 120, 40 + Math.random() * 90, -sin * 60 + (Math.random() - 0.5) * 120,
+            this.fire.emit(wx, y + 3, wz, -cos * 60 + (Math.random() - 0.5) * 120, 40 + Math.random() * 90, -sin * 60 + (Math.random() - 0.5) * 120,
               sparkCol, driftLevel ? 7 : 5, 0.25, { drag: 2, rise: -400 });
           }
         }
-      } else if (!spinning && Math.abs(kart.steer) > 0.6 && Math.abs(k.speed) > 320) {
+      } else if (!spinning && !airborne && Math.abs(kart.steer) > 0.6 && Math.abs(k.speed) > 320) {
         for (const side of [1, -1]) {
-          this.smoke.emit(k.x - cos * 14 - sin * 14 * side, 3, k.y - sin * 14 + cos * 14 * side, 0, 10, 0,
+          this.smoke.emit(k.x - cos * 14 - sin * 14 * side, y + 3, k.y - sin * 14 + cos * 14 * side, 0, 10, 0,
             dustCol, 9, 0.7, { alpha: 0.4, grow: 2, drag: 1 });
         }
       }
       if (spinning) {
         const a = t * 12;
-        this.fire.emit(k.x + Math.cos(a) * 14, 34, k.y + Math.sin(a) * 14, 0, 0, 0, new THREE.Color(0xfff27a), 8, 0.3);
+        this.fire.emit(k.x + Math.cos(a) * 14, y + 34, k.y + Math.sin(a) * 14, 0, 0, 0, new THREE.Color(0xfff27a), 8, 0.3);
       }
     }
     for (const [idx, kart] of this.karts) if (!seen.has(idx)) kart.group.visible = false;
@@ -725,12 +899,12 @@ export class Kart3D {
     // Item boxes
     this.boxes.forEach((mesh, i) => {
       const on = !view.boxes || !!view.boxes[i];
-      if (mesh.userData.was && !on) this.sparkle(mesh.position.x, mesh.position.z);
+      if (mesh.userData.was && !on) this.sparkle(mesh.position.x, mesh.position.z, mesh.position.y);
       mesh.userData.was = on;
       mesh.visible = on;
       if (!on) return;
       mesh.rotation.set(t * 0.9 + mesh.userData.phase, t * 1.3 + mesh.userData.phase, 0);
-      mesh.position.y = 22 + Math.sin(t * 2.5 + mesh.userData.phase) * 4;
+      mesh.position.y = mesh.userData.base + 22 + Math.sin(t * 2.5 + mesh.userData.phase) * 4;
     });
 
     // Scenery animation
@@ -739,6 +913,9 @@ export class Kart3D {
     for (const s of c.spinners) { s.rotation.y = t * 0.8; s.rotation.x = t * 0.5; }
     for (const p of c.pads) p.material.map.offset.y = (t * 1.5) % 1;
     for (const l of c.lava) { l.offset.x = Math.sin(t * 0.2) * 0.1; l.offset.y = (t * 0.03) % 1; }
+    for (const w of c.water) { w.offset.x = (t * 0.012) % 1; w.offset.y = (t * 0.007) % 1; }
+    for (const b of c.beams) b.rotation.y = t * 0.9;
+    c.flags.forEach((f, i) => { f.rotation.y = Math.sin(t * 3 + i) * 0.35; });
     if (c.clouds) c.clouds.update(dt);
     if (c.volcanoGlow) c.volcanoGlow.material.color.setHSL(0.04, 1, 0.5 + Math.sin(t * 2) * 0.08);
     this.ambient(dt);
@@ -776,20 +953,21 @@ export class Kart3D {
       }
       const ca = Math.cos(a);
       const sa = Math.sin(a);
+      const gy = this.groundAt(x, y, s.userData, true);
       if (kind === 3) {
         // Bombs arc through the air.
         const p = (prog || 0) / 100;
-        s.position.set(x, 12 + Math.sin(Math.min(1, p) * Math.PI) * 110, y);
+        s.position.set(x, gy + 12 + Math.sin(Math.min(1, p) * Math.PI) * 110, y);
         s.rotation.z += dt * 6;
         this.fire.emit(x, s.position.y + 12, y, 0, 20, 0, flameCol[0], 7, 0.2);
       } else {
-        s.position.set(x, kind === 2 ? 12 : 14, y);
+        s.position.set(x, gy + (kind === 2 ? 12 : 14), y);
         s.rotation.y = -a;
         if (kind === 1) {
           s.rotation.x += dt * 12;
-          this.fire.emit(x - ca * 12, 14, y - sa * 12, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20,
+          this.fire.emit(x - ca * 12, gy + 14, y - sa * 12, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20,
             flameCol[Math.floor(Math.random() * 3)], 12, 0.18, { grow: 0.4 });
-          this.smoke.emit(x - ca * 14, 14, y - sa * 14, 0, 12, 0, smokeCol, 9, 0.7, { alpha: 0.5, grow: 2.4, drag: 1 });
+          this.smoke.emit(x - ca * 14, gy + 14, y - sa * 14, 0, 12, 0, smokeCol, 9, 0.7, { alpha: 0.5, grow: 2.4, drag: 1 });
         }
       }
     }
@@ -809,7 +987,7 @@ export class Kart3D {
         const light = new THREE.Mesh(M.mineLight, M.mineLightMat);
         m.add(body, light);
         m.userData.light = light;
-        m.position.set(x, 0.5, y);
+        m.position.set(x, this.groundAt(x, y) + 0.5, y);
         this.scene.add(m);
         this.mines.set(id, m);
       }
@@ -829,15 +1007,18 @@ export class Kart3D {
         b = new THREE.Mesh(M.banana, M.bananaMat);
         b.castShadow = true;
         b.rotation.set(-0.3, Math.random() * Math.PI * 2, 0.4);
+        b.userData.gy = this.groundAt(x, y);
         this.scene.add(b);
         this.bananas.set(id, b);
       }
-      b.position.set(x, 5, y);
+      b.position.set(x, b.userData.gy + 5, y);
     }
     for (const [id, b] of this.bananas) if (!live.has(id)) { this.scene.remove(b); this.bananas.delete(id); }
   }
 
   updateCamera(focus, dt, t) {
+    // A kart that teleported (fished out of the water, respawned) gets the camera snapped behind it.
+    if (focus && this.focus && Math.hypot(focus.x - this.focus.x, focus.y - this.focus.y) > 400) focus = { ...focus, snap: true };
     this.focus = focus;
     if (focus) {
       if (focus.snap) this.camHeading = focus.angle;
@@ -859,8 +1040,11 @@ export class Kart3D {
       }
       this.camDist = this.camDist === undefined ? dist : this.camDist + (dist - this.camDist) * Math.min(1, dt * (dist < this.camDist ? 14 : 3));
       const camUp = up * (0.55 + 0.45 * (this.camDist / back));
-      const desired = new THREE.Vector3(focus.x - ch * this.camDist, camUp, focus.y - sh * this.camDist);
-      const look = new THREE.Vector3(focus.x + ch * 70, 14, focus.y + sh * 70);
+      // Heights: the camera rides along with the kart, lagging a little on jumps so they feel big.
+      const fy = this.groundAt(focus.x, focus.y, this.camHint) + (focus.air || 0);
+      this.camY = this.camY === undefined || focus.snap ? fy : this.camY + (fy - this.camY) * Math.min(1, dt * 7);
+      const desired = new THREE.Vector3(focus.x - ch * this.camDist, this.camY + camUp, focus.y - sh * this.camDist);
+      const look = new THREE.Vector3(focus.x + ch * 70, this.camY + 14 + (fy - this.camY) * 0.7, focus.y + sh * 70);
       if (!this.camPos || focus.snap) {
         this.camPos = desired.clone();
         this.camLook.copy(look);
@@ -877,6 +1061,9 @@ export class Kart3D {
           this.camPos.z = focus.y + (dz / hd) * minD;
         }
       }
+      // ...nor sink into the hillside behind it.
+      this.camGround = this.groundAt(this.camPos.x, this.camPos.z, this.camHint2 || (this.camHint2 = { hint: null }));
+      if (this.camPos.y < this.camGround + 28) this.camPos.y = this.camGround + 28;
       const fov = focus.boost ? 74 : 62;
       this.camera.fov += (fov - this.camera.fov) * Math.min(1, dt * 4);
       this.camera.updateProjectionMatrix();
@@ -887,13 +1074,16 @@ export class Kart3D {
         this.shakeAmt *= Math.exp(-dt * 6);
       }
       this.camera.lookAt(this.camLook);
-      this.sun.position.set(focus.x + 450, 900, focus.y + 300);
-      this.sun.target.position.set(focus.x, 0, focus.y);
+      // The shadow camera follows the player.
+      this.sun.position.set(focus.x + 450, fy + 900, focus.y + 300);
+      this.sun.target.position.set(focus.x, fy, focus.y);
     } else {
       const [cx, cz] = this.map.center;
-      this.camera.position.set(cx + Math.cos(t * 0.1) * 1800, 1300, cz + Math.sin(t * 0.1) * 1800);
-      this.camera.lookAt(cx, 0, cz);
-      this.sun.position.set(cx + 450, 900, cz + 300);
+      if (this.topY === undefined) this.topY = this.arena ? 0 : Math.max(...this.map.heights);
+      this.camera.position.set(cx + Math.cos(t * 0.1) * 2600, this.topY + 1700, cz + Math.sin(t * 0.1) * 2600);
+      this.camera.lookAt(cx, this.topY * 0.5, cz);
+      this.camGround = this.topY;
+      this.sun.position.set(cx + 450, this.topY + 900, cz + 300);
       this.sun.target.position.set(cx, 0, cz);
     }
     this.sky.position.copy(this.camera.position);

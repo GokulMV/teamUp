@@ -11,6 +11,7 @@ const SHIELD_TIME = 4;
 const GHOST_TIME = 4;
 const BOOST_TIME = 1.6;
 const SPAWN_SHIELD = 2;
+const FALL_INVULN = 1.5; // race: blinking after being fished out of water/lava
 const KILL_POINTS = 100;
 const HP_MAX = 100; // default arena health ('normal')
 const REGEN_DELAY = 3;
@@ -294,7 +295,7 @@ class KartBattle {
 
   // ---------- damage ----------
   damage(target, amount, attacker, kind) {
-    if (target.dead > 0 || target.finished || (target.ghost > 0 && kind !== 'lava')) return;
+    if (target.dead > 0 || target.finished || target.fall > 0 || (target.ghost > 0 && kind !== 'lava')) return;
     if (attacker && attacker !== target && this.isFriendly(attacker.id, target.id)) return;
     if (kind !== 'lava') {
       if (target.shield > 0) {
@@ -440,7 +441,15 @@ class KartBattle {
       // Finished karts keep full control for a victory lap (no items, can't be hit, pass through others).
       const input = k.input;
       const prevIndex = k.trackIndex;
+      const wasFalling = k.fall > 0;
       K.stepKart(k, input, dt, this.map, { speed: k.speedMul });
+      if (!wasFalling && k.fall > 0) {
+        // Off the road into water, lava or a gap: fished back out after a moment.
+        k.gun = 0;
+        this.room.emit('game:kart:fall', { idx: k.idx, x: Math.round(k.x), y: Math.round(k.y), kind: k.fallKind });
+      } else if (wasFalling && !(k.fall > 0)) {
+        k.invuln = Math.max(k.invuln, FALL_INVULN);
+      }
       for (const t of ['shield', 'invuln', 'ghost']) if (k[t] > 0) k[t] = Math.max(0, k[t] - dt);
 
       if (k.gun > 0) {
@@ -463,7 +472,7 @@ class KartBattle {
         this.trackLaps(k, prevIndex);
       }
     }
-    const alive = karts.filter((k) => k.dead <= 0);
+    const alive = karts.filter((k) => k.dead <= 0 && !(k.fall > 0));
     const solid = alive.filter((k) => k.ghost <= 0 && !k.finished);
 
     // Kart-kart collisions: simple circle separation (ghosts pass through).
@@ -475,7 +484,7 @@ class KartBattle {
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const d2 = dx * dx + dy * dy;
-        if (d2 < r2 && d2 > 0.0001) {
+        if (d2 < r2 && d2 > 0.0001 && Math.abs((a.air || 0) - (b.air || 0)) < 30) {
           const d = Math.sqrt(d2);
           const push = (K.KART_RADIUS * 2 - d) / 2;
           const nx = dx / d;
@@ -633,7 +642,8 @@ class KartBattle {
       countdown: this.phase === 'countdown' ? COUNTDOWN_S - this.time : 0,
       elapsed,
       timeLeft: this.arena ? Math.max(0, this.duration - elapsed) : null,
-      // [idx, x, y, angle*1000, speed, lap, place, item, ammo, flags, kills, deaths, hp]
+      // [idx, x, y, angle*1000, speed, lap, place, item, ammo, flags, kills, deaths, hp, air, fx]
+      // air: height above the ground; fx: 1 falling, 2 trick, 4 fell in lava, 8 fell in water
       k: [...this.karts.values()].map((k) => [
         k.idx, Math.round(k.x), Math.round(k.y), Math.round(k.angle * 1000), Math.round(k.speed),
         Math.max(1, Math.min(this.laps, k.lap)), place.get(k.id), itemCode(k.item), k.ammo,
@@ -644,6 +654,8 @@ class KartBattle {
           | (k.ghost > 0 ? 1024 : 0) | (k.gun > 0 ? 2048 : 0),
         // hp is sent as a percentage of this round's max health.
         k.kills, k.deaths, Math.max(0, Math.min(100, Math.round((k.hp / this.hpMax) * 100))),
+        Math.round(k.air || 0),
+        (k.fall > 0 ? 1 : 0) | (k.trick > 0 ? 2 : 0) | (k.fall > 0 && k.fallKind === 'lava' ? 4 : 0) | (k.fall > 0 && k.fallKind === 'water' ? 8 : 0),
       ]),
       // shots: [id, kind (1 rocket, 2 bullet, 3 bomb), x, y, angle*1000, flight progress 0-100]
       s: this.shots.map((s) => [s.id, SHOT_CODE[s.kind], Math.round(s.x), Math.round(s.y), Math.round(s.angle * 1000),

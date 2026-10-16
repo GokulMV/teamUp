@@ -15,11 +15,11 @@ const MAX_BOTS = 15;
 // react: seconds between decisions; aim: radians of slack when firing;
 // noise: steering wobble; corner: how hard it attacks corners; line: how far it
 // cuts to the inside; itemChance: odds of acting on a good item opportunity;
-// holdMax: seconds before it just uses whatever it holds.
+// holdMax: seconds before it just uses whatever it holds; trick: odds of a trick off a ramp.
 const SKILLS = {
-  easy: { speed: 0.9, react: 0.45, aim: 0.5, noise: 0.2, look: 0.9, corner: 0.8, line: 0.1, drift: false, itemChance: 0.15, holdMax: 16, lead: 0 },
-  normal: { speed: 1, react: 0.2, aim: 0.3, noise: 0.06, look: 1, corner: 0.95, line: 0.3, drift: false, itemChance: 0.65, holdMax: 9, lead: 0.5 },
-  hard: { speed: 1, react: 0.08, aim: 0.18, noise: 0, look: 1.05, corner: 1.05, line: 0.45, drift: true, itemChance: 1, holdMax: 5, lead: 1 },
+  easy: { speed: 0.9, react: 0.45, aim: 0.5, noise: 0.2, look: 0.9, corner: 0.8, line: 0.1, drift: false, itemChance: 0.15, holdMax: 16, lead: 0, trick: 0 },
+  normal: { speed: 1, react: 0.2, aim: 0.3, noise: 0.06, look: 1, corner: 0.95, line: 0.3, drift: false, itemChance: 0.65, holdMax: 9, lead: 0.5, trick: 0.5 },
+  hard: { speed: 1, react: 0.08, aim: 0.18, noise: 0, look: 1.05, corner: 1.05, line: 0.45, drift: true, itemChance: 1, holdMax: 5, lead: 1, trick: 1 },
 };
 const SKILL_NAMES = Object.keys(SKILLS);
 
@@ -456,7 +456,7 @@ function think(game, k, dt) {
   const sk = SKILLS[k.skill] || SKILLS.normal;
   if (!k.input || k.input === NO_INPUT) k.input = { ...NO_INPUT };
   const input = k.input;
-  if (k.dead > 0 || k.finished) { Object.assign(input, NO_INPUT); return; }
+  if (k.dead > 0 || k.finished || k.fall > 0) { Object.assign(input, NO_INPUT); return; }
 
   ai.hold = k.item ? ai.hold + dt : 0;
   ai.roamClock -= dt;
@@ -474,8 +474,14 @@ function think(game, k, dt) {
     return;
   }
   if (game.arena) arenaDrive(game, k, ai, sk, input);
-  else raceDrive(game, k, ai, sk, input);
-  if (input.up && Math.abs(k.speed) < 40 && k.spin <= 0) {
+  else {
+    raceDrive(game, k, ai, sk, input);
+    // Off a ramp: decide once per jump whether to do a trick (press drift at take-off).
+    if (k.air > 0 && !ai.inAir) { ai.inAir = true; ai.wantTrick = Math.random() < sk.trick; }
+    else if (!(k.air > 0)) ai.inAir = false;
+    if (ai.inAir && ai.wantTrick && k.trickable && !k.tricked) input.drift = true;
+  }
+  if (input.up && Math.abs(k.speed) < 40 && k.spin <= 0 && !(k.air > 0)) {
     ai.stuck += dt;
     if (ai.stuck > 0.8) {
       ai.stuck = 0;

@@ -224,6 +224,29 @@
     tick() { tone(1200, { type: 'square', dur: 0.04, vol: 0.06 }); },
     pop() { tone(500, { type: 'sine', dur: 0.08, vol: 0.15, slide: 1.8 }); },
     finish() { [523, 659, 784, 1046, 784, 1046].forEach((f, i) => tone(f, { type: 'square', dur: 0.16, vol: 0.12, delay: i * 0.11 })); },
+    // Jumps and falls on race tracks.
+    trick() { noise({ dur: 0.3, vol: 0.25, filter: 'bandpass', from: 900, to: 3200, q: 1.2 }); [784, 1175].forEach((f, i) => tone(f, { type: 'triangle', dur: 0.12, vol: 0.14, delay: i * 0.07 })); },
+    land(volume = 0.6) {
+      const v = Math.max(0.1, Math.min(1, volume));
+      noise({ dur: 0.18, vol: 0.45 * v, filter: 'lowpass', from: 900, to: 90 });
+      tone(85, { type: 'sine', dur: 0.2, vol: 0.35 * v, slide: 0.5 });
+    },
+    splash(volume = 1) {
+      const v = Math.max(0.05, Math.min(1, volume));
+      noise({ dur: 0.9, vol: 0.55 * v, filter: 'bandpass', from: 2400, to: 300, q: 0.7 });
+      tone(320, { type: 'sine', dur: 0.25, vol: 0.18 * v, slide: 0.4 });
+      for (let i = 0; i < 4; i++) tone(500 + Math.random() * 600, { type: 'sine', dur: 0.08, vol: 0.06 * v, slide: 1.6, delay: 0.25 + i * 0.09 });
+    },
+    sizzle(volume = 1) {
+      const v = Math.max(0.05, Math.min(1, volume));
+      noise({ dur: 1.2, vol: 0.5 * v, filter: 'highpass', from: 5000, to: 1500 });
+      tone(110, { type: 'sawtooth', dur: 0.5, vol: 0.12 * v, slide: 0.4 });
+    },
+    fall(volume = 1) {
+      const v = Math.max(0.05, Math.min(1, volume));
+      tone(700, { type: 'triangle', dur: 0.7, vol: 0.16 * v, slide: 0.25 });
+      noise({ dur: 0.6, vol: 0.2 * v, filter: 'lowpass', from: 1500, to: 200, delay: 0.5 });
+    },
   };
   window.Sfx = Sfx;
 })();

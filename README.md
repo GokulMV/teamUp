@@ -7,7 +7,7 @@ No installs for players: share a 4-letter room code or invite link and everyone 
 |------|-------------|--------------|
 | 🎨 **Pictionary** | skribbl.io | One player draws, everyone guesses in chat. Rounds where everyone draws once (or a fixed number of turns), 15-240 s draw time, 1-5 word choices, 0-5 letter hints, **Normal / Hidden / Combination** word modes, custom word lists, fill bucket, 👍/👎 ratings. Team mode alternates teams and pools scores. |
 | 📞 **Telephone** | Gartic Phone | Books pass round the group. Modes: **Normal** (write → draw → describe…), **Speedrun**, **Secret** (draw blind), **Knock-off** (memorise a drawing, redraw it), **Complement** (add to the last drawing). Pace and auto/host reveal options, emoji reactions, save albums as images. |
-| 🏎️ **Kart Battle** | Mario Kart / Smash Karts | **3D** karts (Three.js) with drifting + mini-turbos. **Race** on 4 tracks (Grand Prix, Desert Canyon, Snowy Peaks, Neon City) or fight in 2 **arenas** (Colosseum, Volcano Crater) with health bars and respawns. 10 power-ups: boost, homing rocket, triple rockets, banana, shield, mine, minigun, bomb, shock wave, ghost. |
+| 🏎️ **Kart Battle** | Mario Kart / Smash Karts | **3D** karts (Three.js) with drifting + mini-turbos. **Race** on 6 big tracks with climbs, crests, bridges and jumps (Grand Prix, Desert Canyon, Snowy Peaks, Neon City, Coral Coast, Lava Peak; ~50 s laps, tricks off ramps, fall into the sea or lava and get fished back out) or fight in 2 **arenas** (Colosseum, Volcano Crater) with health bars and respawns. 10 power-ups: boost, homing rocket, triple rockets, banana, shield, mine, minigun, bomb, shock wave, ghost. |
 
 Everyone picks one of 24 avatars, shown in the lobby, chat, player list and on the podium.
 
@@ -38,11 +38,12 @@ public/                     browser client (plain HTML/CSS/JS, no build step)
   js/draw-board.js          shared drawing canvas (normalized coordinates)
   js/games/*.js             per-mode client UI
   js/games/kart3d.js        Three.js renderer: karts, power-ups, particles, camera
-  js/games/kart3d/world.js  maps' scenery and themes (trees, grass, clouds, lava, neon city...)
+  js/games/kart3d/world.js  themes, textures, shared scenery (trees, grass, clouds...) and arenas
+  js/games/kart3d/track.js  race tracks: terrain, road, bridges, rails, ramps, water, lava, landmarks
   js/avatars.js             the 24 SVG avatars
   js/sfx.js                 Web Audio sound effects and the generated kart engine
   vendor/moonlit/           trees.js from GokulMV/moonlit-cove (grows the 3D trees)
-  js/shared/kart-core.js    track + kart physics shared by server and client
+  js/shared/kart-core.js    tracks (3D centerline, terrain, heightAt) + kart physics shared by server and client
 server/
   index.js                  Express + Socket.IO
   rooms.js                  rooms (30 max), host controls, teams, reconnects
