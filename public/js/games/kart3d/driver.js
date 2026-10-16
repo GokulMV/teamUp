@@ -28,7 +28,8 @@ function faceMaterial(id, body) {
   mat = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.55 });
   const size = w * 0.586;
   const img = new Image();
-  img.onload = () => { ctx.drawImage(img, w / 2 - size / 2, w / 4 - size * 0.56, size, size); texture.needsUpdate = true; };
+  // Drawn a little above the equator so the mouth clears the steering wheel.
+  img.onload = () => { ctx.drawImage(img, w / 2 - size / 2, w / 4 - size * 0.7, size, size); texture.needsUpdate = true; };
   img.src = `data:image/svg+xml,${encodeURIComponent(window.Avatars.face(id).replace('<svg ', `<svg width="${Math.round(size)}" height="${Math.round(size)}" `))}`;
   cache.face.set(id, mat);
   return mat;
@@ -105,6 +106,15 @@ const ACC = {
   halo: (c) => [tint(part(new THREE.TorusGeometry(6.5, 0.9, 8, 28), 0, 0, 0, Math.PI / 2, 0, 0), c)],
 };
 
+// A tapered cylinder from a to b (arms).
+function limb(a, b, r0, r1) {
+  const from = new THREE.Vector3(...a);
+  const dir = new THREE.Vector3(...b).sub(from);
+  const geo = new THREE.CylinderGeometry(r1, r0, dir.length(), 10, 1, true).translate(0, dir.length() / 2, 0);
+  geo.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize()));
+  return geo.translate(from.x, from.y, from.z).toNonIndexed();
+}
+
 function accessory(id, kind, color) {
   const key = `${id}`;
   let geo = cache.acc.get(key);
@@ -122,7 +132,11 @@ export function buildDriver(avatarId) {
   const p = window.Avatars ? window.Avatars.preset(id) : { body: '#ffb02e', acc: 'none', accColor: '' };
   if (!blobGeo) {
     blobGeo = new THREE.SphereGeometry(9.5, 32, 20).scale(1, 1.08, 1).translate(...HEAD);
-    handsGeo = mergeGeometries([4.5, -4.5].map((z) => part(new THREE.SphereGeometry(2.3, 12, 8), 5, 15, z)));
+    // Hands on the wheel, with short arms reaching out of the body (one merged mesh).
+    handsGeo = mergeGeometries([4.5, -4.5].flatMap((z) => [
+      part(new THREE.SphereGeometry(2.3, 12, 8), 5.5, 13.6, z),
+      limb([-1.5, 15.5, Math.sign(z) * 7.6], [5.5, 13.6, z], 2, 1.4),
+    ]));
     accMats = {
       plain: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.1 }),
       metal: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.3, metalness: 0.6 }),

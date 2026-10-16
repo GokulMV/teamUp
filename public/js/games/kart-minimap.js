@@ -22,7 +22,7 @@
   const RACE_NEUTRAL = { curb: '#a69fcc' };
   // Arena floors stay dark so the player badges pop; the wall is a thin line in the floor's hue.
   const ARENA = {
-    arena: { floor: ['#36415d', '#28314a'], line: 'rgba(214,224,255,0.30)', corners: true },
+    arena: { floor: ['#4d4236', '#3a3129'], line: 'rgba(255,232,205,0.32)', corners: true }, // the Colosseum's sand, darkened
     volcano: { floor: ['#33271f', '#221a16'], line: 'rgba(255,200,170,0.22)', cracks: true },
   };
   const ARENA_NEUTRAL = { floor: ['#343852', '#25283c'], line: 'rgba(220,220,255,0.26)' };
@@ -494,10 +494,17 @@
         rivals.push({ kt, x0, y0, sx: x0, sy: y0 });
       }
       spread(rivals, (race ? badgeR * 2 : 6.5 * k) + 0.8 * k, 3 * k);
+      // Arena markers stay on the floor plan, even for a kart pressed against the outer wall.
+      const lo = race ? -Infinity : X(40);
+      const hi = race ? Infinity : X(map.size - 40);
+      const keep = (v, r) => Math.max(lo + r, Math.min(hi - r, v));
+      for (const p of rivals) { p.sx = keep(p.sx, 5 * k); p.sy = keep(p.sy, 5 * k); }
       // Back of the field first so the leaders sit on top.
       rivals.sort((a, b) => (b.kt.place || 99) - (a.kt.place || 99));
+      const meX = me ? keep(X(me.x), meR + 1.1 * k) : 0;
+      const meY = me ? keep(Y(me.y), meR + 1.1 * k) : 0;
       if (me && !me.dead && !race && Number.isFinite(me.x)) {
-        ctx.save(); ctx.translate(X(me.x), Y(me.y)); viewCone(me.angle); ctx.restore();
+        ctx.save(); ctx.translate(meX, meY); viewCone(me.angle); ctx.restore();
       }
       for (const p of rivals) {
         ctx.save();
@@ -509,8 +516,8 @@
       const leader = race && rivals.find((p) => p.kt.place === 1);
       if (leader) { ctx.save(); ctx.translate(leader.sx, leader.sy - badgeR - 3.6 * k); crown(); ctx.restore(); }
       if (me && Number.isFinite(me.x) && Number.isFinite(me.y)) {
-        ctx.save(); ctx.translate(X(me.x), Y(me.y)); meMarker(me); ctx.restore();
-        if (race && me.place === 1 && !me.dead) { ctx.save(); ctx.translate(X(me.x), Y(me.y) - meR - 3.4 * k); crown(); ctx.restore(); }
+        ctx.save(); ctx.translate(meX, meY); meMarker(me); ctx.restore();
+        if (race && me.place === 1 && !me.dead) { ctx.save(); ctx.translate(meX, meY - meR - 3.4 * k); crown(); ctx.restore(); }
       }
     }
 
