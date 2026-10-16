@@ -38,8 +38,19 @@
     fallTime: 1.5, // seconds in the water/lava before you are fished back out
   };
 
-  // Item codes on the wire are index + 1.
-  const ITEMS = ['boost', 'rocket', 'banana', 'shield', 'triple', 'mine', 'minigun', 'bomb', 'shock', 'ghost'];
+  // Item codes on the wire are index + 1. New items are only ever appended.
+  const ITEMS = ['boost', 'rocket', 'banana', 'shield', 'triple', 'mine', 'minigun', 'bomb', 'shock', 'ghost',
+    'bouncer', 'comet', 'star', 'ink', 'thunder'];
+
+  // Item timings and the speed changes items cause. The server and the browser's
+  // prediction both scale stepKart's `opts.speed` with itemSpeed(), so they agree.
+  const ITEM_FX = {
+    roulette: 1.1, // seconds the item roulette spins before the item can be used
+    starTime: 6, starSpeed: 1.2,
+    shrinkTime: 3, shrinkSpeed: 0.7, // thunder victims (race)
+    inkTime: 4,
+  };
+  const itemSpeed = (star, shrunk) => (star ? ITEM_FX.starSpeed : 1) * (shrunk ? ITEM_FX.shrinkSpeed : 1);
   // Deadly ground on race tracks (gap codes are indexes into this list).
   const HAZARDS = [null, 'lava', 'water', 'void'];
 
@@ -1177,8 +1188,8 @@
   }
 
   return {
-    KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, SPACING, PHYS, ITEMS, HAZARDS, MAPS, DEFAULT_MAP,
-    getMap, mapList, stepKart, driftLevel, respawnOnTrack, makeRaceMap,
+    KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, SPACING, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP,
+    getMap, mapList, stepKart, driftLevel, itemSpeed, respawnOnTrack, makeRaceMap,
     noise: { vnoise, fbm, smoothstep, polyDist },
   };
 });

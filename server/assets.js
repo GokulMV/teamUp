@@ -18,7 +18,7 @@ function hashOf(publicDir, urlPath) {
 
 // ES modules imported by other modules (relative imports don't carry the ?v= of their parent),
 // versioned through the import map instead.
-const MODULE_IMPORTS = ['/js/games/kart3d/world.js', '/js/games/kart3d/track.js'];
+const MODULE_IMPORTS = ['/js/games/kart3d/world.js', '/js/games/kart3d/track.js', '/js/games/kart3d/items3d.js'];
 
 function renderIndex(publicDir) {
   let html = fs.readFileSync(path.join(publicDir, 'index.html'), 'utf8');

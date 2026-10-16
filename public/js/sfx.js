@@ -180,13 +180,47 @@
     } catch { /* already stopped */ }
   }
 
+  // Star power: a bright looping arpeggio over a bass pulse while it lasts.
+  let starNodes = [];
+  function starStop() {
+    const t = ctx ? ctx.currentTime : 0;
+    for (const n of starNodes) { try { n.stop(t + 0.02); } catch { /* already stopped */ } }
+    starNodes = [];
+  }
+  function starStart(seconds) {
+    starStop();
+    if (!ready()) return;
+    const t0 = ctx.currentTime + 0.02;
+    const beat = 0.125;
+    const melody = [784, 988, 1175, 1568, 1175, 988, 880, 1109, 1319, 1760, 1319, 1109];
+    const bass = [196, 196, 220, 220];
+    const steps = Math.floor(seconds / beat);
+    for (let i = 0; i < steps; i++) {
+      const t = t0 + i * beat;
+      const voices = [[melody[i % melody.length], 'square', 0.045]];
+      if (i % 2 === 0) voices.push([bass[Math.floor(i / 12) % bass.length], 'triangle', 0.09]);
+      for (const [f, type, vol] of voices) {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = type;
+        o.frequency.setValueAtTime(f, t);
+        env(g, t, 0.004, 0.03, 0.08, vol);
+        o.connect(g);
+        g.connect(master);
+        o.start(t);
+        o.stop(t + 0.13);
+        starNodes.push(o);
+      }
+    }
+  }
+
   const Sfx = {
     get muted() { return muted; },
     setMuted(m) {
       muted = m;
       try { localStorage.setItem('teamup-muted', m ? '1' : '0'); } catch { /* ignore */ }
       if (master) master.gain.value = m ? 0 : 0.55;
-      if (m) engineStop();
+      if (m) { engineStop(); starStop(); }
     },
     engine: engineUpdate,
     engineStop,
@@ -246,6 +280,58 @@
       const v = Math.max(0.05, Math.min(1, volume));
       tone(700, { type: 'triangle', dur: 0.7, vol: 0.16 * v, slide: 0.25 });
       noise({ dur: 0.6, vol: 0.2 * v, filter: 'lowpass', from: 1500, to: 200, delay: 0.5 });
+    },
+    // ---- item roulette ----
+    rouletteTick(i = 0) {
+      tone(1350 + (i % 3) * 170, { type: 'square', dur: 0.03, vol: 0.05 });
+      noise({ dur: 0.03, vol: 0.06, filter: 'highpass', from: 5000, to: 3000 });
+    },
+    rouletteDing() {
+      tone(1568, { type: 'sine', dur: 0.7, vol: 0.18 });
+      tone(2093, { type: 'sine', dur: 0.55, vol: 0.09, delay: 0.015 });
+      tone(3136, { type: 'triangle', dur: 0.3, vol: 0.04, delay: 0.03 });
+    },
+    // ---- newer items ----
+    bouncer() {
+      tone(420, { type: 'triangle', dur: 0.14, vol: 0.2, slide: 1.8 });
+      noise({ dur: 0.12, vol: 0.25, filter: 'lowpass', from: 1500, to: 200 });
+    },
+    bounce(volume = 0.5) { tone(950, { type: 'sine', dur: 0.07, vol: 0.14 * volume, slide: 0.55 }); },
+    comet() {
+      noise({ dur: 1.1, vol: 0.35, filter: 'bandpass', from: 300, to: 3200, q: 1.2 });
+      tone(260, { type: 'sawtooth', dur: 0.9, vol: 0.06, slide: 4 });
+      tone(1320, { type: 'sine', dur: 0.6, vol: 0.06, slide: 1.5, delay: 0.3 });
+    },
+    // The comet is coming for you: a two-tone alarm.
+    cometWarn() {
+      tone(988, { type: 'square', dur: 0.1, vol: 0.09 });
+      tone(740, { type: 'square', dur: 0.1, vol: 0.09, delay: 0.13 });
+    },
+    starStart,
+    starStop,
+    ink() {
+      noise({ dur: 0.35, vol: 0.4, filter: 'lowpass', from: 900, to: 90 });
+      tone(240, { type: 'sine', dur: 0.3, vol: 0.28, slide: 0.4 });
+      tone(150, { type: 'triangle', dur: 0.2, vol: 0.18, slide: 0.6, delay: 0.09 });
+    },
+    inked() {
+      noise({ dur: 0.5, vol: 0.5, filter: 'lowpass', from: 1400, to: 120 });
+      tone(200, { type: 'sine', dur: 0.45, vol: 0.3, slide: 0.35 });
+      tone(320, { type: 'sine', dur: 0.2, vol: 0.12, slide: 0.5, delay: 0.12 });
+    },
+    thunder(volume = 1) {
+      const v = Math.max(0.2, Math.min(1, volume));
+      noise({ dur: 0.3, vol: 0.65 * v, filter: 'highpass', from: 9000, to: 1500 });
+      noise({ dur: 1.8, vol: 0.6 * v, filter: 'lowpass', from: 700, to: 40, delay: 0.05 });
+      tone(55, { type: 'sine', dur: 1.3, vol: 0.4 * v, slide: 0.5 });
+    },
+    shrink() {
+      tone(1000, { type: 'square', dur: 0.4, vol: 0.07, slide: 0.3 });
+      tone(700, { type: 'square', dur: 0.4, vol: 0.05, slide: 0.3, delay: 0.06 });
+    },
+    block() {
+      tone(1250, { type: 'triangle', dur: 0.18, vol: 0.16, slide: 0.55 });
+      noise({ dur: 0.15, vol: 0.2, filter: 'highpass', from: 3000, to: 1200 });
     },
   };
   window.Sfx = Sfx;

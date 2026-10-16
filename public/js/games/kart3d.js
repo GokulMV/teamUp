@@ -1,6 +1,7 @@
 // 3D renderer for Kart Battle, built with Three.js. Game logic stays in kart.js and on the
 // server; this file only draws what it is given. Scenery lives in kart3d/world.js (themes,
-// arenas) and kart3d/track.js (race tracks: terrain, bridges, ramps, water and lava).
+// arenas) and kart3d/track.js (race tracks: terrain, bridges, ramps, water and lava); power-up
+// models and effects in kart3d/items3d.js.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -10,6 +11,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { MOBILE, THEMES, tex, part, buildArena, loadMoonlit } from './kart3d/world.js';
 import { buildRace } from './kart3d/track.js';
+import { ItemFX, shieldMaterial, shieldGeometry, ghostMaterial } from './kart3d/items3d.js';
 
 const K = window.KartCore;
 
@@ -120,9 +122,10 @@ function sharedKartParts() {
   SHARED.pupil = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2 });
   SHARED.head = new THREE.MeshStandardMaterial({ color: 0xfff4d6, emissive: 0xfff1c2, emissiveIntensity: 1.6 });
   SHARED.tail = new THREE.MeshStandardMaterial({ color: 0xff2a2a, emissive: 0xff1a1a, emissiveIntensity: 1.2 });
-  SHARED.flame = new THREE.MeshBasicMaterial({ color: 0xff8a1f, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
-  SHARED.shield = new THREE.MeshBasicMaterial({ color: 0x60a5fa, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false });
-  SHARED.ghost = new THREE.MeshStandardMaterial({ color: 0xa5e4ff, emissive: 0x3a8dff, emissiveIntensity: 0.7, transparent: true, opacity: 0.32, depthWrite: false });
+  SHARED.flame = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 0.85, 0.25), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+  SHARED.flameCore = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.3, 1.6), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  SHARED.shield = shieldMaterial();
+  SHARED.ghost = ghostMaterial();
 
   const tire = new THREE.CylinderGeometry(1, 1, 1, 18).rotateX(Math.PI / 2);
   const hub = new THREE.CylinderGeometry(0.55, 0.55, 1.08, 10).rotateX(Math.PI / 2);
@@ -169,8 +172,9 @@ function sharedKartParts() {
   ]);
   SHARED.eyesGeo = mergeGeometries([2.6, -2.6].map((z) => part(new THREE.SphereGeometry(2.1, 12, 10), 2.6, 25, z)));
   SHARED.pupilsGeo = mergeGeometries([2.6, -2.6].map((z) => part(new THREE.SphereGeometry(1.1, 10, 8), 4.4, 25, z)));
-  SHARED.flameGeo = new THREE.ConeGeometry(2.4, 10, 10).rotateZ(Math.PI / 2);
-  SHARED.shieldGeo = new THREE.SphereGeometry(30, 24, 16);
+  SHARED.flameGeo = new THREE.ConeGeometry(2.6, 12, 12, 1, true).rotateZ(Math.PI / 2);
+  SHARED.flameCoreGeo = new THREE.ConeGeometry(1.3, 7, 10, 1, true).rotateZ(Math.PI / 2).translate(2.2, 0, 0);
+  SHARED.shieldGeo = shieldGeometry();
   SHARED.ready = true;
   return SHARED;
 }
@@ -264,14 +268,16 @@ function buildKart(meta, accentHex, isMe, night) {
 
   const flames = [5, -5].map((z) => {
     const f = new THREE.Mesh(S.flameGeo, S.flame);
-    f.position.set(-28, 8, z);
+    f.add(new THREE.Mesh(S.flameCoreGeo, S.flameCore));
+    f.position.set(-29, 8, z);
     f.visible = false;
     chassis.add(f);
     return f;
   });
 
   const shield = new THREE.Mesh(S.shieldGeo, S.shield);
-  shield.position.y = 12;
+  shield.position.y = 14;
+  shield.renderOrder = 6;
   shield.visible = false;
   group.add(shield);
 
@@ -295,37 +301,6 @@ function setGhost(kart, on) {
     m.material = on ? SHARED.ghost : m.userData.mat;
     m.castShadow = !on && m.userData.shadow;
   }
-}
-
-// ---------- projectile models ----------
-function projectileModels() {
-  const rocketBody = mergeGeometries([
-    part(new THREE.CylinderGeometry(3, 3, 18, 10), 0, 0, 0, 0, 0, Math.PI / 2),
-    part(new THREE.BoxGeometry(5, 10, 1), -8, 0, 0),
-    part(new THREE.BoxGeometry(5, 1, 10), -8, 0, 0),
-  ]);
-  const mineGeo = mergeGeometries([
-    part(new THREE.CylinderGeometry(11, 12, 4, 16), 0, 2, 0),
-    part(new THREE.SphereGeometry(6, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), 0, 4, 0),
-    ...[0, 1, 2, 3, 4, 5].map((i) => part(new THREE.ConeGeometry(1.4, 5, 6), Math.cos(i) * 8, 6, Math.sin(i) * 8)),
-  ]);
-  return {
-    rocketBody,
-    rocketNose: part(new THREE.ConeGeometry(3, 7, 10), 12.5, 0, 0, 0, 0, -Math.PI / 2),
-    rocketMat: new THREE.MeshStandardMaterial({ color: 0xef4444, roughness: 0.35, metalness: 0.4 }),
-    noseMat: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.3 }),
-    bullet: new THREE.CapsuleGeometry(1.6, 12, 2, 6).rotateZ(Math.PI / 2),
-    bulletMat: new THREE.MeshBasicMaterial({ color: 0xffe066 }),
-    bomb: new THREE.SphereGeometry(9, 16, 12),
-    bombMat: new THREE.MeshStandardMaterial({ color: 0x1f2430, roughness: 0.3, metalness: 0.6 }),
-    fuse: new THREE.CylinderGeometry(1, 1, 5, 6).translate(0, 10, 0),
-    mine: mineGeo,
-    mineMat: new THREE.MeshStandardMaterial({ color: 0x3b3f4a, roughness: 0.5, metalness: 0.7 }),
-    mineLight: new THREE.SphereGeometry(2.6, 10, 8).translate(0, 10, 0),
-    mineLightMat: new THREE.MeshBasicMaterial({ color: 0xff2020 }),
-    banana: new THREE.TorusGeometry(7, 2.6, 8, 14, Math.PI * 0.95),
-    bananaMat: new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.5 }),
-  };
 }
 
 // ---------- the renderer ----------
@@ -431,24 +406,9 @@ export class Kart3D {
     this.skidTurn = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
     this.effects = []; // short-lived meshes (respawn beams, shockwaves)
 
-    // Item boxes
-    const boxMat = new THREE.MeshStandardMaterial({ map: tex.box(), transparent: true, opacity: 0.92, emissive: 0x332244, roughness: 0.3 });
-    this.boxes = (opts.items === false ? [] : this.map.itemBoxes).map((b, i) => {
-      const mesh = new THREE.Mesh(new RoundedBoxGeometry(24, 24, 24, 2, 3), boxMat);
-      mesh.userData.base = this.map.heightAt(b.x, b.y);
-      mesh.position.set(b.x, mesh.userData.base + 20, b.y);
-      mesh.castShadow = true;
-      mesh.userData.phase = i * 0.7;
-      mesh.userData.was = true;
-      scene.add(mesh);
-      return mesh;
-    });
-
-    this.models = projectileModels();
     this.karts = new Map();
-    this.shots = new Map();
-    this.mines = new Map();
-    this.bananas = new Map();
+    this.lastKarts = new Map(); // idx -> latest drawn position, for item effects aimed at karts
+    this.items = new ItemFX(this, { items: opts.items !== false });
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -485,7 +445,7 @@ export class Kart3D {
   }
 
   setKarts(list, myIdx, teamColorOf) {
-    for (const k of this.karts.values()) this.scene.remove(k.group);
+    for (const k of this.karts.values()) { this.items.releaseKart(k); this.scene.remove(k.group); }
     this.karts.clear();
     for (const meta of list) {
       const accent = teamColorOf(meta) || '#f8fafc';
@@ -501,9 +461,10 @@ export class Kart3D {
     this.shakeAmt = Math.max(this.shakeAmt, Math.max(0, 1 - d / 700) * amount);
   }
 
-  // kind: rocket | mine | bomb | kill | hit | bullet
+  // kind: rocket | mine | bomb | kill | hit | bullet | bouncer | comet
   explode(x, z, kind = 'rocket', radius = 60) {
-    const gy = this.groundAt(x, z);
+    if (kind === 'comet' || kind === 'bouncer') { this.items.blast(kind, x, z, radius); return; }
+    const gy = this.items.ground(x, z);
     if (kind === 'bullet') {
       for (let i = 0; i < 6; i++) {
         const a = Math.random() * Math.PI * 2;
@@ -540,10 +501,10 @@ export class Kart3D {
   }
 
   shock(x, z, radius) {
-    const gy = this.groundAt(x, z);
-    this.ring(x, z, 0x7dd3fc, radius, 0.45);
+    const gy = this.items.ground(x, z);
+    this.items.shock(x, z, radius);
     this.ring(x, z, 0xffffff, radius * 0.7, 0.3);
-    for (let i = 0; i < 90; i++) {
+    for (let i = 0; i < (MOBILE ? 40 : 90); i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = radius * (1.5 + Math.random());
       this.fire.emit(x, gy + 10 + Math.random() * 20, z, Math.cos(a) * sp, Math.random() * 60, Math.sin(a) * sp, this.colElectric, 8, 0.45, { drag: 2.5 });
@@ -551,13 +512,16 @@ export class Kart3D {
     this.shake(x, z, 10);
   }
 
-  block(x, z) {
-    const gy = this.groundAt(x, z);
+  // A shield (or the item trailing behind a kart, kind 'trail') soaked up a hit.
+  block(x, z, kind) {
+    const gy = this.items.ground(x, z);
+    const col = kind === 'trail' ? this.colOrange : this.colBlue;
     for (let i = 0; i < 26; i++) {
       const a = Math.random() * Math.PI * 2;
       const e = (Math.random() - 0.3) * Math.PI;
-      this.fire.emit(x + Math.cos(a) * 28, gy + 14 + Math.sin(e) * 20, z + Math.sin(a) * 28, Math.cos(a) * 160, 40, Math.sin(a) * 160, this.colBlue, 8, 0.4, { drag: 3 });
+      this.fire.emit(x + Math.cos(a) * 28, gy + 14 + Math.sin(e) * 20, z + Math.sin(a) * 28, Math.cos(a) * 160, 40, Math.sin(a) * 160, col, 8, 0.4, { drag: 3 });
     }
+    this.ring(x, z, kind === 'trail' ? 0xffb347 : 0x93c5fd, 70, 0.3);
   }
 
   sparkle(x, z, y) {
@@ -570,10 +534,24 @@ export class Kart3D {
     }
   }
 
+  // Thunder bolts on every victim ([[x, z], ...]).
+  thunder(list) {
+    this.items.thunder(list);
+    if (this.focus) this.shakeAmt = Math.max(this.shakeAmt, 8);
+  }
+
+  inkBurst(idx, hit) {
+    this.items.inkBurst(this.lastKarts.get(idx), hit.map((i) => this.lastKarts.get(i)).filter(Boolean));
+  }
+
+  itemUsed(idx, item) {
+    this.items.used(this.lastKarts.get(idx), item);
+  }
+
   ring(x, z, color, radius, life) {
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 48).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    ring.position.set(x, this.groundAt(x, z) + 3, z);
+    ring.position.set(x, this.items.ground(x, z) + 3, z);
     this.scene.add(ring);
     this.effects.push({ mesh: ring, life, max: life, kind: 'ring', radius });
   }
@@ -582,7 +560,7 @@ export class Kart3D {
     const gy = this.groundAt(x, z);
     const beam = new THREE.Mesh(new THREE.CylinderGeometry(26, 34, 500, 20, 1, true),
       new THREE.MeshBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    beam.position.set(x, gy + 250, z);
+    beam.position.set(x, this.items.ground(x, z) + 250, z);
     this.scene.add(beam);
     this.effects.push({ mesh: beam, life: 0.9, max: 0.9, kind: 'beam' });
     const col = new THREE.Color(0x9be7ff);
@@ -710,7 +688,9 @@ export class Kart3D {
       const dead = k.flags & 32;
       const fx = k.fx || 0;
       const blink = (k.flags & 16) && !(k.flags & 1) && !(k.flags & 4) && Math.floor(now / 90) % 2;
-      if (dead) { kart.group.visible = false; kart.lastAngle = null; kart.wasDead = true; continue; }
+      kart.group.visible = !dead && !blink;
+      if (dead) { kart.lastAngle = null; kart.wasDead = true; this.items.releaseKart(kart); continue; }
+      this.lastKarts.set(k.idx, k);
       if (kart.wasDead) { kart.wasDead = false; this.respawnBeam(k.x, k.y); }
       // Fell off: sink into the water/lava (or drop into the gap), then wait to be fished out.
       if (fx & 1) {
@@ -839,10 +819,11 @@ export class Kart3D {
       const boosting = k.flags & 2;
       for (const f of kart.flames) {
         f.visible = !!boosting;
-        if (boosting) f.scale.set(0.8 + Math.random() * 0.8, 1, 1);
+        if (boosting) f.scale.set(0.8 + Math.random() * 0.9, 0.85 + Math.random() * 0.3, 0.85 + Math.random() * 0.3);
       }
       kart.shield.visible = !!(k.flags & 4);
-      if (kart.shield.visible) kart.shield.scale.setScalar(1 + Math.sin(t * 8) * 0.04);
+      if (kart.shield.visible) kart.shield.scale.set(1 + Math.sin(t * 8) * 0.04, 1 + Math.sin(t * 8 + 1) * 0.04, 1 + Math.sin(t * 8 + 2) * 0.04);
+      this.items.kart(kart, k, dt, t, k.idx === view.myIdx);
 
       // Minigun muzzle flash.
       if (k.flags & 2048) {
@@ -892,20 +873,7 @@ export class Kart3D {
     }
     for (const [idx, kart] of this.karts) if (!seen.has(idx)) kart.group.visible = false;
 
-    this.updateShots(view.shots || [], dt, flameCol, smokeCol);
-    this.updateMines(view.mines || [], now);
-    this.updateBananas(view.bananas || []);
-
-    // Item boxes
-    this.boxes.forEach((mesh, i) => {
-      const on = !view.boxes || !!view.boxes[i];
-      if (mesh.userData.was && !on) this.sparkle(mesh.position.x, mesh.position.z, mesh.position.y);
-      mesh.userData.was = on;
-      mesh.visible = on;
-      if (!on) return;
-      mesh.rotation.set(t * 0.9 + mesh.userData.phase, t * 1.3 + mesh.userData.phase, 0);
-      mesh.position.y = mesh.userData.base + 22 + Math.sin(t * 2.5 + mesh.userData.phase) * 4;
-    });
+    this.items.update(view, dt, t, now);
 
     // Scenery animation
     const c = this.ctx;
@@ -926,94 +894,6 @@ export class Kart3D {
     this.updateCamera(view.focus, dt, t);
     if (this.composer) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
-  }
-
-  updateShots(list, dt, flameCol, smokeCol) {
-    const M = this.models;
-    const live = new Set();
-    for (const [id, kind, x, y, a, prog] of list) {
-      live.add(id);
-      let s = this.shots.get(id);
-      if (!s) {
-        s = new THREE.Group();
-        if (kind === 1) {
-          const b = new THREE.Mesh(M.rocketBody, M.rocketMat);
-          b.castShadow = true;
-          s.add(b, new THREE.Mesh(M.rocketNose, M.noseMat));
-        } else if (kind === 2) {
-          s.add(new THREE.Mesh(M.bullet, M.bulletMat));
-        } else {
-          const b = new THREE.Mesh(M.bomb, M.bombMat);
-          b.castShadow = true;
-          s.add(b, new THREE.Mesh(M.fuse, M.noseMat));
-        }
-        s.userData.kind = kind;
-        this.scene.add(s);
-        this.shots.set(id, s);
-      }
-      const ca = Math.cos(a);
-      const sa = Math.sin(a);
-      const gy = this.groundAt(x, y, s.userData, true);
-      if (kind === 3) {
-        // Bombs arc through the air.
-        const p = (prog || 0) / 100;
-        s.position.set(x, gy + 12 + Math.sin(Math.min(1, p) * Math.PI) * 110, y);
-        s.rotation.z += dt * 6;
-        this.fire.emit(x, s.position.y + 12, y, 0, 20, 0, flameCol[0], 7, 0.2);
-      } else {
-        s.position.set(x, gy + (kind === 2 ? 12 : 14), y);
-        s.rotation.y = -a;
-        if (kind === 1) {
-          s.rotation.x += dt * 12;
-          this.fire.emit(x - ca * 12, gy + 14, y - sa * 12, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20, (Math.random() - 0.5) * 20,
-            flameCol[Math.floor(Math.random() * 3)], 12, 0.18, { grow: 0.4 });
-          this.smoke.emit(x - ca * 14, gy + 14, y - sa * 14, 0, 12, 0, smokeCol, 9, 0.7, { alpha: 0.5, grow: 2.4, drag: 1 });
-        }
-      }
-    }
-    for (const [id, s] of this.shots) if (!live.has(id)) { this.scene.remove(s); this.shots.delete(id); }
-  }
-
-  updateMines(list, now) {
-    const M = this.models;
-    const live = new Set();
-    for (const [id, x, y, armed] of list) {
-      live.add(id);
-      let m = this.mines.get(id);
-      if (!m) {
-        m = new THREE.Group();
-        const body = new THREE.Mesh(M.mine, M.mineMat);
-        body.castShadow = true;
-        const light = new THREE.Mesh(M.mineLight, M.mineLightMat);
-        m.add(body, light);
-        m.userData.light = light;
-        m.position.set(x, this.groundAt(x, y) + 0.5, y);
-        this.scene.add(m);
-        this.mines.set(id, m);
-      }
-      m.userData.light.visible = armed ? Math.floor(now / 250) % 2 === 0 : true;
-      m.userData.light.scale.setScalar(armed ? 1.3 : 0.7);
-    }
-    for (const [id, m] of this.mines) if (!live.has(id)) { this.scene.remove(m); this.mines.delete(id); }
-  }
-
-  updateBananas(list) {
-    const M = this.models;
-    const live = new Set();
-    for (const [id, x, y] of list) {
-      live.add(id);
-      let b = this.bananas.get(id);
-      if (!b) {
-        b = new THREE.Mesh(M.banana, M.bananaMat);
-        b.castShadow = true;
-        b.rotation.set(-0.3, Math.random() * Math.PI * 2, 0.4);
-        b.userData.gy = this.groundAt(x, y);
-        this.scene.add(b);
-        this.bananas.set(id, b);
-      }
-      b.position.set(x, b.userData.gy + 5, y);
-    }
-    for (const [id, b] of this.bananas) if (!live.has(id)) { this.scene.remove(b); this.bananas.delete(id); }
   }
 
   updateCamera(focus, dt, t) {
@@ -1064,8 +944,8 @@ export class Kart3D {
       // ...nor sink into the hillside behind it.
       this.camGround = this.groundAt(this.camPos.x, this.camPos.z, this.camHint2 || (this.camHint2 = { hint: null }));
       if (this.camPos.y < this.camGround + 28) this.camPos.y = this.camGround + 28;
-      const fov = focus.boost ? 74 : 62;
-      this.camera.fov += (fov - this.camera.fov) * Math.min(1, dt * 4);
+      const fov = focus.boost ? 74 : focus.star ? 68 : 62;
+      this.camera.fov += (fov - this.camera.fov) * Math.min(1, dt * (fov > this.camera.fov ? 7 : 3));
       this.camera.updateProjectionMatrix();
       this.camera.position.copy(this.camPos);
       if (this.shakeAmt > 0.01) {
@@ -1091,6 +971,8 @@ export class Kart3D {
 
   dispose() {
     this.resizeObserver.disconnect();
+    for (const k of this.karts.values()) this.items.releaseKart(k);
+    this.items.dispose();
     this.composer?.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
