@@ -40,7 +40,7 @@ window.Games.kart = {
           <div class="kart-hit" data-hit><svg viewBox="0 0 28 28"><path d="M4 4l7 7M24 4l-7 7M4 24l7-7M24 24l-7-7"/></svg></div>
           <div class="kart-dead kart-panel" data-dead></div>
           <canvas class="kart-minimap" data-minimap></canvas>
-          <div class="kart-help kart-panel" data-help>${touch ? 'Tap a button to go: your kart drives itself' : '<kbd>WASD</kbd> drive <kbd>Shift</kbd> drift <kbd>Space</kbd> use item'}</div>
+          <div class="kart-help kart-panel" data-help>${touch ? '<b>Tap any button to start</b>Your kart accelerates by itself' : '<kbd>WASD</kbd> drive <kbd>Shift</kbd> drift <span class="kh-item"><kbd>Space</kbd> use item</span>'}</div>
           <div class="kart-rotate kart-panel hidden" data-rotate>${svg('<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M21 14a8 8 0 0 1-6 6.5M3 10a8 8 0 0 1 6-6.5"/>')}Turn your phone for a wider view</div>
           <div class="kart-tools">
             <button class="kart-tool" data-fullscreen title="Full screen" aria-label="Full screen">${svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>')}</button>
@@ -83,6 +83,7 @@ window.Games.kart = {
     let wasWrecked = false;
     let camMode = '';
     let orbitAngle = 0;
+    const spec = { idx: -1, next: -1, since: 0 }; // spectator cam: who it follows, who's taking over
     let finishTime = null;
     let bulletHits = 0;
     const deathMarks = []; // arena minimap: where karts were just smashed
@@ -120,7 +121,8 @@ window.Games.kart = {
     function useItem() { api.socket.emit('game:use'); }
     const typing = (e) => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
     function onKey(e, down) {
-      if (typing(e)) return;
+      // Key releases still count while typing in chat, or a held key would stay down for good.
+      if (typing(e) && (down || !keyMap[e.code])) return;
       if (e.code === 'Space' || e.code === 'KeyE') {
         if (down && !e.repeat) useItem();
         e.preventDefault();
@@ -136,8 +138,20 @@ window.Games.kart = {
     window.addEventListener('keydown', kd);
     window.addEventListener('keyup', ku);
     let autoGas = false; // touch: set by the first button press
-    const blur = () => { Object.keys(input).forEach((k) => { input[k] = false; }); input.up = autoGas; sendInput(); };
+    // Leaving the page (or opening chat) lets go of everything, auto-gas included: the next button
+    // press starts it again. Otherwise a phone in a pocket keeps driving into the lava.
+    function release() {
+      autoGas = false;
+      stage.classList.remove('engaged');
+      Object.keys(input).forEach((k) => { input[k] = false; });
+      el.querySelectorAll('[data-key].on').forEach((b) => b.classList.remove('on'));
+      sendInput();
+    }
+    const blur = () => release();
+    const onVisibility = () => { if (document.hidden) release(); };
     window.addEventListener('blur', blur);
+    document.addEventListener('visibilitychange', onVisibility);
+    let chatWasOpen = false;
 
     // Touch: once you press any button the kart accelerates by itself (not before, so nobody
     // rolls off the start into the lava); the brake button slows down and reverses.
@@ -191,6 +205,7 @@ window.Games.kart = {
       local = null;
       snapCamera = true;
       death = null;
+      spec.idx = -1;
       if (!sameRound) { finishTime = null; deathMarks.length = 0; }
       if (view3d && !sameRound) { view3d.dispose(); view3d = null; }
       minimap = null;
@@ -198,6 +213,8 @@ window.Games.kart = {
       q('[data-timer]').classList.toggle('hidden', map.type !== 'arena');
       stage.classList.toggle('mode-arena', map.type === 'arena');
       stage.classList.toggle('mode-race', map.type !== 'arena');
+      stage.classList.toggle('no-items', data.items === false);
+      stage.classList.toggle('spectating', myIdx < 0);
       hud.setRound(data, map, myIdx);
     }
 
@@ -331,7 +348,6 @@ window.Games.kart = {
         }
       } else {
         q('[data-item]').style.display = 'none';
-        stage.classList.add('spectating');
       }
       drawMinimap(now, karts);
     }
@@ -347,6 +363,9 @@ window.Games.kart = {
       const dt = Math.min(0.05, (now - lastFrame) / 1000);
       lastFrame = now;
       if (!info) return;
+      const chatOpen = document.body.classList.contains('chat-open');
+      if (chatOpen && !chatWasOpen) release(); // the chat sheet covers the controls
+      chatWasOpen = chatOpen;
 
       // Predict my kart locally so steering feels instant.
       const myRow = latest?.k.find((r) => r[0] === myIdx);
@@ -371,7 +390,9 @@ window.Games.kart = {
       }
 
       // Camera follows me; while I'm wrecked it follows whoever smashed me (or circles the wreck);
-      // spectators follow the leader. It snaps whenever it switches target.
+      // spectators follow the leader. It snaps whenever it switches target, except between leaders:
+      // a new leader takes over after holding P1 for 1.5 s, and the camera glides over unless
+      // they're far away.
       let focusKart = me && !(me.flags & 32) ? me : null;
       let mode = focusKart ? 'me' : '';
       if (!focusKart && me && myRow) {
@@ -384,9 +405,26 @@ window.Games.kart = {
         }
         if (death) death.watching = killer ? killer.idx : -1;
       } else if (!me && latest) {
-        const leader = latest.k.find((r) => r[6] === 1);
-        focusKart = karts.find((k) => leader && k.idx === leader[0]);
-        if (focusKart) mode = `leader${focusKart.idx}`;
+        const alive = (idx) => karts.find((k) => k.idx === idx && !(k.flags & 32));
+        const lead = [...latest.k].sort((a, b) => a[6] - b[6]).find((r) => !(r[9] & 32))?.[0] ?? -1;
+        let watched = alive(spec.idx);
+        if (!watched) {
+          if (spec.idx >= 0) snapCamera = true; // the one we watched was smashed
+          spec.idx = lead;
+          watched = alive(lead);
+        } else if (lead !== spec.idx && lead >= 0) {
+          if (spec.next !== lead) { spec.next = lead; spec.since = now; }
+          const next = alive(lead);
+          if (next && now - spec.since > 1500) {
+            if (Math.hypot(next.x - watched.x, next.y - watched.y) > 600) snapCamera = true;
+            spec.idx = lead;
+            watched = next;
+          }
+        } else {
+          spec.next = -1;
+        }
+        focusKart = watched || null;
+        if (focusKart) mode = 'leader';
       }
       if (mode !== camMode) { camMode = mode; snapCamera = true; }
       if (view3d && view) {
@@ -465,6 +503,7 @@ window.Games.kart = {
         window.removeEventListener('keydown', kd);
         window.removeEventListener('keyup', ku);
         window.removeEventListener('blur', blur);
+        document.removeEventListener('visibilitychange', onVisibility);
       },
     };
   },

@@ -118,7 +118,9 @@
       }
       round.phase = phase;
       el.intro.classList.toggle('show', phase === 'countdown');
-      el.help.classList.toggle('show', phase === 'countdown' || (racing && latest.elapsed < (round.touch ? 12 : 6)));
+      // Desktop: the keys for the first few seconds. Touch: the "tap to start" caption stays until
+      // the first press (the stage gets .engaged), since nothing moves before it.
+      el.help.classList.toggle('show', phase === 'countdown' || (racing && (round.touch || latest.elapsed < 6)));
 
       if (round.arena && latest.timeLeft !== null) {
         set('timer', clock(Math.ceil(latest.timeLeft)));
@@ -137,7 +139,7 @@
           }
           set('kills', String(kills));
           set('deaths', String(deaths));
-          set('rank', `#${place} of ${latest.k.length}`);
+          set('rank', round.touch ? `#${place}/${latest.k.length}` : `#${place} of ${latest.k.length}`);
           const low = h <= 30 && !(flags & 32) && racing;
           el.vignette.classList.toggle('show', low);
           if (low && now - lastBeat > 1000) { lastBeat = now; window.Sfx.heartbeat?.(); }
@@ -180,7 +182,7 @@
     // ----- death card: who got you, who you're watching, and when you're back -----
     function deathCard(now, d) {
       if (!d) {
-        if (deathShown) { deathShown = false; el.dead.classList.remove('show'); }
+        if (deathShown) { deathShown = false; el.dead.classList.remove('show'); ctx.stage.classList.remove('is-dead'); }
         return;
       }
       if (!deathShown) {
@@ -192,6 +194,7 @@
           <div class="kd-text">${title}<span class="kd-watch"></span></div>`;
         deathRing = { fg: el.dead.querySelector('.fg'), num: el.dead.querySelector('.kd-ring b'), watch: el.dead.querySelector('.kd-watch'), last: null, watching: undefined };
         el.dead.classList.add('show');
+        ctx.stage.classList.add('is-dead');
       }
       const left = Math.max(0, round.respawn - (now - d.at) / 1000);
       deathRing.fg.style.strokeDashoffset = String(100 * (left / round.respawn));

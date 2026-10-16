@@ -140,6 +140,7 @@
           <ul id="player-list"></ul>
         </div>
         <div class="chat glass">
+          <div class="chat-head"><b>Chat</b><button id="chat-close" class="icon-btn" aria-label="Close chat">✕</button></div>
           <div id="chat-log" class="chat-log"></div>
           <form id="chat-form" class="chat-form">
             <input id="chat-input" maxlength="200" placeholder="Chat or type your guess…" autocomplete="off">
@@ -158,11 +159,12 @@
   </div>
 
   <div id="chat-backdrop" class="chat-backdrop"></div>
+  <div id="chat-ticker" class="chat-ticker" aria-hidden="true"></div>
   <div id="game-menu" class="game-menu glass hidden" role="menu">
-    <button data-act="chat" role="menuitem"><span>Chat</span></button>
-    <button data-act="sound" role="menuitem"><span>Sound on</span></button>
-    <button data-act="stop" role="menuitem" class="danger"><span>End game</span></button>
-    <button data-act="leave" role="menuitem"><span>Leave room</span></button>
+    <button data-act="chat" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg><span>Chat</span></button>
+    <button data-act="sound" role="menuitem"><i data-sound-icon></i><span>Mute sound</span></button>
+    <button data-act="stop" role="menuitem" class="danger"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg><span>End game</span></button>
+    <button data-act="leave" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10"/></svg><span>Leave room</span></button>
   </div>
 
   <div id="toast" class="toast"></div>

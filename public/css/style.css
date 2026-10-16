@@ -279,6 +279,7 @@ textarea { resize: vertical; min-height: 70px; }
 .map-overview { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); border-radius: 16px; overflow: hidden; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.25); }
 .mo-art { position: relative; aspect-ratio: 16 / 10; background: var(--art) center / cover no-repeat, linear-gradient(135deg, #2a1c5c, #3b1452); }
 .mo-art::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent 60%, rgba(12, 8, 30, 0.6)); }
+.mo-art .map-inset { position: absolute; right: 8px; bottom: 8px; width: 32%; max-width: 150px; aspect-ratio: 1; z-index: 1; display: block; }
 .mo-art .map-outline { position: absolute; right: 10px; bottom: 10px; width: 28%; aspect-ratio: 1; z-index: 1; padding: 6px; border-radius: 12px; background: rgba(12, 8, 30, 0.55); backdrop-filter: blur(6px); }
 .mo-info { padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; justify-content: center; }
 .mo-kicker { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-2); }
@@ -375,7 +376,12 @@ textarea { resize: vertical; min-height: 70px; }
 .results-players .rank { width: 26px; color: var(--muted); font-weight: 700; }
 .results-players .nm { flex: 1; font-weight: 600; }
 .results-players .extra { color: var(--muted); font-size: 0.85rem; }
-.results-players .pts { font-weight: 800; font-variant-numeric: tabular-nums; }
+.results-players .pts { font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.results-players .pts small { font-size: 0.75em; font-weight: 700; color: var(--muted); margin-left: 2px; }
+.results-players li.me { background: rgba(255, 79, 163, 0.18); box-shadow: inset 0 0 0 1px rgba(255, 79, 163, 0.45); }
+.podium .step.me .nm { color: #ffc1df; }
+.results h2 { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.results h2 .res-ic { width: 34px; height: 34px; flex: none; }
 .results .btn.big { max-width: 320px; margin: 0 auto; }
 .confetti { position: absolute; inset: 0; pointer-events: none; overflow: hidden; border-radius: var(--radius); }
 .confetti i { position: absolute; top: -12px; width: 8px; height: 14px; border-radius: 2px; animation: drop 3.2s linear forwards; }
@@ -629,35 +635,57 @@ textarea { resize: vertical; min-height: 70px; }
 .tc-drift .tc-ic { width: 22px; height: 22px; margin-top: -8px; }
 .tc-brake { right: 100px; bottom: 12px; width: 52px; height: 52px; }
 .tc-brake .tc-ic { width: 22px; height: 22px; }
-.kart-stage.touch .kart-key, .kart-stage.touch.engaged .kart-help { display: none; }
-.kart-stage.touch .kart-help { left: 50%; bottom: 176px; transform: translate(-50%, 6px); white-space: nowrap; font-size: 12.5px; }
-.kart-stage.touch .kart-help.show { transform: translate(-50%, 0); }
-.kart-stage.touch .kart-card { transform: scale(0.85); }
-.kart-stage.touch .kart-minimap { top: 12px; right: 12px; bottom: auto; width: 104px; height: 104px; }
-.kart-stage.touch .kart-tools { left: auto; bottom: auto; top: 12px; right: 124px; }
-.kart-stage.touch .kart-board { top: 124px; width: 150px; padding: 4px; }
-.kart-stage.touch .kb-row { height: 22px; font-size: 12px; gap: 5px; grid-template-columns: 12px 18px minmax(0, 1fr) auto; padding: 0 5px; }
-.kart-stage.touch .kb-row .av { width: 18px; height: 18px; }
-.kart-stage.touch .kb-row:nth-child(n+4):not(.me), .kart-stage.touch .kb-gap { display: none; }
-.kart-stage.touch .kart-feed { top: 226px; }
+.kart-stage.no-items .tc-fire, .kart-stage.no-items .kh-item { display: none; }
+.kart-stage.spectating .touch-controls, .kart-stage.spectating .kart-help { display: none; }
+/* empty fire button: a faint item box, so it reads as "no item yet", not as a missing control */
+.tc-fire:not(.armed)::before { content: "?"; position: absolute; inset: 0; margin: auto; width: 30px; height: 30px; box-sizing: border-box; border: 2px solid rgba(255, 255, 255, 0.55); border-radius: 9px; display: grid; place-items: center; font-weight: 800; font-size: 15px; color: rgba(255, 255, 255, 0.7); transform: rotate(-8deg); }
+/* Touch: the HUD lives in the top band and the controls at the bottom, so the middle, where your
+   kart and the road ahead are, stays clear. */
+.kart-stage.touch .kart-key { display: none; }
+.kart-stage.touch .kart-card { top: 10px; left: 10px; min-width: 0; transform: scale(0.8); }
+.kart-stage.touch .kart-minimap { top: 10px; right: 10px; bottom: auto; width: 102px; height: 102px; }
+.kart-stage.touch .kart-tools { left: auto; bottom: auto; top: 10px; right: 120px; }
+/* leaderboard: one pill under the card with the top 3 and you (avatar, rank, kills) */
+.kart-stage.touch .kart-board { top: 68px; left: 10px; right: auto; width: auto; flex-direction: row; align-items: center; gap: 1px; padding: 3px; border-radius: 999px; }
+.kart-stage.touch .kb-row { grid-template-columns: auto 20px; grid-auto-flow: column; height: 24px; gap: 4px; padding: 0 7px 0 6px; border-radius: 999px; font-size: 12px; }
+.kart-stage.touch .kb-row .rk { font-size: 11px; text-align: left; }
+.kart-stage.touch .kb-row .nm, .kart-stage.touch .kb-gap, .kart-stage.touch .kb-row:nth-child(n+4):not(.me) { display: none; }
+.kart-stage.touch .kb-row.me:nth-child(n+4) { margin-left: 3px; box-shadow: -4px 0 0 -3px rgba(255, 255, 255, 0.3); }
+.kart-stage.touch .kart-feed { top: 120px; right: 10px; }
 .kart-stage.touch .kf-row { font-size: 11.5px; padding: 3px 8px 3px 4px; }
+.kart-stage.touch .kf-row b { max-width: 72px; }
 .kart-stage.touch .kf-row:nth-child(n+3) { display: none; }
-.kart-stage.touch .kart-dead { bottom: auto; top: 62%; }
+.kart-stage.touch .kart-callout { top: 36%; }
+.kart-stage.touch .kart-intro, .kart-stage.touch .kart-dead { top: 78px; bottom: auto; }
+.kart-stage.touch .kart-dead { padding: 8px 14px 8px 8px; gap: 10px; transform: translate(-50%, -8px); }
+.kart-stage.touch .kart-dead.show { transform: translate(-50%, 0); }
+.kart-stage.touch .kart-dead .kd-ring { width: 40px; height: 40px; }
+.kart-stage.touch .kd-who { font-size: 15px; }
+/* "tap to start": a caption above the steering pills, and every button pulses until the first press */
+.kart-stage.touch .kart-help { left: max(12px, env(safe-area-inset-left)); bottom: 88px; flex-direction: column; align-items: flex-start; gap: 1px; padding: 6px 11px 7px; font-size: 11px; transform: translateY(6px); }
+.kart-stage.touch .kart-help b { font-size: 12.5px; color: #fff; }
+.kart-stage.touch .kart-help.show { transform: none; }
+.kart-stage.touch.engaged .kart-help { display: none; }
+.kart-stage.touch:not(.engaged) .kart-help.show ~ .touch-controls button { animation: tc-pulse 1.6s ease-out infinite; }
+@keyframes tc-pulse { 0% { box-shadow: 0 0 0 0 rgba(255, 79, 163, 0.6); } 70%, 100% { box-shadow: 0 0 0 12px rgba(255, 79, 163, 0); } }
 @media (orientation: portrait) {
-  .kart-stage.touch .kart-top { top: 124px; }
-  .kart-stage.touch .kart-board { top: 82px; left: 12px; right: auto; width: 124px; }
-  .kart-stage.touch .kart-feed { top: 200px; }
-  .kart-stage.touch .kart-intro { top: auto; bottom: 222px; }
-  .kart-stage.touch .kart-callout { top: 30%; }
+  /* the timer and the fullscreen button go under the minimap, the held item to the top centre */
+  .kart-stage.touch .kart-top { position: static; transform: none; }
+  .kart-stage.touch .kart-item { position: absolute; top: 10px; left: 50%; width: 50px; height: 50px; margin-left: -25px; border-radius: 15px; font-size: 1.6rem; }
+  .kart-stage.touch .kart-item svg { width: 36px; height: 36px; }
+  .kart-stage.touch .kart-timer { position: absolute; top: 120px; right: 52px; height: 34px; padding: 0 10px; font-size: 18px; border-radius: 11px; }
+  .kart-stage.touch:has([data-fullscreen].hidden) .kart-timer { right: 10px; }
+  .kart-stage.touch .kart-tools { top: 120px; right: 10px; }
+  .kart-stage.touch .kart-tool { width: 34px; height: 34px; }
+  .kart-stage.touch .kart-feed { top: 162px; }
+  .kart-stage.touch .kart-intro, .kart-stage.touch .kart-dead { top: 162px; }
+  .kart-stage.touch.is-dead .kart-feed { top: 238px; }
+  .kart-stage.touch .kart-rotate { top: 222px; }
+  .kart-stage.touch .kart-callout { top: 33%; }
 }
-@media (max-height: 500px) {
-  .kart-stage.touch .tool-menu, .kart-stage.touch .tool-chat { display: grid; }
-  .kart-stage.touch .kart-intro { top: auto; bottom: 18px; }
-  .kart-stage.touch .kart-help { bottom: 86px; }
-  .kart-stage.touch .kart-board { display: none; }
-  .kart-stage.touch .kart-feed { top: 124px; }
-  .kart-stage.touch .kart-callout { top: 16%; }
-  .kart-stage.touch .kart-dead { top: 50%; }
+@media (orientation: landscape) {
+  .kart-stage.touch .kart-top { top: 10px; }
+  .kart-stage.touch .kart-rotate { display: none; }
 }
 
 .toast {
@@ -667,13 +695,38 @@ textarea { resize: vertical; min-height: 70px; }
 }
 .toast.show { transform: translateX(-50%) translateY(0); }
 
-/* ---------- Kart game focus: the game takes the screen, chat becomes a sheet on phones ---------- */
-.chat-toggle, .chat-backdrop { display: none; }
+/* ---------- Kart game focus: the game takes the screen; chat is a drawer (desktop) or a sheet (phones) ---------- */
+.chat-toggle, .chat-backdrop, .chat-head, .chat-ticker { display: none; }
 body.kart-playing .side-players { display: none; }
-.game-menu { position: fixed; z-index: 70; min-width: 180px; padding: 6px; display: flex; flex-direction: column; gap: 2px; background: rgba(28, 20, 66, 0.94); border-radius: 14px; animation: fade 0.15s; }
-.game-menu button { text-align: left; padding: 11px 12px; border: 0; border-radius: 10px; background: transparent; font-weight: 600; }
+.chat-toggle { position: relative; }
+.chat-toggle[data-unread]::after { content: attr(data-unread); position: absolute; top: -5px; right: -5px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); border: 2px solid var(--bg); font-size: 10.5px; font-weight: 800; line-height: 14px; text-align: center; }
+body.chat-unread .kart-tool.tool-chat::after { content: ""; position: absolute; top: 5px; right: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px rgba(14, 10, 36, 0.8); }
+.kart-tool { position: relative; }
+body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap: 10px; padding: 12px 12px 10px 16px; border-bottom: 1px solid var(--line); }
+.chat-head b { flex: 1; font-family: var(--font-display); font-size: 1.05rem; }
+.chat-head .icon-btn { width: 32px; height: 32px; border-radius: 10px; font-size: 0.9rem; }
+.chat-log:empty::after { content: "No messages yet. Say hi!"; margin: auto; color: var(--muted); font-size: 0.88rem; }
+.game-menu { position: fixed; z-index: 70; min-width: 190px; padding: 6px; display: flex; flex-direction: column; gap: 2px; background: rgba(28, 20, 66, 0.94); border-radius: 14px; animation: fade 0.15s; }
+.game-menu button { display: flex; align-items: center; gap: 10px; text-align: left; padding: 11px 12px; border: 0; border-radius: 10px; background: transparent; font-weight: 600; }
+.game-menu button svg { width: 18px; height: 18px; flex: none; opacity: 0.85; }
 .game-menu button:hover { background: var(--surface-2); }
 .game-menu button.danger { color: #ffd1d9; }
+@media (min-width: 981px) and (pointer: fine) {
+  /* Desktop: the game gets the whole width; chat opens as a drawer over it (button or Enter) and
+     new messages show briefly in a ticker over the bottom-left of the game. */
+  body.kart-playing #side { display: none; }
+  body.kart-playing .chat-toggle { display: inline-flex; }
+  body.kart-playing.chat-open #side { display: flex; position: fixed; top: 70px; right: 14px; z-index: 55; width: 340px; height: min(560px, calc(100% - 92px)); animation: drawer-in 0.2s ease-out; }
+  body.kart-playing.chat-open .chat { flex: 1; min-height: 0; background: rgba(22, 15, 53, 0.94); }
+  body.kart-playing.chat-open .chat-backdrop { display: block; position: fixed; inset: 0; z-index: 54; }
+  body.kart-playing .chat-ticker { display: flex; position: fixed; left: 28px; bottom: 74px; z-index: 20; flex-direction: column; align-items: flex-start; gap: 5px; max-width: 420px; pointer-events: none; }
+  body.kart-playing.chat-open .chat-ticker { display: none; }
+}
+@keyframes drawer-in { from { opacity: 0; transform: translateX(16px); } }
+.chat-ticker div { display: flex; align-items: center; gap: 7px; padding: 4px 11px 4px 4px; border-radius: 12px; font-size: 13px; line-height: 1.3; color: #fff; background: rgba(14, 10, 36, 0.62); border: 1px solid rgba(255, 255, 255, 0.12); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); animation: feed-in 0.25s ease-out; transition: opacity 0.4s; overflow: hidden; }
+.chat-ticker .av { width: 20px; height: 20px; }
+.chat-ticker span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-ticker div.out { opacity: 0; }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1100px) {
@@ -709,14 +762,19 @@ body.kart-playing .side-players { display: none; }
   body.kart-playing #view-game.active { height: 100%; min-height: 0; }
   body.kart-playing #side { display: none; }
   body.kart-playing .chat-toggle { display: inline-flex; }
-  body.kart-playing.chat-open #side { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 55; width: auto; height: min(62dvh, 440px); padding: 10px; }
-  body.kart-playing.chat-open .chat { min-height: 0; max-height: none; flex: 1; }
+  body.kart-playing.chat-open #side { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 55; width: auto; height: min(62dvh, 440px); padding: 0; animation: sheet-in 0.22s ease-out; }
+  body.kart-playing.chat-open .chat { min-height: 0; max-height: none; flex: 1; border-radius: 22px 22px 0 0; border-bottom: 0; background: rgba(22, 15, 53, 0.92); padding-bottom: env(safe-area-inset-bottom); }
+  body.kart-playing.chat-open .chat-head { position: relative; padding-top: 18px; }
+  body.kart-playing.chat-open .chat-head::before { content: ""; position: absolute; top: 7px; left: 50%; width: 38px; height: 4px; margin-left: -19px; border-radius: 2px; background: rgba(255, 255, 255, 0.3); }
   body.kart-playing.chat-open .chat-backdrop { display: block; position: fixed; inset: 0; z-index: 54; background: rgba(5, 3, 15, 0.45); }
 }
+@keyframes sheet-in { from { transform: translateY(40px); opacity: 0; } }
 @media (max-height: 500px) and (orientation: landscape) and (max-width: 980px), (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
   body.kart-playing .topbar { display: none; }
   body.kart-playing .room-body { padding: 0; }
   body.kart-playing .kart-stage { border-radius: 0; }
+  /* the top bar's buttons move into the stage: Chat and a menu with Sound, End game and Leave */
+  body.kart-playing .kart-tool.tool-menu, body.kart-playing .kart-tool.tool-chat { display: grid; }
 }
 @media (max-width: 560px) {
   .game-tiles { grid-template-columns: 1fr; }

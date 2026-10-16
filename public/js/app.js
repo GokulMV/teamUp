@@ -295,7 +295,7 @@
     const kartPlaying = room.state === 'playing' && room.settings.mode === 'kart';
     if (kartPlaying && !document.body.classList.contains('kart-playing') && matchMedia('(pointer: coarse), (max-width: 980px)').matches) window.scrollTo(0, 0);
     document.body.classList.toggle('kart-playing', kartPlaying);
-    if (!kartPlaying) { toggleChat(false); closeMenu(); }
+    if (!kartPlaying) { toggleChat(false); closeMenu(); setUnread(0); $('chat-ticker').innerHTML = ''; }
     $('chat-input').placeholder = room.state === 'playing' && room.settings.mode === 'pictionary' ? 'Chat or type your guess…' : 'Chat…';
 
     if (room.state === 'lobby') {
@@ -395,6 +395,23 @@
       ${map.obstacles.map((o) => `<circle cx="${r(o.x)}" cy="${r(o.y)}" r="${r(o.r)}" class="mo-block"/>`).join('')}</svg>`;
   }
 
+  // The overview's inset is the in-game minimap (same colours and outline), drawn once per map.
+  const insetCache = new Map();
+  function mapInset(m) {
+    let url = insetCache.get(m.id);
+    if (!url) {
+      try {
+        const c = document.createElement('canvas');
+        window.KartMinimap.create(c, window.KartCore.getMap(m.id, m.type), { cssSize: 132, dpr: 2 }).draw({ time: 0 });
+        url = c.toDataURL();
+        insetCache.set(m.id, url);
+      } catch {
+        return mapOutline(m);
+      }
+    }
+    return `<img class="map-inset" src="${url}" alt="">`;
+  }
+
   function mapStats(m) {
     const map = window.KartCore?.MAPS?.[m.id];
     if (!map) return [];
@@ -424,7 +441,7 @@
     const cur = maps.find((m) => m.id === v) || maps[0];
     if (!cur) return '';
     return `<div class="map-overview" style="--art:url('/img/maps/${cur.id}.jpg')">
-        <div class="mo-art">${mapOutline(cur)}</div>
+        <div class="mo-art">${mapInset(cur)}</div>
         <div class="mo-info">
           <span class="mo-kicker">${cur.type === 'race' ? 'Race track' : 'Battle arena'}</span>
           <h4>${cur.emoji} ${escapeHtml(cur.name)}</h4>
@@ -651,15 +668,24 @@
       $('results-players').innerHTML = '';
       return;
     }
-    const nobody = r.mode === 'kart' && r.map === 'arena' && r.players.every((p) => !p.score);
-    $('results-title').textContent = nobody ? 'Nobody got smashed!' : r.map === 'arena' ? '💥 Arena battle results' : `${MODE_ICONS[r.mode]} ${MODE_NAMES[r.mode]} results`;
+    const arena = r.mode === 'kart' && r.map === 'arena';
+    // Kart titles use the HUD's SVG icons; "Nobody got smashed!" only when nobody died at all.
+    const nobody = arena && r.players.every((p) => !p.score && !p.deaths);
+    if (r.mode === 'kart') {
+      const icon = (arena ? window.KartHud?.ICONS.boom : window.KartHud?.ICONS.flag) || '';
+      $('results-title').innerHTML = `${icon.replace('class="hud-ic"', 'class="res-ic"')}<span>${nobody ? 'Nobody got smashed!' : arena ? 'Battle results' : 'Race results'}</span>`;
+    } else {
+      $('results-title').textContent = `${MODE_ICONS[r.mode]} ${MODE_NAMES[r.mode]} results`;
+    }
     $('results-teams').innerHTML = (r.teams || []).map((t, i) => `
       <div class="team-score" style="--team:${t.color}">${i === 0 ? '🏆 ' : ''}${t.name}<b>${t.score}</b></div>`).join('');
 
-    const arena = r.mode === 'kart' && r.map === 'arena';
+    // Kart players who joined mid-round only watched: they have no race or battle details.
+    const watched = (p) => r.mode === 'kart' && p.place === undefined;
     const extraFor = (p) => {
+      if (watched(p)) return 'Spectated';
       if (arena) return `${p.kills} KO${p.kills === 1 ? '' : 's'} · ${p.deaths} death${p.deaths === 1 ? '' : 's'}`;
-      if (r.mode === 'kart') return `${p.finished ? `${p.time.toFixed(1)}s` : 'DNF'}${p.hits ? ` · ${p.hits} hits` : ''}`;
+      if (r.mode === 'kart') return `${p.finished ? `${p.time.toFixed(1)}s` : 'DNF'}${p.hits ? ` · ${p.hits} hit${p.hits === 1 ? '' : 's'}` : ''}`;
       return '';
     };
     // Players with the same score (and, in the arena, the same deaths) share a rank: "=1".
@@ -669,21 +695,24 @@
       ranks.push(q && q.score === p.score && (!arena || q.deaths === p.deaths) ? ranks[i - 1] : i + 1);
     });
     const rankLabel = (i) => (ranks.filter((x) => x === ranks[i]).length > 1 ? `=${ranks[i]}` : `${ranks[i]}`);
+    // Races are ranked by points (placing plus hits), so the podium shows them next to the time.
     const podiumText = (p) => {
-      if (arena) return extraFor(p);
-      if (r.mode === 'kart') return p.finished ? `${p.time.toFixed(1)}s` : 'DNF';
+      if (arena || watched(p)) return extraFor(p);
+      if (r.mode === 'kart') return `${p.score} pts · ${p.finished ? `${p.time.toFixed(1)}s` : 'DNF'}`;
       return `${p.score} pts`;
     };
+    const me = (p) => (p.id === state.me?.playerId ? 'me' : '');
     const order = [1, 0, 2];
     $('podium').innerHTML = order.map((i, slot) => {
       const p = r.players[i];
       if (!p) return '';
       const cls = ['second', 'first', 'third'][slot];
-      return `<div class="step ${cls}">${avatarHtml(p.avatar, '', r.teamMode ? teamById(p.team)?.color : null)}
+      return `<div class="step ${cls} ${me(p)}">${avatarHtml(p.avatar, '', r.teamMode ? teamById(p.team)?.color : null)}
         <span class="nm">${escapeHtml(p.name)}</span><span class="pts">${podiumText(p)}</span><div class="block">${rankLabel(i)}</div></div>`;
     }).join('');
-    $('results-players').innerHTML = r.players.slice(3).map((p, i) => `<li><span class="rank">${rankLabel(i + 3)}</span>${avatarHtml(p.avatar)}
-      <span class="nm">${escapeHtml(p.name)}</span><span class="extra">${extraFor(p)}</span><span class="pts">${p.score}</span></li>`).join('');
+    // Arena KOs already say it all; other modes label their points.
+    $('results-players').innerHTML = r.players.slice(3).map((p, i) => `<li class="${me(p)}"><span class="rank">${rankLabel(i + 3)}</span>${avatarHtml(p.avatar)}
+      <span class="nm">${escapeHtml(p.name)}</span><span class="extra">${extraFor(p)}</span>${arena || watched(p) ? '' : `<span class="pts">${p.score}<small>pts</small></span>`}</li>`).join('');
   }
   $('btn-again').onclick = () => emit('game:stop');
 
@@ -693,23 +722,66 @@
   muteBtn.onclick = () => { window.Sfx.setMuted(!window.Sfx.muted); syncMute(); };
   syncMute();
 
-  // ---------- Chat sheet and game menu (kart on phones) ----------
-  function toggleChat(open = !document.body.classList.contains('chat-open')) {
-    document.body.classList.toggle('chat-open', open);
-    if (open) { closeMenu(); setTimeout(() => $('chat-log').scrollTo(0, $('chat-log').scrollHeight), 0); }
+  // ---------- Chat drawer/sheet and game menu (kart games) ----------
+  // During a kart game chat is closed by default: a drawer on desktop (button or Enter), a sheet on
+  // phones. Messages that arrive meanwhile bump an unread count and, on desktop, show in a ticker.
+  const desktop = matchMedia('(min-width: 981px) and (pointer: fine)');
+  let unread = 0;
+  function setUnread(n) {
+    unread = n;
+    if (n) $('btn-chat').dataset.unread = n > 9 ? '9+' : String(n); else delete $('btn-chat').dataset.unread;
+    document.body.classList.toggle('chat-unread', n > 0);
   }
-  $('btn-chat').onclick = () => toggleChat();
+  function toggleChat(open = !document.body.classList.contains('chat-open'), focus = false) {
+    document.body.classList.toggle('chat-open', open);
+    if (open) {
+      closeMenu();
+      setUnread(0);
+      $('chat-ticker').innerHTML = '';
+      setTimeout(() => $('chat-log').scrollTo(0, $('chat-log').scrollHeight), 0);
+      if (focus) $('chat-input').focus();
+    } else if (document.activeElement === $('chat-input')) {
+      $('chat-input').blur();
+    }
+  }
+  $('btn-chat').onclick = () => toggleChat(undefined, desktop.matches);
+  $('chat-close').onclick = () => toggleChat(false);
   $('chat-backdrop').onclick = () => toggleChat(false);
+  document.addEventListener('keydown', (e) => {
+    if (!document.body.classList.contains('kart-playing')) return;
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+    if (e.key === 'Enter' && !typing && !document.body.classList.contains('chat-open')) { e.preventDefault(); toggleChat(true, true); }
+    else if (e.key === 'Escape' && document.body.classList.contains('chat-open')) toggleChat(false);
+  });
+  function tickerAdd(m) {
+    const box = $('chat-ticker');
+    const div = document.createElement('div');
+    div.innerHTML = m.system ? `<span>${escapeHtml(m.text)}</span>`
+      : `${avatarHtml(m.avatar ?? 0)}<span><b style="color:${m.color}">${escapeHtml(m.from)}</b> ${escapeHtml(m.text)}</span>`;
+    box.appendChild(div);
+    while (box.children.length > 3) box.firstChild.remove();
+    setTimeout(() => { div.classList.add('out'); setTimeout(() => div.remove(), 400); }, 6000);
+  }
   function closeMenu() { $('game-menu').classList.add('hidden'); }
+  const SOUND_ICONS = {
+    on: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
+    off: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9.5l5 5M22 9.5l-5 5"/>',
+  };
   function openMenu(anchor) {
     const menu = $('game-menu');
     if (!menu.classList.contains('hidden')) { closeMenu(); return; }
     const r = anchor.getBoundingClientRect();
-    menu.querySelector('[data-act="sound"] span').textContent = window.Sfx.muted ? 'Sound off' : 'Sound on';
+    // Says what tapping it will do, with an icon for the current state.
+    menu.querySelector('[data-act="sound"]').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${SOUND_ICONS[window.Sfx.muted ? 'off' : 'on']}</svg><span>${window.Sfx.muted ? 'Unmute sound' : 'Mute sound'}</span>`;
     menu.querySelector('[data-act="stop"]').classList.toggle('hidden', !(isHost() && state.room?.state === 'playing'));
-    menu.style.top = `${r.bottom + 6}px`;
-    menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
     menu.classList.remove('hidden');
+    // Drops down from a button at the top, opens upwards from one at the bottom (short desktop
+    // windows put the stage buttons bottom-left), and lines up with the button's nearer edge.
+    const h = menu.offsetHeight;
+    menu.style.top = `${r.bottom + 6 + h <= window.innerHeight ? r.bottom + 6 : Math.max(8, r.top - 6 - h)}px`;
+    const left = r.left + r.width / 2 < window.innerWidth / 2;
+    menu.style.left = left ? `${Math.max(8, r.left)}px` : 'auto';
+    menu.style.right = left ? 'auto' : `${Math.max(8, window.innerWidth - r.right)}px`;
   }
   $('game-menu').addEventListener('click', (e) => {
     const act = e.target.closest('[data-act]')?.dataset.act;
@@ -728,9 +800,13 @@
   $('chat-form').onsubmit = (e) => {
     e.preventDefault();
     const text = $('chat-input').value.trim();
-    if (!text) return;
-    socket.emit('chat', { text });
-    $('chat-input').value = '';
+    // Desktop kart: Enter sends and hands the keyboard back to the game (Enter on empty just closes).
+    const backToGame = document.body.classList.contains('kart-playing') && desktop.matches;
+    if (text) {
+      socket.emit('chat', { text });
+      $('chat-input').value = '';
+    }
+    if (backToGame) toggleChat(false);
   };
 
   socket.on('chat', (m) => {
@@ -750,6 +826,10 @@
     log.appendChild(div);
     while (log.children.length > 200) log.firstChild.remove();
     if (atBottom) log.scrollTop = log.scrollHeight;
+    if (document.body.classList.contains('kart-playing') && !document.body.classList.contains('chat-open')) {
+      if (!m.system) setUnread(unread + 1);
+      if (desktop.matches) tickerAdd({ ...m, color: m.system ? null : div.querySelector('b')?.style.color });
+    }
   });
 
   // ---------- Game modules ----------
