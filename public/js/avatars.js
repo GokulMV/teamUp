@@ -99,10 +99,26 @@
     </svg>`;
   }
 
+  const presetAt = (id) => PRESETS[((Number(id) % COUNT) + COUNT) % COUNT];
+
+  // Just the face (cheeks, eyes, mouth) on a transparent square: the kart drivers wear it as a texture.
+  function face(id) {
+    const [, eye, mo] = presetAt(id);
+    return `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <ellipse cx="30" cy="64" rx="5" ry="3.2" fill="#ff8fab" opacity="0.6"/><ellipse cx="70" cy="64" rx="5" ry="3.2" fill="#ff8fab" opacity="0.6"/>
+      ${eyes(eye)}${mouth(mo)}
+    </svg>`;
+  }
+
   window.Avatars = {
     COUNT,
     svg,
-    color: (id) => PRESETS[((Number(id) % COUNT) + COUNT) % COUNT][0],
+    face,
+    color: (id) => presetAt(id)[0],
+    preset(id) {
+      const [body, eyes, mouth, acc, accColor] = presetAt(id);
+      return { body, eyes, mouth, acc, accColor };
+    },
     random: () => Math.floor(Math.random() * COUNT),
   };
 })();

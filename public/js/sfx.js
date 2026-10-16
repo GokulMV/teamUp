@@ -112,9 +112,9 @@
     return curve;
   }
 
-  // Continuous engine sound for your own kart.
+  // Continuous engine sound for your own kart. surface: 0 road, 1 run-off, 2 grass (K.stepKart).
   let engine = null;
-  function engineUpdate(speedRatio, boosting, drifting) {
+  function engineUpdate(speedRatio, boosting, drifting, surface = 0) {
     if (!ready()) { engineStop(); return; }
     const t = ctx.currentTime;
     if (!engine) {
@@ -155,7 +155,16 @@
       sg.gain.value = 0;
       s.connect(sf); sf.connect(sg); sg.connect(master);
       s.start();
-      engine = { voices, lp, out, s, sg, warm: t + 0.9 };
+      // Off-road rumble: low filtered noise under the engine while on grass or gravel.
+      const rumble = ctx.createBufferSource();
+      rumble.buffer = noiseBuf; rumble.loop = true;
+      const rf = ctx.createBiquadFilter();
+      rf.type = 'lowpass'; rf.frequency.value = 300; rf.Q.value = 0.9;
+      const rg = ctx.createGain();
+      rg.gain.value = 0;
+      rumble.connect(rf); rf.connect(rg); rg.connect(master);
+      rumble.start(t, Math.random());
+      engine = { voices, lp, out, s, sg, rumble, rg, warm: t + 0.9 };
       return;
     }
     if (t < engine.warm) return; // let the start-up flare play out
@@ -166,6 +175,7 @@
     engine.lp.frequency.setTargetAtTime(900 + r * 2400 + (boosting ? 1200 : 0), t, 0.08);
     engine.out.gain.setTargetAtTime(0.13 + r * 0.07 + (boosting ? 0.04 : 0), t, 0.1);
     engine.sg.gain.setTargetAtTime(drifting ? 0.07 : 0, t, 0.05);
+    engine.rg.gain.setTargetAtTime(surface === 2 ? 0.08 * Math.min(1, r) : surface === 1 ? 0.035 * Math.min(1, r) : 0, t, 0.08);
   }
   function engineStop() {
     if (!engine) return;
@@ -176,7 +186,8 @@
       for (const v of e.voices) v.src.playbackRate.setTargetAtTime(0.3 * v.mult, t, 0.2); // winds down
       e.out.gain.setTargetAtTime(0, t, 0.15);
       e.sg.gain.setTargetAtTime(0, t, 0.05);
-      setTimeout(() => { [...e.voices.map((v) => v.src), e.s].forEach((n) => n.stop()); }, 800);
+      e.rg.gain.setTargetAtTime(0, t, 0.05);
+      setTimeout(() => { [...e.voices.map((v) => v.src), e.s, e.rumble].forEach((n) => n.stop()); }, 800);
     } catch { /* already stopped */ }
   }
 
@@ -253,6 +264,13 @@
       for (let i = 0; i < 24; i++) noise({ dur: 0.05, vol: 0.18, filter: 'bandpass', from: 2200, to: 900, q: 2, delay: i * 0.08 });
     },
     kill() { tone(1046, { type: 'triangle', dur: 0.12, vol: 0.22 }); tone(1568, { type: 'triangle', dur: 0.25, vol: 0.22, delay: 0.08 }); },
+    // Your shot landed: a short bright tick.
+    hitConfirm() { tone(1760, { type: 'triangle', dur: 0.06, vol: 0.16 }); noise({ dur: 0.05, vol: 0.1, filter: 'highpass', from: 3000, to: 5000 }); },
+    // Low health: two soft thumps.
+    heartbeat() {
+      tone(60, { type: 'sine', dur: 0.14, vol: 0.5, slide: 0.7 }); tone(120, { type: 'sine', dur: 0.1, vol: 0.12, slide: 0.7 });
+      tone(60, { type: 'sine', dur: 0.14, vol: 0.38, slide: 0.7, delay: 0.12 }); tone(120, { type: 'sine', dur: 0.1, vol: 0.09, slide: 0.7, delay: 0.12 });
+    },
     streak() { [523, 659, 784, 1046].forEach((f, i) => tone(f, { type: 'square', dur: 0.14, vol: 0.13, delay: i * 0.07 })); },
     correct() { [784, 988, 1175].forEach((f, i) => tone(f, { type: 'triangle', dur: 0.16, vol: 0.2, delay: i * 0.07 })); },
     tick() { tone(1200, { type: 'square', dur: 0.04, vol: 0.06 }); },

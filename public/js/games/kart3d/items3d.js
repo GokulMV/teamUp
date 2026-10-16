@@ -684,6 +684,7 @@ export class ItemFX {
       fx.heldKind = held;
       if (held) {
         fx.held = this.get(K.ITEMS[held - 1]);
+        fx.held.scale.setScalar(0.8); // a touch smaller than a dropped one, so it never hides the kart from the chase cam
         kart.group.add(fx.held);
       }
     }

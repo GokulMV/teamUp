@@ -202,6 +202,7 @@ class KartBattle {
       itemList: this.items, // what the item roulette cycles through
       killLimit: this.arena ? this.killLimit : 0,
       hpMax: this.hpMax,
+      respawn: this.respawnTime, // seconds a destroyed kart waits (the client's death card counts it down)
       karts: this.order.map((id, idx) => {
         const k = this.karts.get(id);
         const src = (!k.bot && this.room.players.get(id)) || k;

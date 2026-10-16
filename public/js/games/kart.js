@@ -1,4 +1,4 @@
-/* global KartCore */
+/* global KartCore, KartHud, KartMinimap */
 window.Games = window.Games || {};
 
 // Kart Battle client: networking, input, prediction and HUD.
@@ -9,44 +9,66 @@ window.Games.kart = {
     const Sfx = window.Sfx;
     const Icons = window.ItemIcons;
     const INTERP_DELAY = 110; // ms behind the server for smooth remote karts
-    const TOUCH = matchMedia('(pointer: coarse)').matches;
+    const touch = matchMedia('(pointer: coarse)').matches;
     // Snapshot flag bits (see broadcast() in server/games/kart.js).
     const F = { spin: 1, boost: 2, shield: 4, finished: 8, invuln: 16, dead: 32, drift: 64, ghost: 1024, gun: 2048, star: 4096, shrunk: 8192, inked: 16384 };
+    // Snapshot kart row: [idx, x, y, angle*1000, speed, lap, place, item, ammo, flags, kills, deaths, hp, air, fx, roulette]
+    const I = KartHud.ICONS;
+    const svg = (d, extra = '') => `<svg viewBox="0 0 24 24" class="tc-ic" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
 
     el.innerHTML = `
       <div class="game-wrap">
         <div class="stage kart-stage" data-stage>
           <div class="kart-ink" data-ink></div>
           <div class="kart-flash" data-flash></div>
-          <div class="kart-hud">
-            <div class="place" data-place></div><div class="lap" data-lap></div><div data-time></div>
-            <div class="kart-hp hidden" data-hp><i data-hp-fill></i><span data-hp-text></span></div>
+          <div class="kart-card kart-panel" data-card>
+            <div class="kc-race"><span class="kc-place" data-place></span><div class="kc-meta"><span class="kc-kicker" data-lap></span><span class="kc-num" data-time></span></div></div>
+            <div class="kc-arena">
+              <div class="kc-hp">${I.heart}<div class="kc-bar"><i data-hp-fill></i></div><span class="kc-num" data-hp-text>100</span></div>
+              <div class="kc-stats"><span class="kc-chip">${I.cross}<b data-kills>0</b></span><span class="kc-chip">${I.skull}<b data-deaths>0</b></span><span class="kc-chip kc-muted" data-rank></span></div>
+            </div>
+            <div class="kc-spec">${I.eye}<span>Spectating</span></div>
           </div>
-          <div class="kart-timer hidden" data-timer></div>
-          <div class="kart-item empty" data-item>
-            <div class="kart-reel" data-reel></div>
-            <div class="kart-item-icon" data-item-icon></div>
-            <b class="kart-ammo" data-item-ammo></b>
+          <div class="kart-top">
+            <div class="kart-timer kart-panel hidden" data-timer></div>
+            <div class="kart-item empty" data-item>
+              <div class="kart-slot"><div class="kart-reel" data-reel></div><div class="kart-item-icon" data-item-icon></div></div>
+              <small data-item-ammo></small><kbd class="kart-key">Space</kbd>
+            </div>
+            <div class="kart-top-sub">
+              <div class="kart-item-name kart-panel" data-item-name></div>
+              <div class="kart-warn hidden" data-warn>${Icons.svg('comet', 'item-icon')}<span>Comet incoming!</span></div>
+            </div>
           </div>
-          <div class="kart-item-name" data-item-name></div>
-          <div class="kart-warn hidden" data-warn>${Icons.svg('comet', 'item-icon')}<span>Comet incoming!</span></div>
-          <div class="kart-board" data-board></div>
+          <div class="kart-intro kart-panel" data-intro></div>
+          <div class="kart-board kart-panel" data-board></div>
           <div class="kart-feed" data-feed></div>
-          <div class="kart-mapname" data-mapname></div>
-          <div class="kart-big" data-big></div>
+          <div class="kart-callout" data-callout></div>
           <div class="kart-speedlines" data-speedlines></div>
-          <div class="kart-announce" data-announce></div>
-          <div class="kart-dead hidden" data-dead><h2>💥 Destroyed!</h2><p data-dead-by></p><p class="muted">Respawning…</p></div>
-          <canvas class="kart-minimap" data-minimap width="180" height="180"></canvas>
-          <div class="kart-help">Arrows / WASD drive · Shift drift · Space fire (hold ↓ to throw back)</div>
+          <div class="kart-vignette" data-vignette></div>
+          <div class="kart-hit" data-hit><svg viewBox="0 0 28 28"><path d="M4 4l7 7M24 4l-7 7M4 24l7-7M24 24l-7-7"/></svg></div>
+          <div class="kart-dead kart-panel" data-dead></div>
+          <canvas class="kart-minimap" data-minimap></canvas>
+          <div class="kart-help kart-panel" data-help>${touch ? 'Tap a button to go: your kart drives itself' : '<kbd>WASD</kbd> drive <kbd>Shift</kbd> drift <kbd>Space</kbd> use item <kbd>S</kbd>+<kbd>Space</kbd> throw back'}</div>
+          <div class="kart-rotate kart-panel hidden" data-rotate>${svg('<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M21 14a8 8 0 0 1-6 6.5M3 10a8 8 0 0 1 6-6.5"/>')}Turn your phone for a wider view</div>
+          <div class="kart-tools">
+            <button class="kart-tool" data-fullscreen title="Full screen" aria-label="Full screen">${svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>')}</button>
+            <button class="kart-tool tool-chat" data-chat title="Chat" aria-label="Chat">${svg('<path d="M4 5h16v11H9l-5 4z"/>')}</button>
+            <button class="kart-tool tool-menu" data-menu title="Menu" aria-label="Menu">${svg('<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>', 'stroke-width="3"')}</button>
+          </div>
           <div class="touch-controls">
-            <div class="grp"><button data-key="left">◀</button><button data-key="right">▶</button></div>
-            <div class="grp"><button data-key="drift">↯</button><button data-key="down">▼</button><button data-key="use" class="use">🔥</button><button data-key="up">▲</button></div>
+            <div class="tc-steer"><button data-key="left" aria-label="Steer left">${svg('<path d="M15 5l-7 7 7 7"/>')}</button><button data-key="right" aria-label="Steer right">${svg('<path d="M9 5l7 7-7 7"/>')}</button></div>
+            <div class="tc-act">
+              <button class="tc-drift" data-key="drift" aria-label="Drift">${svg('<path d="M5 17c3-1 4.5-3 5.5-6S14 6 19 6"/><path d="M15 3l4 3-3 4"/>')}<small>Drift</small></button>
+              <button class="tc-brake" data-key="down" aria-label="Brake">${svg('<path d="M12 5v12M6 12l6 6 6-6"/>')}</button>
+              <button class="tc-fire" data-key="use" aria-label="Use item"><span data-fire-icon></span></button>
+            </div>
           </div>
         </div>
       </div>`;
     const q = (s) => el.querySelector(s);
     const stage = q('[data-stage]');
+    stage.classList.toggle('touch', touch);
 
     let info = null; // init payload
     let map = null;
@@ -65,6 +87,14 @@ window.Games.kart = {
     const prev = { boost: false, drift: 0, count: null, finished: false, star: false, shrunk: false, inked: false, warn: 0, air: 0, trick: false };
     const teamMode = () => !!api.room()?.settings.teamMode;
     const colorOf = (meta) => (teamMode() ? api.teamById(meta?.team)?.color : meta?.color) || '#fff';
+    const hud = KartHud.create({ stage, escape: api.escapeHtml, colorOf, metaOf: (idx) => kartsByIdx.get(idx), touch });
+    let death = null; // { at, by, kind, watching } while my kart is wrecked
+    let wasWrecked = false;
+    let camMode = '';
+    let orbitAngle = 0;
+    let finishTime = null;
+    let bulletHits = 0;
+    const deathMarks = []; // arena minimap: where karts were just smashed
 
     // ---------- 3D renderer (ES module, may finish loading after mount) ----------
     function createRenderer() {
@@ -72,6 +102,7 @@ window.Games.kart = {
       try {
         view3d = new window.Kart3D(stage, { mapId: info.mapId, type: info.map, reverse: !!info.reverse, items: info.items !== false });
         view3d.setKarts(info.karts, myIdx, (meta) => (teamMode() ? api.teamById(meta.team)?.color : null));
+        minimap = null; // rebuild with the 3D world's curb colour
       } catch (err) {
         console.error(err);
         window.reportError?.(err);
@@ -113,22 +144,46 @@ window.Games.kart = {
     const ku = (e) => onKey(e, false);
     window.addEventListener('keydown', kd);
     window.addEventListener('keyup', ku);
-    const blur = () => { Object.keys(input).forEach((k) => { input[k] = false; }); sendInput(); };
+    let autoGas = false; // touch: set by the first button press
+    const blur = () => { Object.keys(input).forEach((k) => { input[k] = false; }); input.up = autoGas; sendInput(); };
     window.addEventListener('blur', blur);
 
+    // Touch: once you press any button the kart accelerates by itself (not before, so nobody
+    // rolls off the start into the lava); the brake button slows down and reverses.
     el.querySelectorAll('[data-key]').forEach((b) => {
       const k = b.dataset.key;
       const set = (v) => (e) => {
         e.preventDefault();
         b.classList.toggle('on', v);
-        if (k === 'use') { if (v) useItem(); return; }
-        if (input[k] !== v) { input[k] = v; sendInput(); }
+        if (v && !autoGas) { autoGas = true; stage.classList.add('engaged'); }
+        // The fire button only works once the roulette has landed (the server would refuse it anyway).
+        if (k === 'use') { if (v && slotState.mode === 'ready') useItem(); } else input[k] = v;
+        input.up = autoGas && !input.down;
+        sendInput();
       };
       b.addEventListener('pointerdown', set(true));
       b.addEventListener('pointerup', set(false));
       b.addEventListener('pointercancel', set(false));
       b.addEventListener('pointerleave', set(false));
     });
+    q('[data-fullscreen]').onclick = () => {
+      const root = document.documentElement;
+      if (document.fullscreenElement) { document.exitFullscreen?.(); return; }
+      Promise.resolve(root.requestFullscreen?.()).then(() => screen.orientation?.lock?.('landscape')).catch(() => {});
+    };
+    if (!document.fullscreenEnabled) q('[data-fullscreen]').classList.add('hidden'); // e.g. iPhone Safari
+    q('[data-chat]').onclick = () => api.toggleChat?.();
+    q('[data-menu]').onclick = (e) => api.openMenu?.(e.currentTarget);
+    // One-time tip in portrait.
+    let rotateTip = 0;
+    try {
+      if (touch && matchMedia('(orientation: portrait)').matches && !localStorage.getItem('teamup-rotate-tip')) {
+        localStorage.setItem('teamup-rotate-tip', '1');
+        q('[data-rotate]').classList.remove('hidden');
+        rotateTip = setTimeout(() => q('[data-rotate]').classList.add('hidden'), 6000);
+        q('[data-rotate]').onclick = () => q('[data-rotate]').classList.add('hidden');
+      }
+    } catch { /* storage blocked: skip the tip */ }
     const resend = setInterval(sendInput, 1000);
     const pinger = setInterval(() => {
       const t0 = performance.now();
@@ -145,11 +200,17 @@ window.Games.kart = {
       myIdx = mine ? mine.idx : -1;
       local = null;
       snapCamera = true;
+      death = null;
+      if (!sameRound) { finishTime = null; deathMarks.length = 0; }
       if (view3d && !sameRound) { view3d.dispose(); view3d = null; }
+      minimap = null;
       createRenderer();
       q('[data-timer]').classList.toggle('hidden', map.type !== 'arena');
-      q('[data-hp]').classList.toggle('hidden', map.type !== 'arena' || myIdx < 0);
-      q('[data-mapname]').textContent = `${map.emoji} ${map.name}`;
+      slot.style.display = myIdx < 0 ? 'none' : '';
+      stage.classList.toggle('spectating', myIdx < 0);
+      stage.classList.toggle('mode-arena', map.type === 'arena');
+      stage.classList.toggle('mode-race', map.type !== 'arena');
+      hud.setRound(data, map, myIdx);
     }
 
     function onState(s) {
@@ -245,24 +306,30 @@ window.Games.kart = {
     }
 
     // ---------- HUD: item slot and roulette ----------
+    // The slot lives in the glass top cluster; the touch fire button mirrors it (reel included).
     const slot = q('[data-item]');
     const reel = q('[data-reel]');
     const iconBox = q('[data-item-icon]');
-    const useBtn = q('[data-key="use"]');
+    const useBtn = q('.tc-fire');
+    const fireIcon = q('[data-fire-icon]');
+    const nameEl = q('[data-item-name]');
     const itemId = (code) => K.ITEMS[code - 1];
     const slotState = { code: 0, ammo: -1, mode: 'empty' }; // mode: empty | rolling | ready
-    const roulette = { start: 0, end: 0, cells: 0, last: -1, cell: 68 };
+    const roulette = { start: 0, end: 0, cells: 0, last: -1, cell: 60, strip: [] };
+    let nameTimer = 0;
 
     function showIcon(code) {
-      iconBox.innerHTML = code ? Icons.svg(itemId(code), 'item-icon') : '';
-      useBtn.innerHTML = code ? Icons.svg(itemId(code), 'item-icon') : '🔥';
+      const html = code ? Icons.svg(itemId(code), 'item-icon') : '';
+      iconBox.innerHTML = html;
+      fireIcon.innerHTML = html;
     }
     function setSlotMode(mode) {
       slotState.mode = mode;
       slot.classList.toggle('empty', mode === 'empty');
       slot.classList.toggle('rolling', mode === 'rolling');
       slot.classList.toggle('ready', mode === 'ready');
-      useBtn.classList.toggle('ready', mode === 'ready');
+      useBtn.classList.toggle('armed', mode === 'ready');
+      useBtn.classList.toggle('rolling', mode === 'rolling');
     }
     // A slot-machine strip of icons that decelerates onto the item the server picked.
     function startRoulette(code, remainingMs, now) {
@@ -276,11 +343,12 @@ window.Games.kart = {
       }
       strip.push(itemId(code));
       reel.innerHTML = strip.map((id) => `<div class="cell">${Icons.svg(id, 'item-icon')}</div>`).join('');
-      roulette.cell = reel.firstElementChild?.offsetHeight || 68;
-      Object.assign(roulette, { start: now, end: now + remainingMs, cells, last: -1 });
+      setSlotMode('rolling'); // shows the reel, so its cells have a size
+      roulette.cell = reel.firstElementChild?.offsetHeight || 60;
+      Object.assign(roulette, { start: now, end: now + remainingMs, cells, last: -1, strip });
       reel.style.transform = 'translateY(0)';
-      iconBox.innerHTML = '';
-      setSlotMode('rolling');
+      showIcon(0);
+      showName('');
       Sfx.pop();
     }
     function landRoulette(code, ding) {
@@ -289,13 +357,21 @@ window.Games.kart = {
       slot.classList.remove('landed');
       void slot.offsetWidth; // restart the pop animation
       slot.classList.add('landed');
+      showName(Icons.name(itemId(code)), 1800);
       if (ding) Sfx.rouletteDing?.();
+    }
+    // The item's name shows under the slot for a moment when it lands.
+    function showName(text, ms) {
+      clearTimeout(nameTimer);
+      nameEl.textContent = text;
+      nameEl.classList.toggle('show', !!text);
+      if (text && ms) nameTimer = setTimeout(() => nameEl.classList.remove('show'), ms);
     }
     function updateSlot(now, code, ammo, rouletteCs) {
       if (code !== slotState.code) {
         // Time left on the server's roulette, minus how old this snapshot already is.
         const age = clockOffset === null ? rtt / 2 : Math.max(0, now - clockOffset - latest.t);
-        if (!code) { showIcon(0); setSlotMode('empty'); } else if (rouletteCs > 0) startRoulette(code, Math.max(350, rouletteCs * 10 - age), now);
+        if (!code) { showIcon(0); showName(''); setSlotMode('empty'); } else if (rouletteCs > 0) startRoulette(code, Math.max(350, rouletteCs * 10 - age), now);
         else landRoulette(code, slotState.code === 0);
         slotState.code = code;
       }
@@ -304,18 +380,17 @@ window.Games.kart = {
         const pos = (1 - (1 - p) ** 3) * (roulette.cells - 1); // ease out: fast spin, slow landing
         reel.style.transform = `translateY(${-pos * roulette.cell}px)`;
         const idx = Math.round(pos);
-        if (idx !== roulette.last) { roulette.last = idx; Sfx.rouletteTick?.(idx); }
+        if (idx !== roulette.last) {
+          roulette.last = idx;
+          Sfx.rouletteTick?.(idx);
+          if (touch) fireIcon.innerHTML = Icons.svg(roulette.strip[idx], 'item-icon');
+        }
         if (p >= 1) landRoulette(code, true);
       }
       if (ammo !== slotState.ammo) {
         slotState.ammo = ammo;
         q('[data-item-ammo]').textContent = code && ammo > 1 ? `×${ammo}` : '';
       }
-      const name = q('[data-item-name]');
-      const label = slotState.mode === 'ready'
-        ? `${Icons.name(itemId(code))} <kbd>${TOUCH ? 'TAP' : 'SPACE'}</kbd>`
-        : slotState.mode === 'rolling' ? '<span class="muted">…</span>' : '';
-      if (name.dataset.label !== label) { name.dataset.label = label; name.innerHTML = label; }
     }
 
     // ---------- HUD: ink, thunder flash, comet warning ----------
@@ -382,94 +457,38 @@ window.Games.kart = {
     }
 
     // ---------- HUD ----------
-    function drawMinimap(karts) {
-      const c = q('[data-minimap]');
-      const ctx = c.getContext('2d');
-      const W = c.width;
-      ctx.clearRect(0, 0, W, W);
-      ctx.fillStyle = 'rgba(15,10,35,0.55)';
-      ctx.beginPath(); ctx.roundRect(0, 0, W, W, 14); ctx.fill();
-      const pad = 12;
-      const bnd = map.bounds;
-      const size = Math.max(bnd.maxX - bnd.minX, bnd.maxY - bnd.minY);
-      const s = (W - pad * 2) / size;
-      ctx.save();
-      ctx.translate(pad, pad);
-      ctx.scale(s, s);
-      ctx.translate(-bnd.minX, -bnd.minY);
-      if (map.type === 'arena') {
-        ctx.strokeStyle = '#facc15';
-        ctx.lineWidth = 40;
-        ctx.strokeRect(20, 20, map.size - 40, map.size - 40);
-        ctx.fillStyle = 'rgba(255,120,40,0.75)';
-        for (const h of map.hazards) { ctx.beginPath(); ctx.arc(h.x, h.y, h.r, 0, Math.PI * 2); ctx.fill(); }
-        ctx.fillStyle = 'rgba(255,255,255,0.35)';
-        for (const o of map.obstacles) { ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, Math.PI * 2); ctx.fill(); }
-      } else {
-        ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-        ctx.lineWidth = map.width * 0.6;
-        ctx.lineJoin = 'round';
-        ctx.beginPath();
-        map.centerline.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-        ctx.closePath();
-        ctx.stroke();
+    // Minimap: rebuilt for each map, size (CSS px and devicePixelRatio) and renderer.
+    let minimap = null;
+    let minimapKey = '';
+    const mmCanvas = q('[data-minimap]');
+    const mmResize = new ResizeObserver(() => { minimap = null; });
+    mmResize.observe(mmCanvas);
+    function drawMinimap(now, karts) {
+      const css = mmCanvas.clientWidth;
+      if (!css) return;
+      const key = `${map.id}|${!!map.reverse}|${css}|${window.devicePixelRatio}`;
+      if (!minimap || key !== minimapKey) {
+        minimapKey = key;
+        minimap = KartMinimap.create(mmCanvas, map, { theme: map.theme, cssSize: css, dpr: window.devicePixelRatio, curb: view3d?.theme?.curb?.[0], night: !!view3d?.theme?.night });
       }
-      for (const k of karts) {
-        if (k.flags & F.dead) continue;
-        const meta = kartsByIdx.get(k.idx);
-        const me = k.idx === myIdx;
-        ctx.fillStyle = colorOf(meta);
-        const dot = Math.max(65, size * 0.012);
-        ctx.beginPath(); ctx.arc(k.x, k.y, me ? dot * 1.7 : dot, 0, Math.PI * 2); ctx.fill();
-        if (me) { ctx.strokeStyle = '#fff'; ctx.lineWidth = dot * 0.6; ctx.stroke(); }
-      }
-      // Comets in flight show up as bright dots.
-      ctx.fillStyle = '#a5b4fc';
-      for (const sh of latest?.s || []) if (sh[1] === 5) { ctx.beginPath(); ctx.arc(sh[2], sh[3], 80, 0, Math.PI * 2); ctx.fill(); }
-      ctx.restore();
+      while (deathMarks.length && now - deathMarks[0].t > 2000) deathMarks.shift();
+      const placeOf = new Map(latest.k.map((r) => [r[0], r[6]]));
+      minimap.draw({
+        karts: karts.map((k) => ({ x: k.x, y: k.y, angle: k.angle, color: colorOf(kartsByIdx.get(k.idx)), me: k.idx === myIdx, dead: !!(k.flags & F.dead), place: placeOf.get(k.idx) })),
+        boxes: latest?.x,
+        deaths: deathMarks.map((d) => ({ x: d.x, y: d.y, color: d.color, age: (now - d.t) / 1000 })),
+        comets: (latest?.s || []).filter((sh) => sh[1] === 5).map((sh) => ({ x: sh[2], y: sh[3] })), // comets in flight
+        time: now / 1000,
+      });
     }
 
-    let boardUpdate = 0;
     function updateHud(now, karts) {
       if (!latest || !info) return;
-      const arena = map.type === 'arena';
-      const big = q('[data-big]');
-      if (latest.phase === 'countdown') {
-        const n = Math.ceil(latest.countdown - 1);
-        big.textContent = n > 0 ? n : 'GO!';
-        if (n !== prev.count && n > 0 && n <= 3) Sfx.beep();
-        prev.count = n;
-      } else {
-        if (latest.phase === 'racing' && prev.count !== 'go') {
-          if (prev.count !== null) Sfx.go();
-          prev.count = 'go';
-        }
-        if (latest.phase === 'racing' && latest.elapsed < 1) big.textContent = 'GO!';
-        else if (latest.phase === 'done') big.textContent = arena ? 'TIME!' : 'FINISH!';
-        else big.textContent = '';
-      }
-
-      if (arena && latest.timeLeft !== null) {
-        const t = Math.ceil(latest.timeLeft);
-        q('[data-timer]').textContent = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
-        q('[data-timer]').classList.toggle('urgent', t <= 10);
-      }
-
       const row = latest.k.find((r) => r[0] === myIdx);
+      hud.update(now, latest, row, { finishTime, death });
       if (row) {
-        const [, , , , , lap, place, item, ammo, flags, kills, deaths, hp, , , rouletteCs] = row; // 13 air, 14 fall/trick bits
-        if (arena) {
-          q('[data-place]').textContent = `#${place}`;
-          q('[data-lap]').textContent = `💥 ${kills} kills`;
-          q('[data-time]').textContent = `☠️ ${deaths} deaths`;
-          q('[data-hp-fill]').style.width = `${hp}%`;
-          q('[data-hp-fill]').style.background = hp > 50 ? '#22c55e' : hp > 25 ? '#facc15' : '#ef4444';
-          q('[data-hp-text]').textContent = `${hp} HP`;
-        } else {
-          q('[data-place]').textContent = flags & F.finished ? `🏁 #${place}` : `#${place}`;
-          q('[data-lap]').textContent = `Lap ${lap}/${info.laps}`;
-          q('[data-time]').textContent = latest.phase === 'racing' ? `${latest.elapsed.toFixed(1)}s` : '';
-        }
+        // Place, lap, health and kills are drawn by the HUD kit; the item slot, ink and warnings here.
+        const [, , , , , , , item, ammo, flags, , , , , , rouletteCs] = row; // 13 air, 14 fall/trick bits, 15 roulette
         updateSlot(now, item, ammo, rouletteCs || 0);
         const boosting = !!(flags & F.boost);
         const driftLvl = flags & 256 ? 2 : flags & 128 ? 1 : 0;
@@ -488,51 +507,20 @@ window.Games.kart = {
         updateInk(now, !!(flags & F.inked));
         q('[data-speedlines]').classList.toggle('on', boosting || star);
         q('[data-speedlines]').classList.toggle('star', star);
-        q('[data-dead]').classList.toggle('hidden', !(flags & F.dead));
         // Is a comet coming for me?
         const comet = (latest.s || []).find((sh) => sh[1] === 5 && sh[6] === myIdx);
         q('[data-warn]').classList.toggle('hidden', !comet);
         if (comet && now - prev.warn > 520) { prev.warn = now; Sfx.cometWarn?.(); }
       } else {
-        q('[data-place]').textContent = '👀';
-        q('[data-lap]').textContent = 'Spectating';
         slot.style.display = 'none';
+        stage.classList.add('spectating');
       }
-
-      if (now - boardUpdate > 300) {
-        boardUpdate = now;
-        drawMinimap(karts);
-        const rows = [...latest.k].sort((a, b) => a[6] - b[6]);
-        const shown = rows.slice(0, 8);
-        if (row && row[6] > 8) shown.push(row);
-        q('[data-board]').innerHTML = shown.map((r) => {
-          const meta = kartsByIdx.get(r[0]);
-          const tail = arena ? `<b>${r[10]}</b>` : (r[9] & F.finished ? '🏁' : '');
-          return `<div class="${r[0] === myIdx ? 'me' : ''}"><span>${r[6]}. <i style="color:${colorOf(meta)}">●</i> ${api.escapeHtml(meta?.name || '?')}</span>${tail}</div>`;
-        }).join('');
-      }
+      drawMinimap(now, karts);
     }
 
     function volumeAt(x, y) {
       if (!local) return 0.5;
       return Math.max(0.08, 1 - Math.hypot(local.x - x, local.y - y) / 1400);
-    }
-
-    function announce(text) {
-      const a = q('[data-announce]');
-      a.textContent = text;
-      a.classList.remove('show');
-      void a.offsetWidth; // restart the animation
-      a.classList.add('show');
-    }
-
-    function feed(html) {
-      const f = q('[data-feed]');
-      const div = document.createElement('div');
-      div.innerHTML = html;
-      f.prepend(div);
-      while (f.children.length > 5) f.lastChild.remove();
-      setTimeout(() => div.remove(), 5000);
     }
 
     // ---------- Frame loop ----------
@@ -552,17 +540,21 @@ window.Games.kart = {
         prev.trick = local.trick > 0;
         if (prev.air > 12 && !(local.air > 0)) {
           Sfx.land?.(Math.min(1, prev.air / 90));
-          if (local.boost > 0 && prev.trickBoost) announce('TRICK BOOST!');
+          if (local.boost > 0 && prev.trickBoost) hud.callout('TRICK BOOST!', { kind: 'small gold', hold: 800 });
         }
         prev.trickBoost = !!local.tricked;
         prev.air = local.air || 0;
       }
       if (local && myRow && latest?.phase === 'racing' && !(myRow[9] & F.dead)) {
-        Sfx.engine(Math.abs(local.speed) / K.PHYS.maxSpeed, !!(myRow[9] & (F.boost | F.star)), !!(myRow[9] & F.drift));
+        Sfx.engine(Math.abs(local.speed) / K.PHYS.maxSpeed, !!(myRow[9] & (F.boost | F.star)), !!(myRow[9] & F.drift), local.falling ? 0 : local.surface);
       } else {
         Sfx.engineStop();
       }
 
+      const wrecked = !!(myRow && myRow[9] & F.dead);
+      if (wrecked && !death) death = { at: now, by: -1, kind: null, watching: -1 };
+      if (!wrecked && wasWrecked) death = null;
+      wasWrecked = wrecked;
       const view = interpolated();
       const karts = view ? view.karts : [];
       const me = karts.find((k) => k.idx === myIdx);
@@ -572,35 +564,47 @@ window.Games.kart = {
         me.fx = (me.fx & ~2) | (local.trick > 0 ? 2 : 0);
       }
 
-      // Camera follows me, or the leader when spectating.
+      // Camera follows me; while I'm wrecked it follows whoever smashed me (or circles the wreck);
+      // spectators follow the leader. It snaps whenever it switches target.
       let focusKart = me && !(me.flags & F.dead) ? me : null;
-      if (!focusKart && !me && latest) {
+      let mode = focusKart ? 'me' : '';
+      if (!focusKart && me && myRow) {
+        const killer = death && death.by >= 0 ? karts.find((k) => k.idx === death.by && !(k.flags & F.dead)) : null;
+        if (killer) { focusKart = killer; mode = `killer${killer.idx}`; }
+        else {
+          if (camMode !== 'orbit') orbitAngle = myRow[3] / 1000;
+          orbitAngle += dt * 0.6;
+          mode = 'orbit';
+        }
+        if (death) death.watching = killer ? killer.idx : -1;
+      } else if (!me && latest) {
         const leader = latest.k.find((r) => r[6] === 1);
         focusKart = karts.find((k) => leader && k.idx === leader[0]);
+        if (focusKart) mode = `leader${focusKart.idx}`;
       }
+      if (mode !== camMode) { camMode = mode; snapCamera = true; }
       if (view3d && view) {
+        const grid = latest?.phase === 'countdown';
         view3d.update({
           ...view,
           karts,
           myIdx,
+          countdown: grid,
           focus: focusKart ? {
-            x: focusKart.x, y: focusKart.y, angle: focusKart.angle, air: focusKart.air || 0,
+            idx: focusKart.idx, x: focusKart.x, y: focusKart.y, angle: focusKart.angle, air: focusKart.air || 0, grid,
             spinning: !!(focusKart.flags & F.spin) || !!(focusKart.fx & 1), boost: !!(focusKart.flags & F.boost), star: !!(focusKart.flags & F.star), snap: snapCamera,
-          } : (me && myRow ? { x: myRow[1], y: myRow[2], angle: myRow[3] / 1000, spinning: true } : null),
+          } : mode === 'orbit' ? { idx: -1, x: myRow[1], y: myRow[2], angle: orbitAngle, snap: snapCamera } : null,
         }, dt, now);
-        if (focusKart) snapCamera = false;
+        if (mode) snapCamera = false;
       }
       updateHud(now, karts);
     }
     raf = requestAnimationFrame(frame);
 
-    const STREAKS = { 2: 'DOUBLE KILL!', 3: 'TRIPLE KILL!', 4: 'MULTI KILL!', 5: 'RAMPAGE!', 7: 'UNSTOPPABLE!', 10: 'GODLIKE!' };
-    const nameTag = (m) => `<b style="color:${colorOf(m)}">${api.escapeHtml(m?.name || '?')}</b>`;
-    // Kill feed icons (SVG, like the item slot).
-    const FEED_ICON = { bullet: 'minigun', lava: 'lava' };
-    const feedIcon = (kind) => Icons.svg(FEED_ICON[kind] || (K.ITEMS.includes(kind) ? kind : 'boom'), 'feed-icon');
     const ITEM_SOUND = { rocket: 'rocket', triple: 'rocket', bomb: 'rocket', banana: 'banana', mine: 'banana', shield: 'shield', ghost: 'shield', bouncer: 'bouncer', ink: 'ink' };
     const QUIET_HITS = ['mine', 'bomb', 'shock', 'lava', 'comet', 'thunder']; // their own blast effect covers it
+    const nameOf = (idx) => api.escapeHtml(kartsByIdx.get(idx)?.name || 'Someone');
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
     return {
       onSnapshot(snap) { onInit(snap.init); },
@@ -627,48 +631,60 @@ window.Games.kart = {
           view3d?.thunder(data.hit.map(pos).filter(Boolean).map((r) => [r[1], r[2]]));
           flash();
           Sfx.thunder?.(1);
-          const by = kartsByIdx.get(data.idx);
-          if (data.hit.includes(myIdx)) api.toast(`⚡ ${by?.name || 'Someone'} struck you with thunder!`);
-          else if (data.idx === myIdx && data.hit.length) api.toast(`⚡ Thunder struck ${data.hit.length} rival${data.hit.length > 1 ? 's' : ''}!`);
-        } else if (event === 'game:kart:ink') {
-          if (data.idx === myIdx) api.toast(data.hit.length ? `Ink splatted ${data.hit.length} rival${data.hit.length > 1 ? 's' : ''}!` : 'Nobody to ink…');
+          if (data.hit.includes(myIdx)) hud.callout('THUNDERSTRUCK', { kind: 'small', hold: 900, sub: `by ${nameOf(data.idx)}` });
+          else if (data.idx === myIdx && data.hit.length) hud.callout('THUNDER!', { kind: 'small gold', hold: 900, sub: `Struck ${plural(data.hit.length, 'rival')}` });        } else if (event === 'game:kart:ink') {
+          if (data.idx === myIdx) hud.callout(data.hit.length ? 'SPLAT!' : 'NOBODY TO INK', { kind: 'small', hold: 800, sub: data.hit.length ? `Inked ${plural(data.hit.length, 'rival')}` : '' });
+          if (map?.type === 'race') for (const idx of data.hit.slice(0, 2)) hud.smash({ by: data.idx, target: idx, kind: 'ink' });
           view3d?.inkBurst?.(data.idx, data.hit);
         } else if (event === 'game:kart:block') {
           const k = latest?.k.find((r) => r[0] === data.idx);
           if (k) view3d?.block(k[1], k[2], data.kind);
           if (data.idx === myIdx) {
             Sfx.block?.();
-            api.toast(data.kind === 'trail' ? 'Your item blocked a hit from behind!' : '🛡️ Shield blocked a hit!');
+            hud.callout('BLOCKED', { kind: 'small', hold: 700, sub: data.kind === 'trail' ? 'Your item took the hit' : '' });
           }
         } else if (event === 'game:kart:hit') {
           const kind = data.kill ? 'kill' : data.kind === 'bullet' ? 'bullet' : 'hit';
-          if (!QUIET_HITS.includes(data.kind) || data.kill) view3d?.explode(data.x, data.y, kind, data.kill ? 90 : 50);
-          if (data.kind !== 'bullet' && data.kind !== 'thunder') Sfx.explosion(volumeAt(data.x, data.y) * (data.kill ? 1 : 0.4));
           const victim = kartsByIdx.get(data.target);
-          const killer = data.by >= 0 ? kartsByIdx.get(data.by) : null;
-          if (data.kill) feed(killer ? `${nameTag(killer)} ${feedIcon(data.kind)} ${nameTag(victim)}` : `${nameTag(victim)} ${feedIcon(data.kind)}`);
-          if (data.streak >= 3 && STREAKS[data.streak] && killer) feed(`🔥 ${nameTag(killer)} ${STREAKS[data.streak].toLowerCase().replace('!', '')}`);
+          if (!QUIET_HITS.includes(data.kind) || data.kill) view3d?.explode(data.x, data.y, kind, data.kill ? 90 : 50, colorOf(victim));
+          if (data.kind !== 'bullet' && data.kind !== 'thunder') Sfx.explosion(volumeAt(data.x, data.y) * (data.kill ? 1 : 0.4));
+          if (data.kill || (map?.type === 'race' && data.kind !== 'bullet' && data.by >= 0)) hud.smash(data);
+          if (data.kill) deathMarks.push({ x: data.x, y: data.y, color: colorOf(victim), t: performance.now() });
           if (data.target === myIdx) {
-            q('[data-dead-by]').innerHTML = killer ? `by ${nameTag(killer)}` : '';
+            if (data.kill) death = { at: performance.now(), by: data.by, kind: data.kind, watching: -1 };
             if (data.kind !== 'bullet') Sfx.hit();
-            if (!data.kill && map?.type === 'race' && !['bullet', 'thunder'].includes(data.kind)) api.toast(data.kind === 'comet' ? '💥 The comet got you!' : '💥 You got hit!');
-          } else if (data.by === myIdx && data.kind !== 'bullet') {
-            Sfx.kill();
-            if (data.kill && STREAKS[data.streak]) { announce(STREAKS[data.streak]); Sfx.streak(); }
-            else if (data.kind !== 'thunder' && (data.kill || map?.type === 'race')) api.toast(`🎯 You ${data.kill ? 'destroyed' : 'hit'} ${victim?.name || 'someone'}!`);
+            if (!data.kill && data.kind === 'comet') hud.callout('COMET HIT!', { kind: 'small', hold: 800 });
+          } else if (data.by === myIdx) {
+            // Hit marker: every rocket/banana/blast, every third minigun bullet.
+            if (data.kind === 'bullet' && !data.kill && ++bulletHits % 3) return;
+            hud.hitMarker(data.kill);
+            if (data.kill) {
+              Sfx.kill();
+              const streak = hud.streakName(data.streak);
+              if (streak) { hud.callout(streak, { kind: 'gold', hold: 1100 }); Sfx.streak(); }
+              else hud.callout(`SMASHED ${victim?.name || ''}`.trim(), { kind: 'small', hold: 800 });
+            } else {
+              Sfx.hitConfirm?.();
+            }
           }
         } else if (event === 'game:kart:fall') {
           const v = data.idx === myIdx ? 1 : volumeAt(data.x, data.y) * 0.6;
           if (data.kind === 'water') Sfx.splash?.(v);
           else if (data.kind === 'lava') Sfx.sizzle?.(v);
           else Sfx.fall?.(v);
-          if (data.idx === myIdx) api.toast(data.kind === 'water' ? '🌊 Splash! Fishing you out…' : data.kind === 'lava' ? '🔥 Too hot! Fishing you out…' : '🪂 Missed the jump! Back on the road…');
+          hud.fall(data.idx, data.kind);
+          if (data.idx === myIdx) {
+            const [title, sub] = data.kind === 'water' ? ['SPLASH!', 'Fishing you out…'] : data.kind === 'lava' ? ['TOO HOT!', 'Fishing you out…'] : ['MISSED THE JUMP', 'Back on the road…'];
+            hud.callout(title, { kind: 'small', hold: 1000, sub });
+          }
         } else if (event === 'game:kart:finish' && data.idx === myIdx) {
-          api.toast(`🏁 You finished #${data.place} in ${data.time.toFixed(1)}s!`);
+          finishTime = data.time;
         }
       },
       unmount() {
         cancelAnimationFrame(raf);
+        mmResize.disconnect();
+        clearTimeout(rotateTip);
         Sfx.engineStop();
         Sfx.starStop?.();
         clearInterval(resend);

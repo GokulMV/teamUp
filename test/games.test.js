@@ -721,6 +721,7 @@ test('arena health and respawn options', async () => {
   const [a, b] = high.players.map((p) => high.game.karts.get(p.id));
   assert.strictEqual(b.hp, 150);
   assert.strictEqual(high.init.hpMax, 150);
+  assert.strictEqual(high.init.respawn, 4, 'the init payload tells clients how long a respawn takes');
   Object.assign(b, { shield: 0, invuln: 0 });
   high.game.damage(b, 70, a, 'rocket');
   assert.strictEqual(b.hp, 80, 'a rocket no longer takes half your health');
@@ -742,6 +743,7 @@ test('arena health and respawn options', async () => {
   low.game.damage(d, 70, c, 'rocket');
   assert.ok(d.dead > 0, 'one rocket destroys a low-health kart');
   assert.strictEqual(d.dead, 1.5);
+  assert.strictEqual(low.init.respawn, 1.5);
   low.room.destroy();
 });
 
@@ -1483,4 +1485,25 @@ test('CPU drivers use the new items in races and battles', async () => {
     assert.ok(used.size >= 4, `${kartMode}: bots used ${[...used]}`);
     c.room.destroy();
   }
+});
+
+test('page assets: every kart ES module is versioned and every classic script is loaded', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const { renderIndex } = require('../server/assets');
+  const pub = path.join(__dirname, '..', 'public');
+  const html = renderIndex(pub);
+  // Relative imports between modules don't carry the ?v= of their parent: the import map must.
+  const dir = path.join(pub, 'js', 'games', 'kart3d');
+  const modules = ['kart3d.js', ...fs.readdirSync(dir).map((f) => `kart3d/${f}`)];
+  for (const f of modules) {
+    const src = fs.readFileSync(path.join(pub, 'js', 'games', f), 'utf8');
+    for (const [, rel] of src.matchAll(/from '\.\/([\w/]+\.js)'/g)) {
+      const url = `/js/games/${path.posix.join(path.posix.dirname(f), rel)}`;
+      assert.match(html, new RegExp(`"${url}": "${url}\\?v=[0-9a-f]{10}"`), `${url} (imported by ${f}) is in the import map`);
+    }
+  }
+  for (const s of ['kart-hud.js', 'kart-minimap.js', 'kart.js']) assert.ok(html.includes(`/js/games/${s}?v=`), `${s} is loaded`);
+  assert.ok(html.includes('/js/item-icons.js?v='), 'item-icons.js is loaded');
+  assert.ok(html.indexOf('kart-hud.js') < html.indexOf('/js/games/kart.js'), 'the HUD kit loads before kart.js');
 });
