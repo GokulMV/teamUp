@@ -36,6 +36,16 @@ if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`TeamUp running on http://localhost:${PORT}`);
   });
+  // Hosts like Railway send SIGTERM before replacing the container: stop cleanly.
+  for (const sig of ['SIGTERM', 'SIGINT']) {
+    process.on(sig, () => {
+      console.log(`${sig} received, shutting down`);
+      // io.close() disconnects every player and closes the HTTP server too.
+      io.close(() => process.exit(0));
+      server.closeAllConnections?.();
+      setTimeout(() => process.exit(0), 5000).unref();
+    });
+  }
 }
 
 module.exports = { app, server, io, rooms };

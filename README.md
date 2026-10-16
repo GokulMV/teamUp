@@ -52,7 +52,20 @@ server/
 
 ## Deploying
 
-Any Node 18+ host that supports WebSockets works (Render, Railway, Fly.io, a VPS). Set `PORT` if needed. State is in memory, so run a single instance (or add a Socket.IO adapter such as Redis plus sticky sessions to scale out).
+### Railway (one click from GitHub)
+
+The repo includes `railway.json` and a `Dockerfile`, so Railway needs no extra setup:
+
+1. In Railway, **New Project → Deploy from GitHub repo** and pick this repository (and the branch you want).
+2. Railway builds the `Dockerfile` and starts the server. It checks `/health` before switching traffic over.
+3. Open the service's **Settings → Networking → Generate Domain** to get a public URL, then share `https://<your-domain>/?room=CODE` with friends.
+
+Nothing else is needed: no database and no environment variables (Railway sets `PORT` itself).
+Game rooms live in memory, so keep the service at **1 replica** (already set in `railway.json`), and expect rooms to reset when you redeploy.
+
+### Anywhere else
+
+Any Node 18+ host or container platform that supports WebSockets works (Render, Fly.io, a VPS): `docker build -t teamup . && docker run -p 3000:3000 teamup`, or `npm ci --omit=dev && npm start`. Set `PORT` if needed.
 
 ## Ideas for next steps
 
