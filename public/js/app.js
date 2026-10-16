@@ -17,44 +17,59 @@
   const MODE_NAMES = { pictionary: 'Pictionary', kart: 'Kart Battle', telephone: 'Telephone' };
   const MODE_ICONS = { pictionary: '🎨', kart: '🏎️', telephone: '📞' };
 
-  // Settings shown in the lobby for each game. Rendered generically by renderSettings().
+  // Settings shown in the lobby for each game, rendered by renderSettings().
+  //   type: toggle | stepper | seg | slider | cards | maps | items | text
+  //   block: full-width control under its label (otherwise a compact row: label left, control right)
+  //   adv: shown under "More options"; show(s): only when it applies; def: value until the server sends one
+  const ITEM_IDS = ['boost', 'rocket', 'triple', 'banana', 'shield', 'mine', 'minigun', 'bomb', 'shock', 'ghost'];
   const SETTINGS = {
     pictionary: [
-      { key: 'pictEveryone', type: 'toggle', label: 'Everyone draws once per round' },
-      { key: 'pictRounds', type: 'stepper', label: 'Rounds', min: 1, max: 10, show: (s) => s.pictEveryone },
-      { key: 'pictionaryTurns', type: 'stepper', label: 'Drawing turns', min: 1, max: 30, show: (s) => !s.pictEveryone },
-      { key: 'drawTime', type: 'seg', label: 'Draw time', options: [30, 45, 60, 80, 100, 120, 180].map((v) => [v, `${v}s`]) },
-      { key: 'wordChoices', type: 'seg', label: 'Word choices', options: [1, 2, 3, 4, 5].map((v) => [v, `${v}`]) },
-      { key: 'hints', type: 'seg', label: 'Letter hints', options: [0, 1, 2, 3, 4, 5].map((v) => [v, `${v}`]), show: (s) => s.wordMode !== 'hidden' },
       {
-        key: 'wordMode', type: 'cards', label: 'Word mode', wide: true, options: [
-          ['normal', '🔤', 'Normal', 'Letter blanks and hints'],
+        key: 'wordMode', type: 'cards', label: 'Word mode', block: true, options: [
+          ['normal', '🔤', 'Normal', 'Letter blanks with hints'],
           ['hidden', '🙈', 'Hidden', 'No length, no hints'],
           ['combo', '🔗', 'Combination', 'Two words at once'],
         ],
       },
-      { key: 'customWords', type: 'text', label: 'Custom words', wide: true, placeholder: 'Comma separated, e.g. moon pizza, karate cat, office chair race', hint: 'Mixed in with the built-in words unless you only use these.' },
-      { key: 'customOnly', type: 'toggle', label: 'Only use my custom words' },
+      { key: 'drawTime', type: 'slider', label: 'Draw time', min: 15, max: 240, step: 5, unit: 's', block: true },
+      { key: 'pictEveryone', type: 'toggle', label: 'Everyone draws', hint: 'Each player draws once per round' },
+      { key: 'pictRounds', type: 'stepper', label: 'Rounds', min: 1, max: 10, show: (s) => s.pictEveryone },
+      { key: 'pictionaryTurns', type: 'stepper', label: 'Drawing turns', min: 1, max: 30, show: (s) => !s.pictEveryone },
+      { key: 'wordChoices', type: 'stepper', label: 'Word choices', hint: 'Words the drawer picks from', min: 2, max: 5 },
+      { key: 'hints', type: 'stepper', label: 'Letter hints', hint: 'Letters revealed over time', min: 0, max: 5, show: (s) => s.wordMode !== 'hidden' },
+      { key: 'customWords', type: 'text', label: 'Custom words', block: true, adv: true, placeholder: 'Comma separated, e.g. moon pizza, karate cat, office chair race', hint: 'Mixed in with the built-in words unless you only use these.' },
+      { key: 'customOnly', type: 'toggle', label: 'Only my custom words', hint: 'Needs at least as many words as word choices', adv: true },
     ],
     telephone: [
       {
-        key: 'telMode', type: 'cards', label: 'Mode', wide: true, options: [
+        key: 'telMode', type: 'cards', label: 'Mode', block: true, options: [
           ['normal', '✍️', 'Normal', 'Write, draw, describe, repeat'],
           ['speedrun', '⚡', 'Speedrun', 'Same game, tiny timers'],
-          ['secret', '🙈', 'Secret', 'Draw blind, you can’t see your ink'],
+          ['secret', '🙈', 'Secret', 'Draw blind: no ink on screen'],
           ['knockoff', '🧠', 'Knock-off', 'Memorise a drawing, redraw it'],
           ['complement', '🧩', 'Complement', 'Add to the last drawing'],
         ],
       },
       { key: 'telPace', type: 'seg', label: 'Pace', options: [['slow', 'Relaxed'], ['normal', 'Normal'], ['fast', 'Fast']] },
-      { key: 'telReveal', type: 'seg', label: 'Album reveal', options: [['host', 'Host clicks'], ['auto', 'Auto-play']] },
-      { key: 'telephoneSteps', type: 'stepper', label: 'Chain length', min: 0, max: 30, format: (v) => (v ? v : 'All') },
+      { key: 'telReveal', type: 'seg', label: 'Album reveal', options: [['host', 'Host'], ['auto', 'Auto']] },
+      { key: 'telephoneSteps', type: 'stepper', label: 'Chain length', hint: 'Steps per album', min: 0, max: 30, format: (v) => (v ? v : 'All') },
     ],
     kart: [
-      { key: 'kartMode', type: 'seg', label: 'Mode', options: [['race', '🏁 Race'], ['arena', '💥 Arena battle']] },
+      { key: 'kartMode', type: 'seg', label: 'Mode', block: true, options: [['race', '🏁 Race'], ['arena', '💥 Battle arena']] },
+      { key: 'kartMap', type: 'maps', label: 'Map', block: true },
       { key: 'kartLaps', type: 'stepper', label: 'Laps', min: 1, max: 10, show: (s) => s.kartMode === 'race' },
-      { key: 'arenaTime', type: 'seg', label: 'Battle time', options: [[60, '1 min'], [120, '2 min'], [180, '3 min'], [300, '5 min']], show: (s) => s.kartMode === 'arena' },
-      { key: 'kartMap', type: 'maps', label: 'Map', wide: true },
+      { key: 'arenaTime', type: 'seg', label: 'Match length', options: [[60, '1m'], [120, '2m'], [180, '3m'], [300, '5m']], show: (s) => s.kartMode === 'arena' },
+      { key: 'arenaKillLimit', type: 'seg', label: 'Kill limit', def: 0, options: [[0, 'Off'], [5, '5'], [10, '10'], [15, '15'], [25, '25']], show: (s) => s.kartMode === 'arena' },
+      { key: 'kartBots', type: 'stepper', label: 'CPU drivers', hint: 'Fill the grid with AI', def: 0, min: 0, max: 15 },
+      { key: 'kartBotSkill', type: 'seg', label: 'CPU skill', def: 'normal', options: [['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']], show: (s) => (s.kartBots ?? 0) > 0 },
+      { key: 'kartClass', type: 'seg', label: 'Speed', def: 'standard', options: [['chill', 'Chill'], ['standard', 'Standard'], ['turbo', 'Turbo']] },
+      { key: 'kartItems', type: 'seg', label: 'Items', def: 'all', adv: true, block: true, options: [['all', 'All items'], ['weapons', 'Weapons only'], ['none', 'No items'], ['custom', 'Custom']] },
+      { key: 'kartItemList', type: 'items', label: 'Pick items', def: ITEM_IDS, adv: true, block: true, show: (s) => (s.kartItems ?? 'all') === 'custom' },
+      { key: 'kartBoxRespawn', type: 'seg', label: 'Item boxes', def: 'normal', adv: true, options: [['rare', 'Rare'], ['normal', 'Normal'], ['frequent', 'Lots']], show: (s) => (s.kartItems ?? 'all') !== 'none' },
+      { key: 'kartCatchup', type: 'toggle', label: 'Catch-up items', hint: 'Racers at the back get stronger items', def: true, adv: true, show: (s) => s.kartMode === 'race' },
+      { key: 'kartReverse', type: 'toggle', label: 'Reverse direction', hint: 'Drive the circuit backwards', def: false, adv: true, show: (s) => s.kartMode === 'race' },
+      { key: 'arenaRespawn', type: 'seg', label: 'Respawn', def: 'normal', adv: true, options: [['fast', 'Fast'], ['normal', 'Normal'], ['slow', 'Slow']], show: (s) => s.kartMode === 'arena' },
+      { key: 'arenaHealth', type: 'seg', label: 'Health', def: 'normal', adv: true, options: [['low', 'Glass'], ['normal', 'Normal'], ['high', 'Tank']], show: (s) => s.kartMode === 'arena' },
     ],
   };
 
@@ -196,6 +211,7 @@
     saveSession(state.me);
     history.replaceState(null, '', `?room=${res.code}`);
     $('chat-log').innerHTML = '';
+    structureSig = ''; peopleSig = ''; meSig = '';
     showScreen('screen-room');
     render();
     return true;
@@ -317,7 +333,9 @@
   });
 
   // ---------- Lobby ----------
-  let settingsSig = '';
+  // Rendering is incremental: a control is only redrawn when its own value changes, and the player
+  // list only when the players change, so clicking an option never makes the lobby jump or re-animate.
+  let advancedOpen = store.get('teamup-adv') === '1';
   function renderLobby() {
     const room = state.room;
     const s = room.settings;
@@ -332,7 +350,7 @@
 
     $('set-teams').checked = s.teamMode;
     $('set-teams').disabled = !host;
-    $('team-count').innerHTML = [2, 3, 4].map((n) => `<button data-n="${n}" class="${s.teamCount === n ? 'on' : ''}" ${host ? '' : 'disabled'}>${n} teams</button>`).join('');
+    $('team-count').querySelectorAll('button').forEach((b) => { b.classList.toggle('on', Number(b.dataset.n) === s.teamCount); b.disabled = !host; });
     document.querySelectorAll('.team-only').forEach((el) => el.classList.toggle('hidden', !s.teamMode));
     $('btn-shuffle').disabled = !host;
     $('btn-start').classList.toggle('hidden', !host);
@@ -341,64 +359,188 @@
     renderMe();
     renderPeople(room);
   }
+  $('team-count').innerHTML = [2, 3, 4].map((n) => `<button data-n="${n}">${n} teams</button>`).join('');
 
-  function controlHtml(def, s, host) {
+  const valueOf = (def, s) => (s[def.key] !== undefined ? s[def.key] : def.def);
+
+  // ----- maps: overview art, layout outline and stats -----
+  function mapOutline(m) {
+    const map = window.KartCore?.MAPS?.[m.id];
+    if (!map) return '';
+    const b = map.bounds;
+    const size = Math.max(b.maxX - b.minX, b.maxY - b.minY);
+    const ox = b.minX - (size - (b.maxX - b.minX)) / 2;
+    const oy = b.minY - (size - (b.maxY - b.minY)) / 2;
+    const P = (x, y) => `${(((x - ox) / size) * 100).toFixed(2)},${(((y - oy) / size) * 100).toFixed(2)}`;
+    if (map.type === 'race') {
+      const d = `M${map.centerline.filter((_, i) => i % 3 === 0).map(([x, y]) => P(x, y)).join('L')}Z`;
+      const [sx, sy] = map.centerline[0];
+      return `<svg viewBox="0 0 100 100" class="map-outline" aria-hidden="true">
+        <path d="${d}" class="mo-road-edge" style="stroke-width:${((map.width / size) * 100 * 0.9).toFixed(2)}"/>
+        <path d="${d}" class="mo-road" style="stroke-width:${((map.width / size) * 100 * 0.55).toFixed(2)}"/>
+        <circle cx="${P(sx, sy).split(',')[0]}" cy="${P(sx, sy).split(',')[1]}" r="2.6" class="mo-start"/></svg>`;
+    }
+    const r = (v) => ((v / size) * 100).toFixed(2);
+    return `<svg viewBox="0 0 100 100" class="map-outline" aria-hidden="true">
+      <rect x="${r(40)}" y="${r(40)}" width="${r(map.size - 80)}" height="${r(map.size - 80)}" rx="2" class="mo-floor"/>
+      ${map.hazards.map((h) => `<circle cx="${r(h.x)}" cy="${r(h.y)}" r="${r(h.r)}" class="mo-lava"/>`).join('')}
+      ${map.obstacles.map((o) => `<circle cx="${r(o.x)}" cy="${r(o.y)}" r="${r(o.r)}" class="mo-block"/>`).join('')}</svg>`;
+  }
+
+  function mapStats(m) {
+    const map = window.KartCore?.MAPS?.[m.id];
+    if (!map) return [];
+    const stats = [];
+    if (map.type === 'race') {
+      let len = 0;
+      for (let i = 0; i < map.n; i++) {
+        const a = map.centerline[i];
+        const c = map.centerline[(i + 1) % map.n];
+        len += Math.hypot(c[0] - a[0], c[1] - a[1]);
+      }
+      stats.push(`📏 ${Math.round(len / 20)} m lap`);
+      stats.push(`⏱️ ~${Math.round(len / (window.KartCore.PHYS.maxSpeed * 0.85))} s`);
+      if (map.grip && map.grip < 1) stats.push('🧊 Slippery');
+    } else {
+      stats.push(`📐 ${Math.round(map.size / 20)} m arena`);
+      if (map.hazards.length) stats.push(`🌋 ${map.hazards.length} lava pools`);
+      stats.push(`🧱 ${map.obstacles.length} obstacles`);
+    }
+    if (map.boostPads.length) stats.push(`⚡ ${map.boostPads.length} boost pads`);
+    stats.push(`🎁 ${map.itemBoxes.length} item boxes`);
+    return stats;
+  }
+
+  function mapsHtml(def, v, host) {
+    const maps = (state.room.kartMaps || []).filter((m) => m.type === (state.room.settings.kartMode || 'race'));
+    const cur = maps.find((m) => m.id === v) || maps[0];
+    if (!cur) return '';
+    return `<div class="map-overview" style="--art:url('/img/maps/${cur.id}.jpg')">
+        <div class="mo-art">${mapOutline(cur)}</div>
+        <div class="mo-info">
+          <span class="mo-kicker">${cur.type === 'race' ? 'Race track' : 'Battle arena'}</span>
+          <h4>${cur.emoji} ${escapeHtml(cur.name)}</h4>
+          <p>${escapeHtml(cur.blurb || '')}</p>
+          <div class="mo-chips">${mapStats(cur).map((t) => `<span>${t}</span>`).join('')}</div>
+        </div>
+      </div>
+      <div class="map-thumbs">${maps.map((m) => `<button class="map-thumb ${m.id === cur.id ? 'on' : ''}" data-key="kartMap" data-value="${m.id}" ${host ? '' : 'disabled'} style="--art:url('/img/maps/${m.id}.jpg')" title="${escapeHtml(m.name)}">
+        <span class="mt-name">${m.emoji} ${escapeHtml(m.name)}</span></button>`).join('')}</div>`;
+  }
+
+  function controlInner(def, s, host) {
     const dis = host ? '' : 'disabled';
-    const v = s[def.key];
+    const v = valueOf(def, s);
+    const label = `<div class="lbl"><b>${def.label}</b>${def.hint ? `<small>${def.hint}</small>` : ''}</div>`;
     switch (def.type) {
       case 'toggle':
-        return `<label class="switch"><input type="checkbox" data-key="${def.key}" ${v ? 'checked' : ''} ${dis}><span class="track"><span class="thumb"></span></span><span>${def.label}</span></label>`;
+        return `${label}<label class="switch"><input type="checkbox" data-key="${def.key}" ${v ? 'checked' : ''} ${dis} aria-label="${def.label}"><span class="track"><span class="thumb"></span></span></label>`;
       case 'stepper':
-        return `<span class="label">${def.label}</span>
-          <div class="stepper"><button data-key="${def.key}" data-step="-1" ${host && v > def.min ? '' : 'disabled'}>−</button><b>${def.format ? def.format(v) : v}</b><button data-key="${def.key}" data-step="1" ${host && v < def.max ? '' : 'disabled'}>+</button></div>`;
+        return `${label}<div class="stepper"><button data-key="${def.key}" data-step="-1" ${host && v > def.min ? '' : 'disabled'} aria-label="Less">−</button><b>${def.format ? def.format(v) : v}</b><button data-key="${def.key}" data-step="1" ${host && v < def.max ? '' : 'disabled'} aria-label="More">+</button></div>`;
       case 'seg':
-        return `<span class="label">${def.label}</span>
-          <div class="seg">${def.options.map(([val, text]) => `<button data-key="${def.key}" data-value="${val}" class="${String(v) === String(val) ? 'on' : ''}" ${dis}>${text}</button>`).join('')}</div>`;
+        return `${label}<div class="seg" style="--n:${def.options.length}">${def.options.map(([val, text]) => `<button data-key="${def.key}" data-value="${val}" class="${String(v) === String(val) ? 'on' : ''}" ${dis}>${text}</button>`).join('')}</div>`;
+      case 'slider': {
+        const pct = ((v - def.min) / (def.max - def.min)) * 100;
+        return `<div class="lbl"><b>${def.label}</b></div><output class="slider-val">${v}${def.unit || ''}</output>
+          <input type="range" class="slider" data-key="${def.key}" min="${def.min}" max="${def.max}" step="${def.step}" value="${v}" style="--pct:${pct}%" ${dis}>`;
+      }
       case 'cards':
-        return `<span class="label">${def.label}</span>
-          <div class="option-cards">${def.options.map(([val, icon, name, desc]) => `<button class="option-card ${v === val ? 'on' : ''}" data-key="${def.key}" data-value="${val}" ${dis}><span class="oc-icon">${icon}</span><b>${name}</b><small>${desc}</small></button>`).join('')}</div>`;
-      case 'maps': {
-        const maps = (state.room.kartMaps || []).filter((m) => m.type === s.kartMode);
-        return `<span class="label">${def.label}</span>
-          <div class="option-cards">${maps.map((m) => `<button class="option-card ${v === m.id ? 'on' : ''}" data-key="kartMap" data-value="${m.id}" ${dis}><span class="oc-icon">${m.emoji}</span><b>${escapeHtml(m.name)}</b><small>${escapeHtml(m.blurb || '')}</small></button>`).join('')}</div>`;
+        return `${label}<div class="option-cards">${def.options.map(([val, icon, name, desc]) => `<button class="option-card ${v === val ? 'on' : ''}" data-key="${def.key}" data-value="${val}" ${dis}><span class="oc-icon">${icon}</span><span class="oc-text"><b>${name}</b><small>${desc}</small></span></button>`).join('')}</div>`;
+      case 'maps':
+        return mapsHtml(def, v, host);
+      case 'items': {
+        const list = Array.isArray(v) ? v : ITEM_IDS;
+        return `${label}<div class="item-picks">${ITEM_IDS.map((id) => `<button class="item-pick ${list.includes(id) ? 'on' : ''}" data-key="${def.key}" data-item="${id}" ${dis} title="${window.ItemIcons.description(id)}">
+          ${window.ItemIcons.svg(id)}<span>${window.ItemIcons.name(id)}</span></button>`).join('')}</div>`;
       }
       case 'text':
-        return `<span class="label">${def.label}</span>
-          <textarea data-key="${def.key}" maxlength="4000" placeholder="${escapeHtml(def.placeholder || '')}" ${dis}>${escapeHtml(v || '')}</textarea>
-          ${def.hint ? `<span class="hint">${def.hint}</span>` : ''}`;
+        return `${label}<textarea data-key="${def.key}" maxlength="4000" placeholder="${escapeHtml(def.placeholder || '')}" ${dis}>${escapeHtml(v || '')}</textarea>`;
       default:
         return '';
     }
   }
 
+  const ROW_TYPES = new Set(['toggle', 'stepper', 'seg']);
+  const settingHtml = (def, s, host) => {
+    const layout = def.block || !ROW_TYPES.has(def.type) ? 'block' : 'row';
+    return `<div class="setting ${layout} t-${def.type}" data-setting="${def.key}">${controlInner(def, s, host)}</div>`;
+  };
+
+  let structureSig = '';
+  let shownValues = {};
   function renderSettings(room, host) {
     const s = room.settings;
     const defs = (SETTINGS[s.mode] || []).filter((d) => !d.show || d.show(s));
-    const sig = JSON.stringify([s, host, defs.map((d) => d.key), room.kartMaps?.length]);
+    const basic = defs.filter((d) => !d.adv);
+    const adv = defs.filter((d) => d.adv);
+    const sig = JSON.stringify([s.mode, host, defs.map((d) => d.key), (room.kartMaps || []).map((m) => m.id)]);
     const body = $('settings-body');
-    // Don't rebuild while someone is typing custom words.
-    if (sig === settingsSig || (document.activeElement && body.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA')) return;
-    settingsSig = sig;
-    body.innerHTML = defs.map((d) => `<div class="setting${d.wide ? ' wide' : ''}">${controlHtml(d, s, host)}</div>`).join('');
+    const valueKey = (d) => JSON.stringify([valueOf(d, s), d.type === 'maps' ? s.kartMode : 0]);
+    if (sig !== structureSig) {
+      structureSig = sig;
+      body.innerHTML = `<div class="settings-grid">${basic.map((d) => settingHtml(d, s, host)).join('')}</div>
+        ${adv.length ? `<button class="adv-toggle ${advancedOpen ? 'open' : ''}" type="button" data-adv><span>More options</span><small>${adv.length}</small><i>⌄</i></button>
+        <div class="settings-grid adv ${advancedOpen ? '' : 'hidden'}">${adv.map((d) => settingHtml(d, s, host)).join('')}</div>` : ''}`;
+      shownValues = Object.fromEntries(defs.map((d) => [d.key, valueKey(d)]));
+      return;
+    }
+    // Same controls: only redraw the ones whose value changed (keep focus/typing intact).
+    for (const d of defs) {
+      const vk = valueKey(d);
+      if (shownValues[d.key] === vk) continue;
+      shownValues[d.key] = vk;
+      const el = body.querySelector(`[data-setting="${d.key}"]`);
+      if (!el) continue;
+      if (d.type === 'text' && document.activeElement === el.querySelector('textarea')) continue;
+      if (d.type === 'slider' && document.activeElement === el.querySelector('input')) continue;
+      el.innerHTML = controlInner(d, s, host);
+    }
   }
 
   const updateSettings = async (patch) => {
     const res = await emit('lobby:settings', patch);
     $('lobby-error').textContent = res.ok ? '' : res.error || '';
   };
-  const parseValue = (key, raw) => (typeof state.room.settings[key] === 'number' ? Number(raw) : raw);
+  const defFor = (key) => (SETTINGS[state.room.settings.mode] || []).find((d) => d.key === key);
+  const parseValue = (key, raw) => {
+    const cur = valueOf(defFor(key) || { key }, state.room.settings);
+    return typeof cur === 'number' ? Number(raw) : raw;
+  };
 
   $('settings-body').addEventListener('click', (e) => {
+    if (e.target.closest('[data-adv]')) {
+      advancedOpen = !advancedOpen;
+      store.set('teamup-adv', advancedOpen ? '1' : '0');
+      e.target.closest('[data-adv]').classList.toggle('open', advancedOpen);
+      $('settings-body').querySelector('.settings-grid.adv')?.classList.toggle('hidden', !advancedOpen);
+      return;
+    }
     const b = e.target.closest('button[data-key]');
     if (!b || !isHost()) return;
     const key = b.dataset.key;
-    if (b.dataset.step) updateSettings({ [key]: state.room.settings[key] + Number(b.dataset.step) });
+    if (b.dataset.item) {
+      const cur = valueOf(defFor(key), state.room.settings);
+      const list = new Set(Array.isArray(cur) ? cur : ITEM_IDS);
+      if (list.has(b.dataset.item)) list.delete(b.dataset.item); else list.add(b.dataset.item);
+      updateSettings({ [key]: ITEM_IDS.filter((id) => list.has(id)) });
+      return;
+    }
+    if (b.dataset.step) updateSettings({ [key]: valueOf(defFor(key), state.room.settings) + Number(b.dataset.step) });
     else updateSettings({ [key]: parseValue(key, b.dataset.value) });
+  });
+  $('settings-body').addEventListener('input', (e) => {
+    const el = e.target;
+    if (el.type !== 'range') return;
+    const def = defFor(el.dataset.key);
+    el.style.setProperty('--pct', `${((el.value - el.min) / (el.max - el.min)) * 100}%`);
+    const out = el.parentElement.querySelector('.slider-val');
+    if (out) out.textContent = `${el.value}${def?.unit || ''}`;
   });
   $('settings-body').addEventListener('change', (e) => {
     const el = e.target;
     if (!el.dataset.key || !isHost()) return;
     if (el.type === 'checkbox') updateSettings({ [el.dataset.key]: el.checked });
+    else if (el.type === 'range') updateSettings({ [el.dataset.key]: Number(el.value) });
     else updateSettings({ [el.dataset.key]: el.value });
   });
 
@@ -417,16 +559,19 @@
   };
   $('btn-stop').onclick = () => { if (confirm('End the current game for everyone?')) emit('game:stop'); };
 
+  let meSig = '';
   function renderMe() {
     const p = me();
     if (!p) return;
     const card = $('me-card');
+    const sig = `${p.name}|${p.avatar}`;
     const nameInput = card.querySelector('input');
-    if (nameInput && document.activeElement === nameInput) return;
+    if (sig === meSig || (nameInput && document.activeElement === nameInput)) return;
+    meSig = sig;
     card.innerHTML = `
       <span title="Change avatar" data-avatar>${avatarHtml(p.avatar)}</span>
       <div class="me-info"><small>You</small><input maxlength="16" value="${escapeHtml(p.name)}" aria-label="Your name"></div>
-      <button class="btn small" data-avatar>Change avatar</button>`;
+      <button class="icon-btn" data-avatar title="Change avatar" aria-label="Change avatar">🎭</button>`;
     card.querySelectorAll('[data-avatar]').forEach((el) => { el.onclick = () => { state.avatar = p.avatar; openAvatarModal(); }; });
     const input = card.querySelector('input');
     input.onchange = async () => {
@@ -437,26 +582,35 @@
     input.onkeydown = (e) => { if (e.key === 'Enter') input.blur(); };
   }
 
+  let peopleSig = '';
+  const seenPeople = new Set();
   function renderPeople(room) {
     const s = room.settings;
     const el = $('teams');
     $('people-count').textContent = `${room.players.length}/${room.maxPlayers}`;
+    const sig = JSON.stringify([s.teamMode, s.teamMode ? s.teamCount : 0, state.me.playerId,
+      room.players.map((p) => [p.id, p.name, p.avatar, p.team, p.connected])]);
+    if (sig === peopleSig) return;
+    peopleSig = sig;
+    // Only players we haven't shown before animate in.
+    const enter = (p) => (seenPeople.has(p.id) ? '' : ' enter');
     if (s.teamMode) {
       $('people-title').textContent = 'Teams';
       el.className = 'people';
       el.innerHTML = room.teams.map((t) => {
         const members = room.players.filter((p) => p.team === t.id);
         const mine = me()?.team === t.id;
-        return `<div class="team-col" data-team="${t.id}" style="--team:${t.color}">
-          <h4>${t.name} <span class="join">${mine ? 'Your team' : 'Click to join'} · ${members.length}</span></h4>
-          <div class="members">${members.map((p) => `<span class="member">${avatarHtml(p.avatar)}${escapeHtml(p.name)}</span>`).join('') || '<span class="muted small">Nobody yet</span>'}</div>
+        return `<div class="team-col${mine ? ' mine' : ''}" data-team="${t.id}" style="--team:${t.color}">
+          <h4>${t.name} <span class="join">${mine ? 'Your team' : 'Join'} · ${members.length}</span></h4>
+          <div class="members">${members.map((p) => `<span class="member${enter(p)}${p.connected ? '' : ' offline'}">${avatarHtml(p.avatar)}${escapeHtml(p.name)}</span>`).join('') || '<span class="muted small">Nobody yet</span>'}</div>
         </div>`;
       }).join('');
     } else {
       $('people-title').textContent = 'Players';
       el.className = 'people solo';
-      el.innerHTML = room.players.map((p) => `<div class="person${p.id === state.me.playerId ? ' me' : ''}">${avatarHtml(p.avatar)}<span>${escapeHtml(p.name)}</span></div>`).join('');
+      el.innerHTML = room.players.map((p) => `<div class="person${p.id === state.me.playerId ? ' me' : ''}${enter(p)}${p.connected ? '' : ' offline'}">${avatarHtml(p.avatar)}<span>${escapeHtml(p.name)}</span>${p.id === room.hostId ? '<i class="crown" title="Host">👑</i>' : ''}</div>`).join('');
     }
+    room.players.forEach((p) => seenPeople.add(p.id));
   }
   $('teams').addEventListener('click', (e) => {
     const team = e.target.closest('.team-col');

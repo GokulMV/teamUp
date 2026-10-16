@@ -372,8 +372,7 @@ window.Games.kart = {
       // Predict my kart locally so steering feels instant.
       const myRow = latest?.k.find((r) => r[0] === myIdx);
       if (local && !local.dead && latest?.phase === 'racing') {
-        const finished = myRow && myRow[9] & 8;
-        K.stepKart(local, finished ? { down: true } : input, dt, map);
+        K.stepKart(local, input, dt, map);
       }
       if (local && myRow && latest?.phase === 'racing' && !(myRow[9] & 32)) {
         Sfx.engine(Math.abs(local.speed) / K.PHYS.maxSpeed, !!(myRow[9] & 2), !!(myRow[9] & 64));

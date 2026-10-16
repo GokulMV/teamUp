@@ -335,7 +335,8 @@ class KartBattle {
         if (k.dead <= 0) this.respawn(k);
         continue;
       }
-      const input = k.finished ? { down: true } : k.input;
+      // Finished karts keep full control for a victory lap (no items, can't be hit, pass through others).
+      const input = k.input;
       const prevIndex = k.trackIndex;
       K.stepKart(k, input, dt, this.map);
       for (const t of ['shield', 'invuln', 'ghost']) if (k[t] > 0) k[t] = Math.max(0, k[t] - dt);
@@ -358,7 +359,7 @@ class KartBattle {
       }
     }
     const alive = karts.filter((k) => k.dead <= 0);
-    const solid = alive.filter((k) => k.ghost <= 0);
+    const solid = alive.filter((k) => k.ghost <= 0 && !k.finished);
 
     // Kart-kart collisions: simple circle separation (ghosts pass through).
     const r2 = (K.KART_RADIUS * 2) ** 2;

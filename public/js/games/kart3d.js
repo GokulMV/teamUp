@@ -378,7 +378,8 @@ export class Kart3D {
       // Bloom makes flames, explosions, item boxes and neon glow.
       this.composer = new EffectComposer(this.renderer);
       this.composer.addPass(new RenderPass(scene, this.camera));
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), theme.night ? 0.8 : 0.45, 0.5, theme.night ? 0.7 : 0.82);
+      // Daylight maps only bloom truly bright things (flames, explosions, neon), never white tyres or curbs.
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), theme.night ? 0.8 : 0.32, 0.45, theme.night ? 0.7 : 0.97);
       this.composer.addPass(this.bloom);
       this.composer.addPass(new OutputPass());
     }

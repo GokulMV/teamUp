@@ -342,7 +342,7 @@ class Room {
         if (data?.telephoneSteps !== undefined) s.telephoneSteps = clampInt(data.telephoneSteps, 0, 30, s.telephoneSteps);
         if (typeof data?.pictEveryone === 'boolean') s.pictEveryone = data.pictEveryone;
         if (data?.pictRounds !== undefined) s.pictRounds = clampInt(data.pictRounds, 1, 10, s.pictRounds);
-        if (data?.wordChoices !== undefined) s.wordChoices = clampInt(data.wordChoices, 1, 5, s.wordChoices);
+        if (data?.wordChoices !== undefined) s.wordChoices = clampInt(data.wordChoices, 2, 5, s.wordChoices);
         if (data?.hints !== undefined) s.hints = clampInt(data.hints, 0, 5, s.hints);
         if (WORD_MODES.includes(data?.wordMode)) s.wordMode = data.wordMode;
         if (typeof data?.customWords === 'string') s.customWords = data.customWords.slice(0, 4000);
