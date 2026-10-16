@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>TeamUp Party Games</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎮</text></svg>">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Home -->
+  <section id="screen-home" class="screen active">
+    <div class="home-card">
+      <h1 class="logo">Team<span>Up</span></h1>
+      <p class="tagline">Party games for up to 30 friends: draw, race and laugh together.</p>
+      <div class="mode-pills">
+        <span>🎨 Pictionary</span><span>🏎️ Kart Battle</span><span>📞 Telephone</span>
+      </div>
+      <label class="field">
+        <span>Your name</span>
+        <input id="name-input" maxlength="16" placeholder="e.g. Speedy" autocomplete="nickname">
+      </label>
+      <button id="btn-create" class="btn primary big">Create a room</button>
+      <div class="divider"><span>or join one</span></div>
+      <div class="join-row">
+        <input id="code-input" maxlength="4" placeholder="CODE" autocomplete="off">
+        <button id="btn-join" class="btn">Join</button>
+      </div>
+      <p id="home-error" class="error"></p>
+    </div>
+  </section>
+
+  <!-- Room (lobby + game + results share the side panel) -->
+  <section id="screen-room" class="screen">
+    <header class="topbar">
+      <div class="brand">Team<span>Up</span></div>
+      <button id="btn-copy" class="room-code" title="Copy invite link">Room <b id="room-code">----</b> <small>📋 invite</small></button>
+      <div class="topbar-right">
+        <span id="player-count" class="muted"></span>
+        <button id="btn-stop" class="btn small danger hidden">End game</button>
+        <button id="btn-leave" class="btn small ghost">Leave</button>
+      </div>
+    </header>
+
+    <div class="room-body">
+      <main id="main">
+        <!-- Lobby -->
+        <div id="view-lobby" class="view">
+          <div class="lobby-grid">
+            <div class="panel">
+              <h2>Pick a game</h2>
+              <div id="mode-cards" class="mode-cards">
+                <button class="mode-card" data-mode="pictionary">
+                  <div class="emoji">🎨</div><h3>Pictionary</h3>
+                  <p>One player draws, everyone races to guess the word in chat.</p>
+                </button>
+                <button class="mode-card" data-mode="kart">
+                  <div class="emoji">🏎️</div><h3>Kart Battle</h3>
+                  <p>Race laps, grab item boxes, fire rockets and drop bananas.</p>
+                </button>
+                <button class="mode-card" data-mode="telephone">
+                  <div class="emoji">📞</div><h3>Telephone</h3>
+                  <p>Write, draw, describe, repeat, then watch the chaos unfold.</p>
+                </button>
+              </div>
+
+              <div class="settings">
+                <label class="toggle">
+                  <input type="checkbox" id="set-teams"> <span>Team mode</span>
+                </label>
+                <label class="setting team-only">Teams
+                  <select id="set-team-count"><option>2</option><option>3</option><option>4</option></select>
+                </label>
+                <label class="setting mode-pictionary">Turns
+                  <input type="number" id="set-turns" min="1" max="30">
+                </label>
+                <label class="setting mode-pictionary mode-telephone">Draw time (s)
+                  <input type="number" id="set-drawtime" min="30" max="180" step="10">
+                </label>
+                <label class="setting mode-kart">Laps
+                  <input type="number" id="set-laps" min="1" max="10">
+                </label>
+                <label class="setting mode-telephone">Chain length (0 = everyone)
+                  <input type="number" id="set-steps" min="0" max="30">
+                </label>
+                <button id="btn-shuffle" class="btn small team-only">🔀 Shuffle teams</button>
+              </div>
+              <p id="mode-help" class="muted small-text"></p>
+              <button id="btn-start" class="btn primary big">Start game</button>
+              <p id="lobby-wait" class="muted center hidden">Waiting for the host to start…</p>
+              <p id="lobby-error" class="error"></p>
+            </div>
+
+            <div class="panel" id="teams-panel">
+              <h2>Teams <small class="muted">(click a team to join it)</small></h2>
+              <div id="teams" class="teams"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Active game -->
+        <div id="view-game" class="view"></div>
+
+        <!-- Results -->
+        <div id="view-results" class="view">
+          <div class="panel results">
+            <h2 id="results-title">Results</h2>
+            <div id="results-teams" class="results-teams"></div>
+            <ol id="results-players" class="results-players"></ol>
+            <button id="btn-again" class="btn primary big">Back to lobby</button>
+            <p id="results-wait" class="muted center hidden">Waiting for the host…</p>
+          </div>
+        </div>
+      </main>
+
+      <aside id="side">
+        <div class="side-players">
+          <h3>Players</h3>
+          <ul id="player-list"></ul>
+        </div>
+        <div class="chat">
+          <div id="chat-log" class="chat-log"></div>
+          <form id="chat-form" class="chat-form">
+            <input id="chat-input" maxlength="200" placeholder="Chat / type your guess…" autocomplete="off">
+          </form>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/shared/kart-core.js"></script>
+  <script src="/js/draw-board.js"></script>
+  <script src="/js/games/pictionary.js"></script>
+  <script src="/js/games/kart.js"></script>
+  <script src="/js/games/telephone.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
