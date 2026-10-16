@@ -1,20 +1,36 @@
-// Track geometry and kart physics shared by the server (authoritative simulation)
+// Maps and kart physics shared by the server (authoritative simulation)
 // and the browser (prediction for your own kart + rendering).
 (function (root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.KartCore = api;
 })(typeof self !== 'undefined' ? self : this, function () {
-  const TRACK_WIDTH = 260;
   const KART_RADIUS = 16;
-  const WORLD = { w: 3400, h: 3400 };
+  const WALL_PAD = 160; // race tracks: hard wall this far outside the asphalt
 
-  // Control points of the circuit (clockwise). Smoothed with Catmull-Rom below.
-  const CONTROL_POINTS = [
-    [500, 500], [1500, 350], [2500, 500], [2950, 1000], [2650, 1550], [1950, 1450],
-    [1500, 1800], [1900, 2250], [2750, 2350], [2600, 2900], [1450, 2950], [550, 2750],
-    [300, 1900], [750, 1350], [400, 950],
-  ];
+  const PHYS = {
+    accel: 500,
+    brake: 820,
+    reverseMax: -170,
+    maxSpeed: 430,
+    boostSpeed: 680,
+    offTrackMax: 190,
+    drag: 1.3,
+    turnRate: 2.9,
+    driftMinSpeed: 220,
+    driftLevels: [0.7, 1.5], // seconds of drifting for blue / orange sparks
+    miniTurbo: [0.55, 1.0], // boost seconds for each level
+    padBoost: 0.8,
+  };
+
+  // Item codes on the wire are index + 1.
+  const ITEMS = ['boost', 'rocket', 'banana', 'shield', 'triple', 'mine', 'minigun', 'bomb', 'shock', 'ghost'];
+
+  function driftLevel(t) {
+    if (t >= PHYS.driftLevels[1]) return 2;
+    if (t >= PHYS.driftLevels[0]) return 1;
+    return 0;
+  }
 
   function catmullRom(points, samplesPerSegment) {
     const out = [];
@@ -36,117 +52,222 @@
     return out;
   }
 
-  const CENTERLINE = catmullRom(CONTROL_POINTS, 20);
-  const N = CENTERLINE.length;
+  // ---------- Race tracks ----------
+  function makeRaceMap(def) {
+    const width = def.width || 260;
+    const centerline = catmullRom(def.points, def.samples || 20);
+    const n = centerline.length;
+    const tangents = centerline.map((p, i) => {
+      const q = centerline[(i + 1) % n];
+      const dx = q[0] - p[0];
+      const dy = q[1] - p[1];
+      const len = Math.hypot(dx, dy) || 1;
+      return [dx / len, dy / len];
+    });
 
-  // Unit tangent at each sample (direction of travel).
-  const TANGENTS = CENTERLINE.map((p, i) => {
-    const q = CENTERLINE[(i + 1) % N];
-    const dx = q[0] - p[0];
-    const dy = q[1] - p[1];
-    const len = Math.hypot(dx, dy) || 1;
-    return [dx / len, dy / len];
-  });
-
-  // Find nearest centerline sample. If `hint` is given, only search nearby
-  // (prevents snapping to a parallel stretch of track and allows cheap lookups).
-  function nearestIndex(x, y, hint) {
-    let best = 0;
-    let bestD = Infinity;
-    if (hint === undefined || hint === null) {
-      for (let i = 0; i < N; i++) {
-        const d = (CENTERLINE[i][0] - x) ** 2 + (CENTERLINE[i][1] - y) ** 2;
-        if (d < bestD) { bestD = d; best = i; }
+    // Nearest centerline sample. With `hint`, only search nearby (prevents
+    // snapping to a parallel stretch of track and keeps lookups cheap).
+    function nearestIndex(x, y, hint) {
+      let best = 0;
+      let bestD = Infinity;
+      if (hint === undefined || hint === null) {
+        for (let i = 0; i < n; i++) {
+          const d = (centerline[i][0] - x) ** 2 + (centerline[i][1] - y) ** 2;
+          if (d < bestD) { bestD = d; best = i; }
+        }
+      } else {
+        for (let o = -25; o <= 25; o++) {
+          const i = (hint + o + n) % n;
+          const d = (centerline[i][0] - x) ** 2 + (centerline[i][1] - y) ** 2;
+          if (d < bestD) { bestD = d; best = i; }
+        }
       }
-    } else {
-      for (let o = -25; o <= 25; o++) {
-        const i = (hint + o + N) % N;
-        const d = (CENTERLINE[i][0] - x) ** 2 + (CENTERLINE[i][1] - y) ** 2;
-        if (d < bestD) { bestD = d; best = i; }
+      return { index: best, dist: Math.sqrt(bestD) };
+    }
+
+    // Point across the track at sample `i`, lateral offset in [-1, 1].
+    function trackPoint(i, lateral) {
+      const k = ((i % n) + n) % n;
+      const p = centerline[k];
+      const t = tangents[k];
+      const half = width / 2;
+      return [p[0] - t[1] * lateral * half, p[1] + t[0] * lateral * half];
+    }
+
+    // Starting grid: rows of 5 behind the start line.
+    function gridPosition(slot) {
+      const row = Math.floor(slot / 5);
+      const col = slot % 5;
+      const i = (n - 3 - row * 2 + n * 4) % n;
+      const [x, y] = trackPoint(i, -0.8 + col * 0.4);
+      const t = tangents[i];
+      return { x, y, angle: Math.atan2(t[1], t[0]), index: i };
+    }
+
+    const itemBoxes = [];
+    for (const f of def.itemRows || [0.12, 0.37, 0.62, 0.86]) {
+      for (let c = 0; c < 5; c++) {
+        const [x, y] = trackPoint(Math.floor(n * f), -0.7 + c * 0.35);
+        itemBoxes.push({ x, y });
       }
     }
-    return { index: best, dist: Math.sqrt(bestD) };
+    const boostPads = (def.boostPads || []).map(([f, lateral]) => {
+      const i = Math.floor(n * f);
+      const [x, y] = trackPoint(i, lateral);
+      const t = tangents[i];
+      return { x, y, angle: Math.atan2(t[1], t[0]) };
+    });
+
+    const xs = centerline.map((p) => p[0]);
+    const ys = centerline.map((p) => p[1]);
+    const pad = width / 2 + WALL_PAD + 40;
+    const bounds = { minX: Math.min(...xs) - pad, maxX: Math.max(...xs) + pad, minY: Math.min(...ys) - pad, maxY: Math.max(...ys) + pad };
+
+    return {
+      ...def, type: 'race', width, centerline, tangents, n, itemBoxes, boostPads, bounds,
+      center: [(bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2],
+      size: Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY),
+      nearestIndex, trackPoint, gridPosition,
+      offTrack(x, y, pad2 = 0) { return nearestIndex(x, y).dist > width / 2 + pad2; },
+    };
   }
 
-  // Point across the track at sample `i`, lateral offset in [-1, 1].
-  function trackPoint(i, lateral) {
-    const p = CENTERLINE[((i % N) + N) % N];
-    const t = TANGENTS[((i % N) + N) % N];
-    const half = TRACK_WIDTH / 2;
-    return [p[0] - t[1] * lateral * half, p[1] + t[0] * lateral * half];
+  // ---------- Battle arenas ----------
+  function makeArenaMap(def) {
+    const S = def.size;
+    const C = S / 2;
+    const itemBoxes = def.itemBoxes || [];
+    if (!def.itemBoxes) {
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+        itemBoxes.push({ x: C + Math.cos(a) * 430, y: C + Math.sin(a) * 430 });
+      }
+      for (const [x, y] of [[300, 300], [S - 300, 300], [300, S - 300], [S - 300, S - 300], [C, 260], [C, S - 260], [260, C], [S - 260, C]]) {
+        itemBoxes.push({ x, y });
+      }
+    }
+    const obstacles = def.obstacles || [];
+    const hazards = def.hazards || [];
+    const free = (x, y, pad) => x > 60 + pad && y > 60 + pad && x < S - 60 - pad && y < S - 60 - pad
+      && !obstacles.some((o) => (x - o.x) ** 2 + (y - o.y) ** 2 < (o.r + pad) ** 2)
+      && !hazards.some((h) => (x - h.x) ** 2 + (y - h.y) ** 2 < (h.r + pad) ** 2);
+    const spawns = [];
+    for (let i = 0; i < 48 && spawns.length < 24; i++) {
+      const a = (i / 24) * Math.PI * 2 + (i >= 24 ? 0.13 : 0);
+      const rad = (i % 2 ? 1050 : 650) * (S / 2600) + (i >= 24 ? 80 : 0);
+      const x = C + Math.cos(a) * rad;
+      const y = C + Math.sin(a) * rad;
+      if (free(x, y, 50)) spawns.push({ x, y, angle: a + Math.PI });
+    }
+    function blocked(x, y, pad = 0) {
+      if (x < 40 || y < 40 || x > S - 40 || y > S - 40) return true;
+      return obstacles.some((o) => (x - o.x) ** 2 + (y - o.y) ** 2 < (o.r + pad) ** 2);
+    }
+    return {
+      ...def, type: 'arena', obstacles, hazards, itemBoxes, spawns, boostPads: def.boostPads || [],
+      center: [C, C], bounds: { minX: 0, minY: 0, maxX: S, maxY: S }, blocked,
+    };
   }
 
-  // Starting grid: rows of 5 behind the start line.
-  function gridPosition(slot) {
-    const row = Math.floor(slot / 5);
-    const col = slot % 5;
-    const i = (N - 3 - row * 2 + N) % N;
-    const lateral = -0.8 + col * 0.4;
-    const [x, y] = trackPoint(i, lateral);
-    const t = TANGENTS[i];
-    return { x, y, angle: Math.atan2(t[1], t[0]), index: i };
-  }
+  // ---------- Map catalogue ----------
+  const MAPS = {};
+  const add = (m) => { MAPS[m.id] = m; };
 
-  const PHYS = {
-    accel: 620,
-    brake: 900,
-    reverseMax: -200,
-    maxSpeed: 520,
-    boostSpeed: 820,
-    offTrackMax: 230,
-    drag: 1.4,
-    turnRate: 3.1,
-    driftMinSpeed: 260,
-    driftLevels: [0.7, 1.5], // seconds of drifting for blue / orange sparks
-    miniTurbo: [0.55, 1.0], // boost seconds for each level
-  };
-
-  function driftLevel(t) {
-    if (t >= PHYS.driftLevels[1]) return 2;
-    if (t >= PHYS.driftLevels[0]) return 1;
-    return 0;
-  }
-
-  // ---------- Arena (battle mode) ----------
-  const ARENA_SIZE = 2600;
-  const AC = ARENA_SIZE / 2;
-  const ARENA = {
-    size: ARENA_SIZE,
-    obstacles: [
-      { x: AC, y: AC, r: 170, kind: 'tower' },
-      { x: 700, y: 700, r: 80, kind: 'pillar' }, { x: 1900, y: 700, r: 80, kind: 'pillar' },
-      { x: 700, y: 1900, r: 80, kind: 'pillar' }, { x: 1900, y: 1900, r: 80, kind: 'pillar' },
-      { x: AC, y: 520, r: 55, kind: 'crate' }, { x: AC, y: 2080, r: 55, kind: 'crate' },
-      { x: 520, y: AC, r: 55, kind: 'crate' }, { x: 2080, y: AC, r: 55, kind: 'crate' },
-      { x: 1000, y: 1600, r: 45, kind: 'crate' }, { x: 1600, y: 1000, r: 45, kind: 'crate' },
+  add(makeRaceMap({
+    id: 'grandprix', name: 'Grand Prix', emoji: '🏁', theme: 'meadow',
+    blurb: 'Classic green circuit with fast sweepers.',
+    points: [
+      [500, 500], [1500, 350], [2500, 500], [2950, 1000], [2650, 1550], [1950, 1450],
+      [1500, 1800], [1900, 2250], [2750, 2350], [2600, 2900], [1450, 2950], [550, 2750],
+      [300, 1900], [750, 1350], [400, 950],
     ],
-    itemBoxes: [],
-    spawns: [],
-  };
-  for (let i = 0; i < 8; i++) {
-    const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
-    ARENA.itemBoxes.push({ x: AC + Math.cos(a) * 430, y: AC + Math.sin(a) * 430 });
-  }
-  for (const [x, y] of [[300, 300], [2300, 300], [300, 2300], [2300, 2300], [AC, 260], [AC, 2340], [260, AC], [2340, AC]]) {
-    ARENA.itemBoxes.push({ x, y });
-  }
-  for (let i = 0; i < 24; i++) {
-    const a = (i / 24) * Math.PI * 2;
-    const rad = i % 2 ? 1050 : 650;
-    // Face roughly toward the middle.
-    ARENA.spawns.push({ x: AC + Math.cos(a) * rad, y: AC + Math.sin(a) * rad, angle: a + Math.PI });
+    boostPads: [[0.25, 0], [0.5, -0.4], [0.75, 0.4]],
+  }));
+  add(makeRaceMap({
+    id: 'canyon', name: 'Desert Canyon', emoji: '🏜️', theme: 'desert', width: 250,
+    blurb: 'Hairpins between red rock mesas. Drift or crash.',
+    points: [
+      [600, 450], [1700, 330], [2900, 450], [3150, 1000], [2600, 1230], [2000, 950],
+      [1450, 1250], [1700, 1900], [2750, 2020], [3100, 2550], [2700, 3100], [1700, 3050],
+      [1150, 2450], [650, 2950], [250, 2300], [500, 1550], [250, 950],
+    ],
+    boostPads: [[0.08, 0], [0.33, 0.3], [0.58, -0.3], [0.8, 0]],
+  }));
+  add(makeRaceMap({
+    id: 'frost', name: 'Snowy Peaks', emoji: '🏔️', theme: 'snow', width: 270, grip: 0.82,
+    blurb: 'Slippery ice road through snowy pines.',
+    points: [
+      [700, 500], [2600, 450], [3050, 950], [2950, 1650], [2300, 1800], [2900, 2350],
+      [2800, 3000], [1800, 3050], [1300, 2500], [800, 2950], [350, 2400], [500, 1700],
+      [1050, 1300], [450, 900],
+    ],
+    boostPads: [[0.12, 0.3], [0.45, 0], [0.7, -0.3]],
+  }));
+  add(makeRaceMap({
+    id: 'neon', name: 'Neon City', emoji: '🌃', theme: 'neon', width: 250,
+    blurb: 'Night race through glowing city blocks.',
+    points: [
+      [500, 500], [1700, 500], [1750, 1100], [2900, 1100], [2950, 2000], [2250, 2050],
+      [2200, 2900], [1100, 2900], [1050, 2050], [500, 2000],
+    ],
+    samples: 30,
+    boostPads: [[0.05, 0], [0.3, 0], [0.55, 0], [0.8, 0]],
+  }));
+
+  {
+    const S = 2600;
+    const C = S / 2;
+    add(makeArenaMap({
+      id: 'colosseum', name: 'Colosseum', emoji: '🏟️', theme: 'arena', size: S,
+      blurb: 'Stone tower, pillars and crates under the floodlights.',
+      obstacles: [
+        { x: C, y: C, r: 170, kind: 'tower' },
+        { x: 700, y: 700, r: 80, kind: 'pillar' }, { x: 1900, y: 700, r: 80, kind: 'pillar' },
+        { x: 700, y: 1900, r: 80, kind: 'pillar' }, { x: 1900, y: 1900, r: 80, kind: 'pillar' },
+        { x: C, y: 520, r: 55, kind: 'crate' }, { x: C, y: 2080, r: 55, kind: 'crate' },
+        { x: 520, y: C, r: 55, kind: 'crate' }, { x: 2080, y: C, r: 55, kind: 'crate' },
+        { x: 1000, y: 1600, r: 45, kind: 'crate' }, { x: 1600, y: 1000, r: 45, kind: 'crate' },
+      ],
+      boostPads: [{ x: C, y: 300, angle: 0 }, { x: C, y: S - 300, angle: Math.PI }],
+    }));
+    add(makeArenaMap({
+      id: 'volcano', name: 'Volcano Crater', emoji: '🌋', theme: 'volcano', size: S,
+      blurb: 'Lava pools burn your kart. Knock rivals in!',
+      obstacles: [
+        { x: 650, y: 1300, r: 110, kind: 'rock' }, { x: 1950, y: 1300, r: 110, kind: 'rock' },
+        { x: 1300, y: 600, r: 90, kind: 'rock' }, { x: 1300, y: 2000, r: 90, kind: 'rock' },
+        { x: 450, y: 450, r: 70, kind: 'rock' }, { x: 2150, y: 2150, r: 70, kind: 'rock' },
+      ],
+      hazards: [
+        { x: C, y: C, r: 200, kind: 'lava' },
+        { x: 900, y: 850, r: 110, kind: 'lava' }, { x: 1700, y: 1750, r: 110, kind: 'lava' },
+        { x: 1750, y: 800, r: 90, kind: 'lava' }, { x: 850, y: 1800, r: 90, kind: 'lava' },
+      ],
+      boostPads: [{ x: 300, y: C, angle: -Math.PI / 2 }, { x: S - 300, y: C, angle: Math.PI / 2 }],
+    }));
   }
 
-  function collideArena(kart) {
+  const DEFAULT_MAP = { race: 'grandprix', arena: 'colosseum' };
+  function getMap(id, type) {
+    const m = MAPS[id];
+    if (m && (!type || m.type === type)) return m;
+    return MAPS[DEFAULT_MAP[type || 'race']];
+  }
+  function mapList() {
+    return Object.values(MAPS).map((m) => ({ id: m.id, name: m.name, emoji: m.emoji, type: m.type, blurb: m.blurb }));
+  }
+
+  // ---------- Physics ----------
+  function collideArena(kart, map) {
     const r = KART_RADIUS;
     let bumped = false;
     const min = 40 + r;
-    const max = ARENA_SIZE - 40 - r;
+    const max = map.size - 40 - r;
     if (kart.x < min) { kart.x = min; bumped = true; }
     if (kart.x > max) { kart.x = max; bumped = true; }
     if (kart.y < min) { kart.y = min; bumped = true; }
     if (kart.y > max) { kart.y = max; bumped = true; }
-    for (const o of ARENA.obstacles) {
+    for (const o of map.obstacles) {
       const dx = kart.x - o.x;
       const dy = kart.y - o.y;
       const d = Math.hypot(dx, dy);
@@ -160,17 +281,11 @@
     if (bumped) kart.speed *= 0.6;
   }
 
-  // Is the point inside an arena wall/obstacle? (used for projectiles)
-  function arenaBlocked(x, y, pad = 0) {
-    if (x < 40 || y < 40 || x > ARENA_SIZE - 40 || y > ARENA_SIZE - 40) return true;
-    return ARENA.obstacles.some((o) => (x - o.x) ** 2 + (y - o.y) ** 2 < (o.r + pad) ** 2);
-  }
-
-  // Advance a kart by dt seconds. `input` = {up, down, left, right}.
-  // Mutates and returns kart {x, y, angle, speed, boost, spin, trackIndex}.
-  // `map` is 'race' (default) or 'arena'.
+  // Advance a kart by dt seconds. `input` = {up, down, left, right, drift}.
+  // Mutates and returns kart {x, y, angle, speed, boost, spin, drift, trackIndex}.
   function stepKart(kart, input, dt, map) {
-    const arena = map === 'arena';
+    const arena = map.type === 'arena';
+    const grip = map.grip || 1;
     const spinning = kart.spin > 0;
     const steer = (input.left ? -1 : 0) + (input.right ? 1 : 0);
     if (spinning) {
@@ -179,9 +294,9 @@
       kart.drift = 0;
       kart.driftTime = 0;
     } else {
-      if (input.up) kart.speed += PHYS.accel * dt;
-      else if (input.down) kart.speed -= (kart.speed > 0 ? PHYS.brake : PHYS.accel * 0.6) * dt;
-      else kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), PHYS.drag * 100 * dt);
+      if (input.up) kart.speed += PHYS.accel * dt * (0.6 + 0.4 * grip);
+      else if (input.down) kart.speed -= (kart.speed > 0 ? PHYS.brake * grip : PHYS.accel * 0.6) * dt;
+      else kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), PHYS.drag * 100 * grip * dt);
 
       // Drifting: hold drift while steering at speed. The kart slides into the
       // turn; the longer you hold it, the bigger the mini-turbo on release.
@@ -203,16 +318,19 @@
           kart.speed -= 60 * dt;
         }
       } else {
-        const grip = Math.min(1, Math.abs(kart.speed) / 140);
-        kart.angle += steer * PHYS.turnRate * grip * dt * (kart.speed >= 0 ? 1 : -1);
+        const g = Math.min(1, Math.abs(kart.speed) / 140);
+        kart.angle += steer * PHYS.turnRate * g * (0.75 + 0.25 * grip) * dt * (kart.speed >= 0 ? 1 : -1);
       }
     }
 
     let offTrack = false;
     if (!arena) {
-      const near = nearestIndex(kart.x, kart.y, kart.trackIndex);
+      const near = map.nearestIndex(kart.x, kart.y, kart.trackIndex);
       kart.trackIndex = near.index;
-      offTrack = near.dist > TRACK_WIDTH / 2;
+      offTrack = near.dist > map.width / 2;
+    }
+    for (const p of map.boostPads) {
+      if ((kart.x - p.x) ** 2 + (kart.y - p.y) ** 2 < 34 * 34) kart.boost = Math.max(kart.boost || 0, PHYS.padBoost);
     }
     let max = kart.boost > 0 ? PHYS.boostSpeed : PHYS.maxSpeed;
     if (offTrack && kart.boost <= 0) max = PHYS.offTrackMax;
@@ -220,24 +338,27 @@
     if (kart.speed > max) kart.speed = Math.max(max, kart.speed - PHYS.brake * 1.5 * dt);
     if (kart.speed < PHYS.reverseMax) kart.speed = PHYS.reverseMax;
 
-    kart.x += Math.cos(kart.angle) * kart.speed * dt;
-    kart.y += Math.sin(kart.angle) * kart.speed * dt;
+    // On slippery maps the kart's travel direction lags behind where it points.
+    kart.heading = kart.heading === undefined ? kart.angle : kart.heading;
+    let dh = kart.angle - kart.heading;
+    dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+    kart.heading += dh * Math.min(1, dt * 14 * grip * grip * (kart.drift ? 0.55 : 1));
+    kart.x += Math.cos(kart.heading) * kart.speed * dt;
+    kart.y += Math.sin(kart.heading) * kart.speed * dt;
 
     if (arena) {
-      collideArena(kart);
+      collideArena(kart, map);
     } else {
-      // Hard wall far outside the track so nobody gets lost.
-      const after = nearestIndex(kart.x, kart.y, kart.trackIndex);
-      const wall = TRACK_WIDTH / 2 + 160;
+      // Hard wall outside the track so nobody gets lost.
+      const after = map.nearestIndex(kart.x, kart.y, kart.trackIndex);
+      const wall = map.width / 2 + WALL_PAD;
       if (after.dist > wall) {
-        const c = CENTERLINE[after.index];
+        const c = map.centerline[after.index];
         const k = wall / after.dist;
         kart.x = c[0] + (kart.x - c[0]) * k;
         kart.y = c[1] + (kart.y - c[1]) * k;
         kart.speed *= 0.5;
       }
-      kart.x = Math.max(0, Math.min(WORLD.w, kart.x));
-      kart.y = Math.max(0, Math.min(WORLD.h, kart.y));
     }
 
     if (kart.boost > 0) kart.boost = Math.max(0, kart.boost - dt);
@@ -245,20 +366,8 @@
     return kart;
   }
 
-  // Item box rows: sample index of each row, 5 boxes across.
-  const ITEM_ROWS = [Math.floor(N * 0.12), Math.floor(N * 0.37), Math.floor(N * 0.62), Math.floor(N * 0.86)];
-  const ITEM_BOXES = [];
-  for (const row of ITEM_ROWS) {
-    for (let c = 0; c < 5; c++) {
-      const [x, y] = trackPoint(row, -0.7 + c * 0.35);
-      ITEM_BOXES.push({ x, y });
-    }
-  }
-
-  const ITEMS = ['boost', 'rocket', 'banana', 'shield', 'triple'];
-
   return {
-    TRACK_WIDTH, KART_RADIUS, WORLD, CENTERLINE, TANGENTS, N, PHYS, ITEM_BOXES, ITEMS,
-    ARENA, nearestIndex, trackPoint, gridPosition, stepKart, arenaBlocked, driftLevel,
+    KART_RADIUS, WALL_PAD, PHYS, ITEMS, MAPS, DEFAULT_MAP,
+    getMap, mapList, stepKart, driftLevel,
   };
 });

@@ -225,6 +225,11 @@
     setIfIdle('set-drawtime', s.drawTime);
     setIfIdle('set-laps', s.kartLaps);
     setIfIdle('set-kartmode', s.kartMode);
+    const mapSel = $('set-kartmap');
+    const maps = (room.kartMaps || []).filter((m) => m.type === s.kartMode);
+    const opts = maps.map((m) => `<option value="${m.id}">${m.emoji} ${m.name}</option>`).join('');
+    if (mapSel.dataset.opts !== opts) { mapSel.innerHTML = opts; mapSel.dataset.opts = opts; }
+    setIfIdle('set-kartmap', s.kartMap);
     setIfIdle('set-arenatime', s.arenaTime);
     setIfIdle('set-steps', s.telephoneSteps);
     document.querySelectorAll('.settings input, .settings select, #btn-shuffle').forEach((el) => { el.disabled = !host; });
@@ -268,6 +273,7 @@
   $('set-drawtime').onchange = (e) => updateSettings({ drawTime: e.target.value });
   $('set-laps').onchange = (e) => updateSettings({ kartLaps: e.target.value });
   $('set-kartmode').onchange = (e) => updateSettings({ kartMode: e.target.value });
+  $('set-kartmap').onchange = (e) => updateSettings({ kartMap: e.target.value });
   $('set-arenatime').onchange = (e) => updateSettings({ arenaTime: e.target.value });
   $('set-steps').onchange = (e) => updateSettings({ telephoneSteps: e.target.value });
   $('btn-shuffle').onclick = () => emit('lobby:shuffle');

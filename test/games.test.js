@@ -73,7 +73,7 @@ test('only the host can change settings; team shuffle balances teams', async () 
 
 test('pictionary: drawer picks a word, strokes relay, correct guess scores', async () => {
   const { host, players, room } = await makeRoom(4);
-  await call(host, 'lobby:settings', { mode: 'pictionary', pictionaryTurns: 1 });
+  await call(host, 'lobby:settings', { mode: 'pictionary', pictEveryone: false, pictionaryTurns: 1 });
   const optionsWaits = players.map((p) => once(p.socket, 'game:pict:options').then((d) => ({ p, d })).catch(() => null));
   const started = await call(host, 'game:start');
   assert.ok(started.ok, started.error);
@@ -183,11 +183,11 @@ test('kart battle: 30 karts race, inputs move karts, items and laps tracked', as
   const kart = game.karts.get(players[0].id);
   kart.item = 'rocket'; kart.ammo = 1;
   game.useItem(kart);
-  assert.strictEqual(game.rockets.length, 1);
+  assert.strictEqual(game.shots.filter((s) => s.kind === 'rocket').length, 1);
   assert.strictEqual(kart.item, null);
   const K = require('../public/js/shared/kart-core');
   for (const k of game.karts.values()) {
-    [k.x, k.y] = K.CENTERLINE[5];
+    [k.x, k.y] = K.MAPS.grandprix.centerline[5];
     k.lap = 2; k.trackIndex = 5;
   }
   const results = once(host, 'room:state', (st) => st.state === 'results', 8000);
@@ -213,48 +213,64 @@ test('players can reconnect with their token and keep their identity', async () 
   room.destroy();
 });
 
-test('arena battle: rocket hit is a kill, victim respawns, results rank by kills', async () => {
-  const { host, players, room } = await makeRoom(4);
-  await call(host, 'lobby:settings', { mode: 'kart', kartMode: 'arena', arenaTime: 60, teamMode: true, teamCount: 2 });
-  const init = once(host, 'game:kart:init');
-  await call(host, 'game:start');
-  assert.strictEqual((await init).map, 'arena');
-
-  const game = room.game;
+async function arenaGame(n, settings = {}) {
+  const ctx = await makeRoom(n);
+  await call(ctx.host, 'lobby:settings', { mode: 'kart', kartMode: 'arena', arenaTime: 60, ...settings });
+  const init = once(ctx.host, 'game:kart:init');
+  await call(ctx.host, 'game:start');
+  ctx.init = await init;
+  const game = ctx.room.game;
   game.stop();
   game.phase = 'racing';
   game.raceStart = game.time;
-  const [a, b] = [game.karts.get(players[0].id), game.karts.get(players[1].id)];
+  ctx.game = game;
+  ctx.kart = (i) => game.karts.get(ctx.players[i].id);
+  // Two karts face to face in open space, nothing protecting them.
+  const fresh = { speed: 0, shield: 0, invuln: 0, spin: 0, ghost: 0, angle: 0, heading: 0 };
+  ctx.place = (i, x, y) => Object.assign(ctx.kart(i), fresh, { x, y });
+  return ctx;
+}
+const step = (game, n) => { for (let i = 0; i < n; i++) game.simulate(1 / 30); };
+
+test('arena battle: rockets take health, two hits destroy, victim respawns, results rank by kills', async () => {
+  const { host, players, room, game, kart, place, init } = await arenaGame(4, { teamMode: true, teamCount: 2 });
+  assert.strictEqual(init.map, 'arena');
+  assert.strictEqual(init.mapId, 'colosseum');
+  const [a, b] = [kart(0), kart(1)];
   room.players.get(players[0].id).team = 0;
   room.players.get(players[1].id).team = 1;
 
-  // Put b right in front of a and fire.
-  Object.assign(a, { x: 600, y: 1300, angle: 0, speed: 0 });
-  Object.assign(b, { x: 680, y: 1300, angle: 0, speed: 0, shield: 0 });
+  place(0, 600, 1000); place(1, 680, 1000);
   a.item = 'rocket'; a.ammo = 1;
-  const hit = once(host, 'game:kart:hit');
   game.useItem(a);
-  for (let i = 0; i < 5; i++) game.simulate(1 / 30);
-  const h = await hit;
-  assert.strictEqual(h.kill, true);
+  step(game, 5);
+  assert.strictEqual(b.hp, 30, 'a rocket takes 70 hp');
+  assert.strictEqual(b.dead, 0);
+
+  place(0, 600, 1000); place(1, 680, 1000);
+  a.item = 'rocket'; a.ammo = 1;
+  const kill = once(host, 'game:kart:hit', (h) => h.kill);
+  game.useItem(a);
+  step(game, 5);
+  const h = await kill;
+  assert.strictEqual(h.by, a.idx);
   assert.strictEqual(a.kills, 1);
   assert.strictEqual(b.deaths, 1);
   assert.ok(b.dead > 0);
 
-  // Respawns with a spawn shield after the timer.
-  for (let i = 0; i < 90; i++) game.simulate(1 / 30);
-  assert.strictEqual(b.dead <= 0, true);
+  // Respawns at full health with a spawn shield.
+  step(game, 90);
+  assert.ok(b.dead <= 0);
+  assert.strictEqual(b.hp, 100);
   assert.ok(b.shield > 0);
 
-  // Teammates are immune to each other's rockets.
+  // Teammates are immune to each other's weapons.
   room.players.get(players[1].id).team = 0;
-  b.shield = 0; b.invuln = 0;
-  Object.assign(a, { x: 600, y: 1300, angle: 0 });
-  Object.assign(b, { x: 680, y: 1300, angle: 0, speed: 0 });
+  place(0, 600, 1000); place(1, 680, 1000);
   a.item = 'rocket'; a.ammo = 1;
   game.useItem(a);
-  for (let i = 0; i < 5; i++) game.simulate(1 / 30);
-  assert.strictEqual(b.deaths, 1);
+  step(game, 5);
+  assert.strictEqual(b.hp, 100);
 
   const results = once(host, 'room:state', (s) => s.state === 'results', 8000);
   game.endRace();
@@ -265,13 +281,237 @@ test('arena battle: rocket hit is a kill, victim respawns, results rank by kills
   room.destroy();
 });
 
-test('arena physics keeps karts inside walls and out of obstacles', () => {
+test('power-ups: mine, bomb, shock, minigun, shield and ghost', async () => {
+  const { room, game, kart, place } = await arenaGame(3);
+  const [a, b, c] = [kart(0), kart(1), kart(2)];
+  place(2, 2300, 2300); // keep c out of the way
+
+  // Mine: dropped behind, arms, explodes under a rival.
+  place(0, 1000, 400); place(1, 1300, 400);
+  a.item = 'mine'; a.ammo = 1;
+  game.useItem(a);
+  assert.strictEqual(game.mines.length, 1);
+  step(game, 30); // arm
+  Object.assign(b, { x: game.mines[0].x, y: game.mines[0].y });
+  step(game, 1);
+  assert.strictEqual(game.mines.length, 0);
+  assert.ok(b.dead > 0, 'a mine is a one-shot kill');
+  step(game, 90);
+
+  // Bomb: lobbed forward, area damage where it lands.
+  place(0, 900, 400); place(1, 1450, 400);
+  a.item = 'bomb'; a.ammo = 1;
+  game.useItem(a);
+  step(game, 30);
+  assert.ok(b.hp < 100 || b.dead > 0, 'bomb hurt b');
+
+  // Shock: hurts everyone nearby, not far away karts.
+  step(game, 90);
+  place(0, 1000, 400); place(1, 1200, 400); place(2, 2300, 2300);
+  Object.assign(b, { dead: 0, hp: 100 });
+  const cHp = c.hp;
+  a.item = 'shock'; a.ammo = 1;
+  game.useItem(a);
+  assert.ok(b.hp <= 55, `shock hit b (${b.hp})`);
+  assert.strictEqual(c.hp, cHp);
+
+  // Shield blocks one hit; ghost ignores everything.
+  place(0, 1000, 400); place(1, 1080, 400);
+  Object.assign(b, { dead: 0, hp: 100, shield: 3 });
+  a.item = 'rocket'; a.ammo = 1;
+  game.useItem(a); step(game, 5);
+  assert.strictEqual(b.hp, 100);
+  assert.strictEqual(b.shield, 0);
+  place(0, 1000, 400); place(1, 1080, 400);
+  b.ghost = 3;
+  a.item = 'rocket'; a.ammo = 1;
+  game.useItem(a); step(game, 5);
+  assert.strictEqual(b.hp, 100);
+
+  // Minigun: a burst of bullets chips away health.
+  place(0, 1000, 400); place(1, 1150, 400);
+  a.item = 'minigun'; a.ammo = 1;
+  game.useItem(a);
+  step(game, 12);
+  assert.ok(game.shots.some((s) => s.kind === 'bullet') || b.hp < 100);
+  step(game, 30);
+  assert.ok(b.hp < 100, `bullets hit b (${b.hp})`);
+  room.destroy();
+});
+
+test('volcano lava burns karts and credits the last attacker', async () => {
+  const { room, game, kart, place } = await arenaGame(2, { kartMap: 'volcano' });
+  assert.strictEqual(game.map.id, 'volcano');
+  const [a, b] = [kart(0), kart(1)];
+  const lava = game.map.hazards[0];
+  place(0, 400, 1000); place(1, 480, 1000);
+  a.item = 'rocket'; a.ammo = 1;
+  game.useItem(a); step(game, 5);
+  assert.strictEqual(b.hp, 30);
+  Object.assign(b, { x: lava.x, y: lava.y, speed: 0 });
+  step(game, 30);
+  assert.ok(b.dead > 0, 'lava finished b off');
+  assert.strictEqual(a.kills, 1, 'the kill goes to whoever hit b last');
+  room.destroy();
+});
+
+test('map selection follows the kart mode and every map can be played', async () => {
   const K = require('../public/js/shared/kart-core');
+  const { host, room } = await makeRoom(2);
+  await call(host, 'lobby:settings', { mode: 'kart', kartMap: 'volcano' });
+  assert.strictEqual(room.settings.kartMode, 'arena');
+  await call(host, 'lobby:settings', { kartMode: 'race' });
+  assert.strictEqual(room.settings.kartMap, 'grandprix');
+  await call(host, 'lobby:settings', { kartMap: 'not-a-map' });
+  assert.strictEqual(room.settings.kartMap, 'grandprix');
+
+  for (const id of Object.keys(K.MAPS)) {
+    await call(host, 'lobby:settings', { kartMap: id });
+    const init = once(host, 'game:kart:init');
+    await call(host, 'game:start');
+    assert.strictEqual((await init).mapId, id);
+    const game = room.game;
+    game.stop();
+    game.phase = 'racing';
+    game.raceStart = 0;
+    for (const k of game.karts.values()) k.input = { up: true, right: true, drift: true };
+    for (let i = 0; i < 300; i++) game.simulate(1 / 30);
+    for (const k of game.karts.values()) assert.ok(Number.isFinite(k.x) && Number.isFinite(k.y), `${id}: kart position is finite`);
+    room.backToLobby();
+  }
+  room.destroy();
+});
+
+test('physics keeps karts inside arena walls and out of obstacles', () => {
+  const K = require('../public/js/shared/kart-core');
+  const arena = K.MAPS.colosseum;
   const kart = { x: 200, y: 200, angle: Math.PI * 1.25, speed: 500, boost: 0, spin: 0 };
-  for (let i = 0; i < 120; i++) K.stepKart(kart, { up: true }, 1 / 30, 'arena');
+  for (let i = 0; i < 120; i++) K.stepKart(kart, { up: true }, 1 / 30, arena);
   assert.ok(kart.x >= 40 && kart.y >= 40);
-  const tower = K.ARENA.obstacles[0];
+  const tower = arena.obstacles[0];
   const k2 = { x: tower.x - 400, y: tower.y, angle: 0, speed: 500, boost: 0, spin: 0 };
-  for (let i = 0; i < 120; i++) K.stepKart(k2, { up: true }, 1 / 30, 'arena');
+  for (let i = 0; i < 120; i++) K.stepKart(k2, { up: true }, 1 / 30, arena);
   assert.ok(Math.hypot(k2.x - tower.x, k2.y - tower.y) >= tower.r + K.KART_RADIUS - 0.01);
+});
+
+test('drifting charges a mini-turbo', () => {
+  const K = require('../public/js/shared/kart-core');
+  const map = K.MAPS.colosseum;
+  const kart = { x: 900, y: 1050, angle: 0, speed: 500, boost: 0, spin: 0 };
+  for (let i = 0; i < 60; i++) K.stepKart(kart, { up: true, right: true, drift: true }, 1 / 30, map);
+  assert.ok(kart.drift, 'drifting');
+  assert.ok(K.driftLevel(kart.driftTime) >= 2);
+  K.stepKart(kart, { up: true }, 1 / 30, map);
+  assert.ok(!kart.drift);
+  assert.ok(kart.boost > 0.8, 'released into a mini-turbo');
+});
+
+test('profiles: players pick an avatar on join and can change name/avatar in the lobby', async () => {
+  const host = client();
+  const res = await call(host, 'room:create', { name: 'Host', avatar: 5 });
+  const room = rooms.rooms.get(res.code);
+  assert.strictEqual(room.players.get(res.playerId).avatar, 5);
+  const guest = client();
+  const g = await call(guest, 'room:join', { code: res.code, name: 'Guest', avatar: 999 });
+  assert.ok(room.players.get(g.playerId).avatar >= 0 && room.players.get(g.playerId).avatar < 24, 'out-of-range avatars are clamped');
+  const r = await call(guest, 'lobby:profile', { avatar: 11, name: 'Renamed' });
+  assert.deepStrictEqual([r.avatar, r.name], [11, 'Renamed']);
+  const clash = await call(guest, 'lobby:profile', { name: 'host' });
+  assert.strictEqual(clash.name, 'Renamed', 'names stay unique');
+  room.destroy();
+});
+
+test('pictionary options: everyone draws each round, custom words, combo and hidden modes, ratings', async () => {
+  const { host, players, room } = await makeRoom(3);
+  await call(host, 'lobby:settings', {
+    mode: 'pictionary', pictEveryone: true, pictRounds: 2, wordChoices: 2, hints: 0,
+    customWords: 'teamup, moonlit cove, karting', customOnly: true,
+  });
+  await call(host, 'game:start');
+  const game = room.game;
+  assert.strictEqual(game.totalTurns, 6, '2 rounds x 3 players');
+  assert.strictEqual(game.options.length, 2);
+  assert.ok(game.options.every((w) => ['teamup', 'moonlit cove', 'karting'].includes(w)), `custom words only: ${game.options}`);
+
+  // Everyone draws once in round 1.
+  const drawers = new Set();
+  for (let i = 0; i < 3; i++) {
+    drawers.add(game.drawerId);
+    game.chooseWord(game.options[0]);
+    // Rate the drawing from a guesser.
+    const rater = players.find((p) => p.id !== game.drawerId);
+    const before = game.scores.get(game.drawerId) || 0;
+    const r = await call(rater.socket, 'game:rate', { like: true });
+    assert.ok(r.ok);
+    assert.strictEqual(game.scores.get(game.drawerId), before + 10);
+    game.endTurn();
+    clearTimeout(game.timer);
+    if (i < 2) game.nextTurn();
+  }
+  assert.strictEqual(drawers.size, 3, 'each player drew once in the round');
+  room.destroy();
+
+  // Combo and hidden word modes.
+  const ctx2 = await makeRoom(2);
+  await call(ctx2.host, 'lobby:settings', { mode: 'pictionary', wordMode: 'combo', wordChoices: 3 });
+  await call(ctx2.host, 'game:start');
+  assert.ok(ctx2.room.game.options.every((w) => w.split(' ').length >= 2), 'combination words');
+  ctx2.room.backToLobby();
+  await call(ctx2.host, 'lobby:settings', { wordMode: 'hidden' });
+  await call(ctx2.host, 'game:start');
+  const g2 = ctx2.room.game;
+  g2.chooseWord(g2.options[0]);
+  assert.strictEqual(g2.mask(), '? ? ?', 'hidden mode never shows the length');
+  ctx2.room.destroy();
+});
+
+test('pictionary fill operations are accepted and relayed', async () => {
+  const { host, players, room } = await makeRoom(2);
+  await call(host, 'lobby:settings', { mode: 'pictionary', pictEveryone: false, pictionaryTurns: 1 });
+  await call(host, 'game:start');
+  const game = room.game;
+  game.chooseWord(game.options[0]);
+  const drawer = players.find((p) => p.id === game.drawerId);
+  const other = players.find((p) => p.id !== game.drawerId);
+  const got = once(other.socket, 'game:pict:stroke');
+  drawer.socket.emit('game:stroke', { id: 'f1', fill: true, x: 0.5, y: 0.5, color: '#22c55e' });
+  const op = await got;
+  assert.deepStrictEqual(op, { id: 'f1', fill: true, x: 0.5, y: 0.5, color: '#22c55e' });
+  room.destroy();
+});
+
+test('telephone modes: knock-off is all drawing with a memorise time; speedrun is fast; auto reveal and reactions', async () => {
+  const { host, players, room } = await makeRoom(3);
+  await call(host, 'lobby:settings', { mode: 'telephone', telMode: 'knockoff', telReveal: 'auto' });
+  const tasks = players.map((p) => once(p.socket, 'game:tel:task'));
+  await call(host, 'game:start');
+  const first = await Promise.all(tasks);
+  assert.ok(first.every((t) => t.type === 'draw' && t.memorize === 0));
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  const second = players.map((p) => once(p.socket, 'game:tel:task'));
+  for (const p of players) await call(p.socket, 'game:submit', { image: png });
+  const t2 = await Promise.all(second);
+  assert.ok(t2.every((t) => t.type === 'draw' && t.memorize === 6 && t.prev.content === png));
+
+  // Jump to the reveal and react.
+  const game = room.game;
+  game.step = game.steps - 1;
+  game.phase = 'play';
+  for (const b of game.books) for (let i = 0; i < game.steps; i++) b.entries[i] = b.entries[i] || { type: 'draw', by: b.owner, content: png };
+  const reveal = once(host, 'game:tel:reveal');
+  game.forceAdvance();
+  const rv = await reveal;
+  assert.strictEqual(rv.auto, true);
+  const react = once(host, 'game:tel:react');
+  await call(players[1].socket, 'game:react', { emoji: '😂' });
+  assert.strictEqual((await react).emoji, '😂');
+  const next = once(host, 'game:tel:reveal', (r) => r.entries.length === 2 || r.bookIndex === 1, 6000);
+  await next; // advanced on its own
+  room.destroy();
+
+  const ctx2 = await makeRoom(2);
+  await call(ctx2.host, 'lobby:settings', { mode: 'telephone', telMode: 'speedrun' });
+  await call(ctx2.host, 'game:start');
+  assert.ok(ctx2.room.game.stepTime(0) <= 20, `speedrun write step is short (${ctx2.room.game.stepTime(0)}s)`);
+  ctx2.room.destroy();
 });

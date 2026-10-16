@@ -1,15 +1,24 @@
-// Telephone (Gartic Phone style): write a prompt -> next player draws it ->
-// next player describes the drawing -> ... then everyone watches the albums.
-const WRITE_TIME = 45;
-const DRAW_TIME = 90;
-const DESCRIBE_TIME = 45;
+// Telephone (Gartic Phone style). Books pass round the group one step at a time, then
+// everyone watches the albums. Modes:
+//   normal     write a prompt -> draw it -> describe the drawing -> draw that -> ...
+//   speedrun   the same with very short timers
+//   secret     the same, but you draw blind (your ink only appears in the album)
+//   knockoff   draw anything; then each player sees the last drawing for a few seconds and redraws it from memory
+//   complement draw anything; each player then adds to the previous drawing
+const BASE_TIME = { write: 45, draw: 90, describe: 45 };
+const PACE = { slow: 1.5, normal: 1, fast: 0.65 };
+const SPEEDRUN = 0.4;
+const MEMORIZE_S = 6;
 const GRACE_MS = 3000; // allow late auto-submits after the client timer hits zero
+const AUTO_REVEAL_MS = 3500;
 const MAX_IMAGE_BYTES = 1_500_000;
+const MODES = ['normal', 'speedrun', 'secret', 'knockoff', 'complement'];
 
 const STARTER_PROMPTS = [
   'A cat running a pizza shop', 'Grandma on a skateboard', 'A dragon at the dentist',
   'Robots having a picnic', 'A snowman on vacation', 'An astronaut walking a dog',
   'A shark playing guitar', 'Aliens stealing a cow', 'A wizard stuck in traffic',
+  'A penguin DJ', 'A haunted bouncy castle', 'Two snails racing', 'A volcano making pancakes',
 ];
 
 function shuffle(list) {
@@ -25,11 +34,15 @@ class Telephone {
   static minPlayers = 2;
 
   constructor(room) {
+    const s = room.settings;
     this.room = room;
+    this.mode = MODES.includes(s.telMode) ? s.telMode : 'normal';
+    this.pace = (PACE[s.telPace] || 1) * (this.mode === 'speedrun' ? SPEEDRUN : 1);
+    this.autoReveal = s.telReveal === 'auto';
     this.step = -1;
     this.steps = 0;
     this.groups = []; // arrays of player ids; books circulate within a group
-    this.books = []; // { owner, group, entries: [{ type, by, content }] }
+    this.books = []; // { owner, group, entries: [{ type, by, content }], reactions: {} }
     this.timer = null;
     this.deadline = 0;
     this.phase = 'idle';
@@ -54,7 +67,7 @@ class Telephone {
     const minGroup = Math.min(...this.groups.map((g) => g.length));
     this.steps = s.telephoneSteps > 0 ? Math.min(s.telephoneSteps, minGroup) : minGroup;
     this.books = [];
-    this.groups.forEach((g, gi) => g.forEach((id) => this.books.push({ owner: id, group: gi, entries: [] })));
+    this.groups.forEach((g, gi) => g.forEach((id) => this.books.push({ owner: id, group: gi, entries: [], reactions: {} })));
     this.nextStep();
   }
 
@@ -62,16 +75,21 @@ class Telephone {
     clearTimeout(this.timer);
   }
 
+  drawOnly() {
+    return this.mode === 'knockoff' || this.mode === 'complement';
+  }
+
   stepType(step) {
+    if (this.drawOnly()) return 'draw';
     if (step === 0) return 'write';
     return step % 2 === 1 ? 'draw' : 'describe';
   }
 
   stepTime(step) {
     const type = this.stepType(step);
-    if (type === 'write') return WRITE_TIME;
-    if (type === 'draw') return Math.max(DRAW_TIME, this.room.settings.drawTime);
-    return DESCRIBE_TIME;
+    const base = type === 'draw' ? Math.max(BASE_TIME.draw, this.room.settings.drawTime) : BASE_TIME[type];
+    const memorize = this.mode === 'knockoff' && step > 0 ? MEMORIZE_S : 0;
+    return Math.max(12, Math.round(base * this.pace)) + memorize;
   }
 
   // Which book does `playerId` work on at the current step?
@@ -113,9 +131,12 @@ class Telephone {
     return {
       step: this.step,
       steps: this.steps,
+      mode: this.mode,
       type: this.stepType(this.step),
       timeLeft: Math.max(0, (this.deadline - Date.now()) / 1000),
       prev: prev ? { type: prev.type, content: prev.content } : null,
+      memorize: this.mode === 'knockoff' && prev ? MEMORIZE_S : 0,
+      blind: this.mode === 'secret',
       submitted: this.submitted.has(playerId),
       suggestion: STARTER_PROMPTS[Math.floor(Math.random() * STARTER_PROMPTS.length)],
     };
@@ -131,7 +152,7 @@ class Telephone {
     this.room.emit('game:tel:progress', {
       done: parts.filter((id) => this.submitted.has(id)).length,
       total: parts.length,
-      waitingOn: parts.filter((id) => !this.submitted.has(id) && this.room.players.get(id)?.connected).length,
+      doneIds: parts.filter((id) => this.submitted.has(id)),
     });
   }
 
@@ -158,7 +179,10 @@ class Telephone {
       if (this.submitted.has(id)) continue;
       const book = this.bookFor(id);
       const type = this.stepType(this.step);
-      if (book) book.entries[this.step] = { type, by: id, content: type === 'draw' ? null : '(no answer)' };
+      if (!book) continue;
+      // In complement mode an unanswered step keeps the drawing as it was.
+      const keep = this.mode === 'complement' && book.entries[this.step - 1]?.content;
+      book.entries[this.step] = { type, by: id, content: type === 'draw' ? keep || null : '(no answer)' };
     }
     this.nextStep();
   }
@@ -181,14 +205,18 @@ class Telephone {
       if (ok) this.checkAllSubmitted();
       return;
     }
-    if (event === 'next' && this.phase === 'reveal') {
-      if (!this.room.isHost(player)) return reply({ ok: false });
-      this.advanceReveal();
+    if (event === 'react' && this.phase === 'reveal') {
+      const emoji = ['❤️', '😂', '😮', '🔥', '👏'].includes(data?.emoji) ? data.emoji : null;
+      if (!emoji) return reply({ ok: false });
+      const book = this.books[this.reveal.book];
+      book.reactions[emoji] = (book.reactions[emoji] || 0) + 1;
+      this.room.emit('game:tel:react', { emoji, from: player.name, avatar: player.avatar, entry: this.reveal.entry });
       return reply({ ok: true });
     }
-    if (event === 'finish' && this.phase === 'reveal') {
+    if ((event === 'next' || event === 'finish') && this.phase === 'reveal') {
       if (!this.room.isHost(player)) return reply({ ok: false });
-      this.finish();
+      if (event === 'next') this.advanceReveal();
+      else this.finish();
       return reply({ ok: true });
     }
     return reply({ ok: false });
@@ -202,8 +230,8 @@ class Telephone {
   }
 
   advanceReveal() {
-    const book = this.books[this.reveal.book];
-    if (book && this.reveal.entry < this.steps - 1) {
+    clearTimeout(this.timer);
+    if (this.reveal.entry < this.steps - 1) {
       this.reveal.entry++;
     } else if (this.reveal.book < this.books.length - 1) {
       this.reveal.book++;
@@ -217,22 +245,30 @@ class Telephone {
 
   revealPayload() {
     const book = this.books[this.reveal.book];
-    const nameOf = (id) => this.room.players.get(id)?.name || 'Someone';
-    const colorOf = (id) => this.room.players.get(id)?.color || '#888';
+    const p = (id) => this.room.players.get(id);
     return {
       bookIndex: this.reveal.book,
       bookCount: this.books.length,
-      owner: nameOf(book.owner),
-      team: this.groups.length > 1 ? this.room.players.get(book.owner)?.team ?? null : null,
+      mode: this.mode,
+      auto: this.autoReveal,
+      owner: p(book.owner)?.name || 'Someone',
+      ownerAvatar: p(book.owner)?.avatar ?? 0,
+      team: this.groups.length > 1 ? p(book.owner)?.team ?? null : null,
       entries: book.entries.slice(0, this.reveal.entry + 1).map((e) => ({
-        type: e.type, by: nameOf(e.by), color: colorOf(e.by), content: e.content,
+        type: e.type, by: p(e.by)?.name || 'Someone', avatar: p(e.by)?.avatar ?? 0, color: p(e.by)?.color || '#888', content: e.content,
       })),
+      reactions: book.reactions,
       last: this.reveal.book === this.books.length - 1 && this.reveal.entry === this.steps - 1,
     };
   }
 
   sendReveal() {
     this.room.emit('game:tel:reveal', this.revealPayload());
+    if (this.autoReveal) {
+      // Linger a little longer at the end of each album.
+      const endOfBook = this.reveal.entry === this.steps - 1;
+      this.timer = setTimeout(() => this.advanceReveal(), AUTO_REVEAL_MS * (endOfBook ? 2 : 1));
+    }
   }
 
   snapshotFor(player) {
@@ -256,12 +292,16 @@ class Telephone {
   finish() {
     this.stop();
     this.phase = 'done';
-    // Telephone is cooperative: no scores, everyone gets a participation result.
-    const scores = new Map();
-    const results = this.room.buildResults(scores);
+    // Telephone is cooperative: no scores. Results list the albums with the most reactions.
+    const results = this.room.buildResults(new Map());
     results.albums = this.books.length;
+    results.favorites = this.books
+      .map((b) => ({ owner: this.room.players.get(b.owner)?.name || 'Someone', avatar: this.room.players.get(b.owner)?.avatar ?? 0, reactions: Object.values(b.reactions).reduce((a, n) => a + n, 0) }))
+      .filter((b) => b.reactions > 0)
+      .sort((a, b) => b.reactions - a.reactions)
+      .slice(0, 3);
     this.room.finishGame(this, results);
   }
 }
 
-module.exports = { Telephone };
+module.exports = { Telephone, MODES };

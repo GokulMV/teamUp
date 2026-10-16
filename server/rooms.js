@@ -1,9 +1,11 @@
 const crypto = require('crypto');
+const KartCore = require('../public/js/shared/kart-core');
 const { Pictionary } = require('./games/pictionary');
 const { KartBattle } = require('./games/kart');
 const { Telephone } = require('./games/telephone');
 
 const MAX_PLAYERS = 30;
+const AVATAR_COUNT = 24; // public/js/avatars.js
 const RECONNECT_GRACE_MS = 30_000;
 
 const TEAMS = [
@@ -28,14 +30,30 @@ const DEFAULT_SETTINGS = {
   mode: 'pictionary',
   teamMode: false,
   teamCount: 2,
-  // Pictionary: number of drawing turns. Kart: laps. Telephone: chain length (0 = everyone).
+  // Pictionary (skribbl-style): rounds in which everyone draws once, or a fixed number of turns.
+  pictEveryone: true,
+  pictRounds: 2,
   pictionaryTurns: 8,
   drawTime: 80,
+  wordChoices: 3,
+  hints: 2,
+  wordMode: 'normal', // normal | hidden | combo
+  customWords: '',
+  customOnly: false,
   kartLaps: 3,
   kartMode: 'race', // race | arena
+  kartMap: 'grandprix', // a map id from kart-core MAPS matching kartMode
   arenaTime: 180, // seconds
-  telephoneSteps: 8,
+  // Telephone (Gartic Phone-style)
+  telephoneSteps: 8, // chain length (0 = everyone)
+  telMode: 'normal', // normal | speedrun | knockoff | complement | secret
+  telPace: 'normal', // slow | normal | fast
+  telReveal: 'host', // host | auto
 };
+
+const WORD_MODES = ['normal', 'hidden', 'combo'];
+const TEL_MODES = ['normal', 'speedrun', 'knockoff', 'complement', 'secret'];
+const TEL_PACES = ['slow', 'normal', 'fast'];
 
 function makeCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -81,7 +99,7 @@ class Room {
     return TEAMS.slice(0, this.settings.teamCount);
   }
 
-  addPlayer(socket, name) {
+  addPlayer(socket, name, avatar) {
     const taken = new Set([...this.players.values()].map((p) => p.name.toLowerCase()));
     let finalName = cleanName(name);
     for (let i = 2; taken.has(finalName.toLowerCase()); i++) {
@@ -92,6 +110,7 @@ class Room {
       token: crypto.randomBytes(16).toString('hex'),
       name: finalName,
       color: PLAYER_COLORS[this.colorIndex++ % PLAYER_COLORS.length],
+      avatar: clampInt(avatar, 0, AVATAR_COUNT - 1, crypto.randomInt(AVATAR_COUNT)),
       team: this.smallestTeam(),
       socketId: socket.id,
       connected: true,
@@ -140,9 +159,10 @@ class Room {
       state: this.state,
       settings: this.settings,
       maxPlayers: MAX_PLAYERS,
+      kartMaps: KartCore.mapList(),
       teams: this.teamList(),
       players: [...this.players.values()].map((p) => ({
-        id: p.id, name: p.name, color: p.color, team: p.team, connected: p.connected,
+        id: p.id, name: p.name, color: p.color, avatar: p.avatar, team: p.team, connected: p.connected,
       })),
       results: this.state === 'results' ? this.lastResults : null,
     };
@@ -247,7 +267,7 @@ class Room {
   // Helper for games: rank players and teams from a score map.
   buildResults(scores) {
     const players = [...this.players.values()]
-      .map((p) => ({ id: p.id, name: p.name, color: p.color, team: p.team, score: scores.get(p.id) || 0 }))
+      .map((p) => ({ id: p.id, name: p.name, color: p.color, avatar: p.avatar, team: p.team, score: scores.get(p.id) || 0 }))
       .sort((a, b) => b.score - a.score);
     let teams = null;
     if (this.settings.teamMode) {
@@ -269,8 +289,19 @@ class Room {
         const text = String(data?.text || '').trim().slice(0, 200);
         if (!text) return;
         if (this.game?.onChat?.(player, text)) return; // game consumed it (e.g. a correct guess)
-        this.emit('chat', { from: player.name, color: player.color, team: player.team, text });
+        this.emit('chat', { from: player.name, color: player.color, avatar: player.avatar, team: player.team, text });
         return;
+      }
+      case 'lobby:profile': {
+        // Name and avatar can be changed in the lobby.
+        if (data?.avatar !== undefined) player.avatar = clampInt(data.avatar, 0, AVATAR_COUNT - 1, player.avatar);
+        if (typeof data?.name === 'string' && data.name.trim()) {
+          const name = cleanName(data.name);
+          const taken = [...this.players.values()].some((p) => p !== player && p.name.toLowerCase() === name.toLowerCase());
+          if (!taken) player.name = name;
+        }
+        this.broadcastState();
+        return reply({ ok: true, name: player.name, avatar: player.avatar });
       }
       case 'lobby:team': {
         if (this.state === 'playing') return reply({ ok: false, error: 'Game in progress' });
@@ -290,11 +321,28 @@ class Room {
           for (const p of this.players.values()) if (p.team >= s.teamCount) p.team = this.smallestTeam();
         }
         if (data?.pictionaryTurns !== undefined) s.pictionaryTurns = clampInt(data.pictionaryTurns, 1, 30, s.pictionaryTurns);
-        if (data?.drawTime !== undefined) s.drawTime = clampInt(data.drawTime, 30, 180, s.drawTime);
-        if (data?.kartMode === 'race' || data?.kartMode === 'arena') s.kartMode = data.kartMode;
+        if (data?.drawTime !== undefined) s.drawTime = clampInt(data.drawTime, 15, 240, s.drawTime);
+        if (data?.kartMode === 'race' || data?.kartMode === 'arena') {
+          s.kartMode = data.kartMode;
+          if (KartCore.MAPS[s.kartMap]?.type !== s.kartMode) s.kartMap = KartCore.DEFAULT_MAP[s.kartMode];
+        }
+        if (typeof data?.kartMap === 'string' && KartCore.MAPS[data.kartMap]) {
+          s.kartMap = data.kartMap;
+          s.kartMode = KartCore.MAPS[data.kartMap].type;
+        }
         if (data?.arenaTime !== undefined) s.arenaTime = clampInt(data.arenaTime, 60, 600, s.arenaTime);
         if (data?.kartLaps !== undefined) s.kartLaps = clampInt(data.kartLaps, 1, 10, s.kartLaps);
         if (data?.telephoneSteps !== undefined) s.telephoneSteps = clampInt(data.telephoneSteps, 0, 30, s.telephoneSteps);
+        if (typeof data?.pictEveryone === 'boolean') s.pictEveryone = data.pictEveryone;
+        if (data?.pictRounds !== undefined) s.pictRounds = clampInt(data.pictRounds, 1, 10, s.pictRounds);
+        if (data?.wordChoices !== undefined) s.wordChoices = clampInt(data.wordChoices, 1, 5, s.wordChoices);
+        if (data?.hints !== undefined) s.hints = clampInt(data.hints, 0, 5, s.hints);
+        if (WORD_MODES.includes(data?.wordMode)) s.wordMode = data.wordMode;
+        if (typeof data?.customWords === 'string') s.customWords = data.customWords.slice(0, 4000);
+        if (typeof data?.customOnly === 'boolean') s.customOnly = data.customOnly;
+        if (TEL_MODES.includes(data?.telMode)) s.telMode = data.telMode;
+        if (TEL_PACES.includes(data?.telPace)) s.telPace = data.telPace;
+        if (data?.telReveal === 'host' || data?.telReveal === 'auto') s.telReveal = data.telReveal;
         this.broadcastState();
         return reply({ ok: true });
       }
@@ -368,7 +416,7 @@ class RoomManager {
     do code = makeCode(); while (this.rooms.has(code));
     const room = new Room(this, code);
     this.rooms.set(code, room);
-    const player = room.addPlayer(socket, data?.name);
+    const player = room.addPlayer(socket, data?.name, data?.avatar);
     this.sendWelcome(socket, room, player, ack);
   }
 
@@ -395,7 +443,7 @@ class RoomManager {
 
     if (room.players.size >= MAX_PLAYERS) return ack({ ok: false, error: `Room is full (${MAX_PLAYERS} players max)` });
     this.leaveCurrent(socket);
-    const player = room.addPlayer(socket, data?.name);
+    const player = room.addPlayer(socket, data?.name, data?.avatar);
     room.systemMessage(`${player.name} joined`);
     this.sendWelcome(socket, room, player, ack);
   }

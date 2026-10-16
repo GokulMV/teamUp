@@ -234,6 +234,10 @@ input:focus, select:focus { border-color: var(--accent); }
 }
 .kart-announce.show { animation: announce 1.6s ease-out; }
 @keyframes announce { 0% { opacity: 0; transform: scale(2.2); } 15% { opacity: 1; transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-30px); } }
+.kart-hp { margin-top: 8px; width: 170px; height: 18px; border-radius: 9px; background: rgba(15,10,35,0.6); position: relative; overflow: hidden; border: 2px solid rgba(255,255,255,0.7); }
+.kart-hp i { position: absolute; inset: 0 auto 0 0; width: 100%; background: #22c55e; transition: width 0.15s, background 0.3s; }
+.kart-hp span { position: relative; display: block; text-align: center; font-size: 0.75rem; line-height: 14px; font-style: normal; }
+.kart-mapname { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); color: #fff; font-weight: 800; font-size: 0.85rem; background: rgba(15,10,35,0.45); padding: 4px 12px; border-radius: 999px; pointer-events: none; }
 .kart-minimap { position: absolute; bottom: 12px; right: 12px; width: 180px; height: 180px; pointer-events: none; }
 .touch-controls { position: absolute; bottom: 12px; left: 0; right: 0; display: none; justify-content: space-between; padding: 0 12px; pointer-events: none; }
 .touch-controls .grp { display: flex; gap: 10px; pointer-events: auto; }

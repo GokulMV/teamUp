@@ -1,8 +1,9 @@
 const { pickWords } = require('./words');
 
 const CHOOSE_TIME = 15;
-const REVEAL_TIME = 5;
-const MAX_STROKES = 4000;
+const REVEAL_TIME = 6;
+const MAX_STROKES = 6000;
+const LIKE_POINTS = 10;
 
 function normalize(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -23,25 +24,57 @@ function levenshtein(a, b) {
   return dp[b.length];
 }
 
+// Drawing operations: a stroke segment, or a flood fill at a point.
 function sanitizeStroke(data) {
   if (!data || typeof data !== 'object') return null;
   const color = /^#[0-9a-f]{6}$/i.test(data.color) ? data.color : '#000000';
+  const id = String(data.id || '').slice(0, 40);
+  if (!id) return null;
+  if (data.fill) {
+    const x = Math.max(0, Math.min(1, Number(data.x) || 0));
+    const y = Math.max(0, Math.min(1, Number(data.y) || 0));
+    return { id, fill: true, x, y, color };
+  }
   const size = Math.max(1, Math.min(60, Number(data.size) || 4));
   const pts = Array.isArray(data.pts) ? data.pts.slice(0, 400).map((n) => Math.max(0, Math.min(1, Number(n) || 0))) : [];
   if (pts.length < 2 || pts.length % 2) return null;
-  const id = String(data.id || '').slice(0, 40);
-  if (!id) return null;
   return { id, color, size, pts, erase: !!data.erase };
+}
+
+// Custom words from the lobby: comma or newline separated, 1-30 characters each.
+function parseCustomWords(text) {
+  return [...new Set(String(text || '').split(/[,\n]/).map((w) => w.trim().toLowerCase().replace(/\s+/g, ' '))
+    .filter((w) => w.length >= 1 && w.length <= 30 && /[a-z0-9]/.test(w)))];
+}
+
+function shuffle(list) {
+  const a = [...list];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 class Pictionary {
   static minPlayers = 2;
 
   constructor(room) {
+    const s = room.settings;
     this.room = room;
-    this.totalTurns = room.settings.pictionaryTurns;
-    this.drawTime = room.settings.drawTime;
+    this.everyone = s.pictEveryone;
+    this.rounds = s.pictRounds;
+    this.drawTime = s.drawTime;
+    this.choices = s.wordChoices;
+    this.hintCount = s.hints;
+    this.wordMode = s.wordMode;
+    this.custom = parseCustomWords(s.customWords);
+    this.customOnly = s.customOnly && this.custom.length >= this.choices;
+    // With "everyone draws", the turn count is worked out per round as people join or leave.
+    this.totalTurns = this.everyone ? this.rounds * room.connectedPlayers.length : s.pictionaryTurns;
     this.turn = 0;
+    this.round = 0;
+    this.queue = []; // drawers left in this round
     this.scores = new Map();
     this.usedWords = new Set();
     this.drawnCount = new Map(); // playerId -> times drawn, for fair rotation
@@ -53,6 +86,7 @@ class Pictionary {
     this.strokes = [];
     this.guessed = new Set();
     this.revealed = new Set();
+    this.votes = new Map(); // playerId -> 1 (like) | -1 (dislike)
     this.timer = null;
     this.deadline = 0;
   }
@@ -72,7 +106,36 @@ class Pictionary {
     this.timer = setTimeout(fn, seconds * 1000);
   }
 
+  // Next drawer in a team-interleaved order (A1, B1, A2, B2, ...).
+  orderForRound() {
+    const players = shuffle(this.room.connectedPlayers);
+    if (!this.room.settings.teamMode) return players.map((p) => p.id);
+    const byTeam = new Map();
+    for (const p of players) {
+      if (!byTeam.has(p.team)) byTeam.set(p.team, []);
+      byTeam.get(p.team).push(p.id);
+    }
+    const lists = [...byTeam.values()];
+    const out = [];
+    for (let i = 0; lists.some((l) => l.length > i); i++) for (const l of lists) if (l[i]) out.push(l[i]);
+    return out;
+  }
+
   pickDrawer() {
+    if (this.everyone) {
+      while (true) {
+        if (!this.queue.length) {
+          if (this.round >= this.rounds) return null;
+          this.round++;
+          this.queue = this.orderForRound();
+          this.room.systemMessage(`Round ${this.round} of ${this.rounds}`);
+        }
+        const id = this.queue.shift();
+        const p = this.room.players.get(id);
+        if (p && p.connected) return p;
+        if (!this.queue.length && this.round >= this.rounds) return null;
+      }
+    }
     const players = this.room.connectedPlayers;
     if (!players.length) return null;
     let candidates = players;
@@ -87,15 +150,35 @@ class Pictionary {
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
+  wordOptions() {
+    const fromCustom = (n) => shuffle(this.custom.filter((w) => !this.usedWords.has(w))).slice(0, n);
+    const pick = (n) => {
+      if (this.customOnly) {
+        const c = fromCustom(n);
+        return c.length >= n ? c : [...c, ...pickWords(n - c.length, this.usedWords)];
+      }
+      if (this.custom.length) {
+        // Mix custom words in with the built-in list.
+        const c = fromCustom(Math.ceil(n / 2));
+        return shuffle([...c, ...pickWords(n - c.length, new Set([...this.usedWords, ...c]))]);
+      }
+      return pickWords(n, this.usedWords);
+    };
+    if (this.wordMode === 'combo') {
+      const a = pick(this.choices * 2);
+      return Array.from({ length: this.choices }, (_, i) => `${a[i * 2]} ${a[i * 2 + 1] || a[0]}`);
+    }
+    return pick(this.choices);
+  }
+
   nextTurn() {
     clearInterval(this.hintTimer);
-    if (this.turn >= this.totalTurns || this.room.connectedPlayers.length < 2) {
-      this.finish();
-      return;
-    }
-    const drawer = this.pickDrawer();
+    const enoughPlayers = this.room.connectedPlayers.length >= 2;
+    const turnsLeft = this.everyone ? true : this.turn < this.totalTurns;
+    const drawer = enoughPlayers && turnsLeft ? this.pickDrawer() : null;
     if (!drawer) { this.finish(); return; }
     this.turn++;
+    if (this.everyone) this.totalTurns = Math.max(this.turn, this.turn + this.queue.length + (this.rounds - this.round) * this.room.connectedPlayers.length);
     this.drawerId = drawer.id;
     this.lastTeam = drawer.team;
     this.drawnCount.set(drawer.id, (this.drawnCount.get(drawer.id) || 0) + 1);
@@ -104,7 +187,8 @@ class Pictionary {
     this.strokes = [];
     this.guessed = new Set();
     this.revealed = new Set();
-    this.options = pickWords(3, this.usedWords);
+    this.votes = new Map();
+    this.options = this.wordOptions();
     this.setTimer(CHOOSE_TIME, () => this.chooseWord(this.options[0]));
     this.broadcastPhase();
     this.room.emitTo(drawer.id, 'game:pict:options', { options: this.options });
@@ -114,26 +198,30 @@ class Pictionary {
     if (this.phase !== 'choosing' || !this.options.includes(word)) return;
     this.word = word;
     this.usedWords.add(word);
+    for (const w of word.split(' ')) this.usedWords.add(w);
     this.phase = 'drawing';
     this.turnStart = Date.now();
     this.setTimer(this.drawTime, () => this.endTurn());
-    // Reveal hint letters over time.
+    // Reveal hint letters over time (never in hidden mode, never the whole word).
     const letters = [...word].map((c, i) => (c === ' ' ? -1 : i)).filter((i) => i >= 0);
-    const hints = Math.min(3, Math.max(1, Math.floor(letters.length / 3)));
+    const hints = this.wordMode === 'hidden' ? 0 : Math.min(this.hintCount, Math.max(0, letters.length - 2));
     let given = 0;
-    this.hintTimer = setInterval(() => {
-      if (given >= hints) return clearInterval(this.hintTimer);
-      const hidden = letters.filter((i) => !this.revealed.has(i));
-      if (hidden.length <= 1) return;
-      this.revealed.add(hidden[Math.floor(Math.random() * hidden.length)]);
-      given++;
-      this.broadcastPhase();
-    }, (this.drawTime * 1000 * 0.75) / (hints + 1));
+    if (hints > 0) {
+      this.hintTimer = setInterval(() => {
+        if (given >= hints) return clearInterval(this.hintTimer);
+        const hidden = letters.filter((i) => !this.revealed.has(i));
+        if (hidden.length <= 1) return;
+        this.revealed.add(hidden[Math.floor(Math.random() * hidden.length)]);
+        given++;
+        this.broadcastPhase();
+      }, (this.drawTime * 1000 * 0.8) / (hints + 1));
+    }
     this.broadcastPhase();
   }
 
   mask() {
     if (!this.word) return '';
+    if (this.wordMode === 'hidden') return '? ? ?';
     return [...this.word].map((c, i) => (c === ' ' ? ' ' : this.revealed.has(i) ? c : '_')).join('');
   }
 
@@ -141,19 +229,30 @@ class Pictionary {
     const drawer = this.room.players.get(this.drawerId);
     const isDrawer = forPlayer && forPlayer.id === this.drawerId;
     const knows = isDrawer || (forPlayer && this.guessed.has(forPlayer.id)) || this.phase === 'reveal';
+    let likes = 0;
+    let dislikes = 0;
+    for (const v of this.votes.values()) (v > 0 ? likes++ : dislikes++);
     return {
       phase: this.phase,
       turn: this.turn,
       totalTurns: this.totalTurns,
+      round: this.everyone ? this.round : null,
+      rounds: this.everyone ? this.rounds : null,
       drawerId: this.drawerId,
       drawerName: drawer ? drawer.name : '?',
+      drawerAvatar: drawer ? drawer.avatar : 0,
       drawerTeam: drawer ? drawer.team : null,
       word: knows ? this.word : null,
       mask: this.mask(),
-      wordLength: this.word ? this.word.length : 0,
+      wordMode: this.wordMode,
+      wordLength: this.word && this.wordMode !== 'hidden' ? this.word.length : 0,
       timeLeft: Math.max(0, (this.deadline - Date.now()) / 1000),
+      drawTime: this.drawTime,
       guessed: [...this.guessed],
       scores: Object.fromEntries(this.scores),
+      likes,
+      dislikes,
+      myVote: forPlayer ? this.votes.get(forPlayer.id) || 0 : 0,
     };
   }
 
@@ -168,6 +267,10 @@ class Pictionary {
     const snap = { mode: 'pictionary', phase: this.phasePayload(player), strokes: this.strokes };
     if (this.phase === 'choosing' && player.id === this.drawerId) snap.options = this.options;
     return snap;
+  }
+
+  addScore(id, pts) {
+    this.scores.set(id, (this.scores.get(id) || 0) + pts);
   }
 
   onEvent(player, event, data, reply) {
@@ -197,6 +300,19 @@ class Pictionary {
         this.strokes = [];
         this.room.emit('game:pict:redraw', { strokes: [] });
         return;
+      case 'rate': {
+        // 👍 / 👎 on the current drawing; likes give the drawer a few points.
+        if (isDrawer || (this.phase !== 'drawing' && this.phase !== 'reveal')) return reply({ ok: false });
+        const vote = data?.like ? 1 : -1;
+        const before = this.votes.get(player.id) || 0;
+        if (before === vote) return reply({ ok: true });
+        if (before > 0) this.addScore(this.drawerId, -LIKE_POINTS);
+        if (vote > 0) this.addScore(this.drawerId, LIKE_POINTS);
+        this.votes.set(player.id, vote);
+        this.broadcastPhase();
+        if (vote > 0) this.room.emit('game:pict:like', { from: player.name, avatar: player.avatar });
+        return reply({ ok: true });
+      }
       default:
     }
   }
@@ -214,7 +330,7 @@ class Pictionary {
       if (guess.includes(answer)) return true;
       const recipients = [this.drawerId, ...this.guessed];
       for (const id of recipients) {
-        this.room.emitTo(id, 'chat', { from: player.name, color: player.color, team: player.team, text, secret: true });
+        this.room.emitTo(id, 'chat', { from: player.name, color: player.color, avatar: player.avatar, team: player.team, text, secret: true });
       }
       return true;
     }
@@ -225,11 +341,11 @@ class Pictionary {
       const frac = Math.max(0, 1 - elapsed / this.drawTime);
       const orderBonus = Math.max(0, 50 - (this.guessed.size - 1) * 10);
       const pts = Math.round(50 + 250 * frac + orderBonus);
-      this.scores.set(player.id, (this.scores.get(player.id) || 0) + pts);
+      this.addScore(player.id, pts);
       // Drawer earns points for each correct guess (diminishing so big rooms stay fair).
-      const drawerPts = Math.max(10, 60 - this.guessed.size * 5);
-      this.scores.set(this.drawerId, (this.scores.get(this.drawerId) || 0) + drawerPts);
+      this.addScore(this.drawerId, Math.max(10, 60 - this.guessed.size * 5));
       this.room.emit('chat', { system: true, good: true, text: `${player.name} guessed the word! (+${pts})` });
+      this.room.emit('game:pict:guessed', { id: player.id, name: player.name, avatar: player.avatar, pts });
       this.broadcastPhase();
       const guessers = this.room.connectedPlayers.filter((p) => p.id !== this.drawerId);
       if (guessers.every((p) => this.guessed.has(p.id))) this.endTurn();
@@ -285,4 +401,4 @@ class Pictionary {
   }
 }
 
-module.exports = { Pictionary };
+module.exports = { Pictionary, parseCustomWords };
