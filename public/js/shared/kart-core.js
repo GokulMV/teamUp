@@ -57,10 +57,18 @@
   }
 
   // ---------- Race tracks ----------
-  function makeRaceMap(def) {
+  // `reverse` builds the same circuit driven the other way round. The start
+  // line stays at centerline[0]; item rows and boost pads keep their physical
+  // spots (fraction f -> 1 - f, lateral mirrored) but face the new direction.
+  function makeRaceMap(def, reverse = false) {
     const width = def.width || 260;
-    const centerline = catmullRom(def.points, def.samples || 20);
+    let centerline = catmullRom(def.points, def.samples || 20);
     const n = centerline.length;
+    if (reverse) {
+      const fwd = centerline;
+      centerline = fwd.map((_, i) => fwd[(n - i) % n]);
+    }
+    const flipF = (f) => (reverse ? (1 - f) % 1 : f);
     const tangents = centerline.map((p, i) => {
       const q = centerline[(i + 1) % n];
       const dx = q[0] - p[0];
@@ -127,13 +135,13 @@
     const itemBoxes = [];
     for (const f of def.itemRows || [0.12, 0.37, 0.62, 0.86]) {
       for (let c = 0; c < 5; c++) {
-        const [x, y] = trackPoint(Math.floor(n * f), -0.7 + c * 0.35);
+        const [x, y] = trackPoint(Math.floor(n * flipF(f)), -0.7 + c * 0.35);
         itemBoxes.push({ x, y });
       }
     }
     const boostPads = (def.boostPads || []).map(([f, lateral]) => {
-      const i = Math.floor(n * f);
-      const [x, y] = trackPoint(i, lateral);
+      const i = Math.floor(n * flipF(f));
+      const [x, y] = trackPoint(i, reverse ? -lateral : lateral);
       const t = tangents[i];
       return { x, y, angle: Math.atan2(t[1], t[0]) };
     });
@@ -144,7 +152,7 @@
     const bounds = { minX: Math.min(...xs) - pad, maxX: Math.max(...xs) + pad, minY: Math.min(...ys) - pad, maxY: Math.max(...ys) + pad };
 
     return {
-      ...def, type: 'race', width, centerline, tangents, n, itemBoxes, boostPads, bounds,
+      ...def, type: 'race', reverse: !!reverse, width, centerline, tangents, n, itemBoxes, boostPads, bounds,
       center: [(bounds.minX + bounds.maxX) / 2, (bounds.minY + bounds.maxY) / 2],
       size: Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY),
       nearestIndex, trackPoint, gridPosition,
@@ -191,9 +199,11 @@
 
   // ---------- Map catalogue ----------
   const MAPS = {};
+  const RACE_DEFS = {};
   const add = (m) => { MAPS[m.id] = m; };
+  const addRace = (def) => { RACE_DEFS[def.id] = def; add(makeRaceMap(def)); };
 
-  add(makeRaceMap({
+  addRace({
     id: 'grandprix', name: 'Grand Prix', emoji: '🏁', theme: 'meadow',
     blurb: 'Classic green circuit with fast sweepers.',
     points: [
@@ -202,8 +212,8 @@
       [300, 1900], [750, 1350], [400, 950],
     ],
     boostPads: [[0.25, 0], [0.5, -0.4], [0.75, 0.4]],
-  }));
-  add(makeRaceMap({
+  });
+  addRace({
     id: 'canyon', name: 'Desert Canyon', emoji: '🏜️', theme: 'desert', width: 250,
     blurb: 'Hairpins between red rock mesas. Drift or crash.',
     points: [
@@ -212,8 +222,8 @@
       [1150, 2450], [650, 2950], [250, 2300], [500, 1550], [250, 950],
     ],
     boostPads: [[0.08, 0], [0.33, 0.3], [0.58, -0.3], [0.8, 0]],
-  }));
-  add(makeRaceMap({
+  });
+  addRace({
     id: 'frost', name: 'Snowy Peaks', emoji: '🏔️', theme: 'snow', width: 270, grip: 0.82,
     blurb: 'Slippery ice road through snowy pines.',
     points: [
@@ -222,8 +232,8 @@
       [1050, 1300], [450, 900],
     ],
     boostPads: [[0.12, 0.3], [0.45, 0], [0.7, -0.3]],
-  }));
-  add(makeRaceMap({
+  });
+  addRace({
     id: 'neon', name: 'Neon City', emoji: '🌃', theme: 'neon', width: 250,
     blurb: 'Night race through glowing city blocks.',
     points: [
@@ -232,7 +242,7 @@
     ],
     samples: 30,
     boostPads: [[0.05, 0], [0.3, 0], [0.55, 0], [0.8, 0]],
-  }));
+  });
 
   {
     const S = 2600;
@@ -268,10 +278,16 @@
   }
 
   const DEFAULT_MAP = { race: 'grandprix', arena: 'colosseum' };
-  function getMap(id, type) {
-    const m = MAPS[id];
-    if (m && (!type || m.type === type)) return m;
-    return MAPS[DEFAULT_MAP[type || 'race']];
+  const REVERSED = {};
+  // opts.reverse: race tracks only, a cached variant driven the other way.
+  function getMap(id, type, opts) {
+    let m = MAPS[id];
+    if (!m || (type && m.type !== type)) m = MAPS[DEFAULT_MAP[type || 'race']];
+    if (opts && opts.reverse && m.type === 'race' && RACE_DEFS[m.id]) {
+      if (!REVERSED[m.id]) REVERSED[m.id] = makeRaceMap(RACE_DEFS[m.id], true);
+      return REVERSED[m.id];
+    }
+    return m;
   }
   function mapList() {
     return Object.values(MAPS).map((m) => ({ id: m.id, name: m.name, emoji: m.emoji, type: m.type, blurb: m.blurb }));
@@ -323,8 +339,15 @@
 
   // Advance a kart by dt seconds. `input` = {up, down, left, right, drift}.
   // Mutates and returns kart {x, y, angle, speed, boost, spin, drift, trackIndex}.
-  function stepKart(kart, input, dt, map) {
+  // opts.speed scales top speed, boost speed, acceleration and off-track speed
+  // (the room's speed class); it must match on the server and in prediction.
+  function stepKart(kart, input, dt, map, opts) {
     const arena = map.type === 'arena';
+    const mul = opts && Number.isFinite(opts.speed) && opts.speed > 0 ? opts.speed : 1;
+    const accel = PHYS.accel * mul;
+    const maxSpeed = PHYS.maxSpeed * mul;
+    const boostSpeed = PHYS.boostSpeed * mul;
+    const offTrackMax = PHYS.offTrackMax * mul;
     const grip = map.grip || 1;
     const spinning = kart.spin > 0;
     const steer = (input.left ? -1 : 0) + (input.right ? 1 : 0);
@@ -334,8 +357,8 @@
       kart.drift = 0;
       kart.driftTime = 0;
     } else {
-      if (input.up) kart.speed += PHYS.accel * dt * (0.6 + 0.4 * grip);
-      else if (input.down) kart.speed -= (kart.speed > 0 ? PHYS.brake * grip : PHYS.accel * 0.6) * dt;
+      if (input.up) kart.speed += accel * dt * (0.6 + 0.4 * grip);
+      else if (input.down) kart.speed -= (kart.speed > 0 ? PHYS.brake * grip : accel * 0.6) * dt;
       else kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), PHYS.drag * 100 * grip * dt);
 
       // Drifting: hold drift while steering at speed. The kart slides into the
@@ -375,9 +398,9 @@
     for (const p of map.boostPads) {
       if ((kart.x - p.x) ** 2 + (kart.y - p.y) ** 2 < 34 * 34) kart.boost = Math.max(kart.boost || 0, PHYS.padBoost);
     }
-    let max = kart.boost > 0 ? PHYS.boostSpeed : PHYS.maxSpeed;
-    if (kart.boost <= 0 && surface) max = surface === 2 ? PHYS.offTrackMax : PHYS.runoffMax;
-    if (kart.boost > 0 && !spinning) kart.speed = Math.max(kart.speed, PHYS.boostSpeed * 0.95);
+    let max = kart.boost > 0 ? boostSpeed : maxSpeed;
+    if (kart.boost <= 0 && surface) max = surface === 2 ? offTrackMax : PHYS.runoffMax * mul;
+    if (kart.boost > 0 && !spinning) kart.speed = Math.max(kart.speed, boostSpeed * 0.95);
     if (kart.speed > max) kart.speed = Math.max(max, kart.speed - (surface ? PHYS.offTrackDecel : PHYS.brake * 1.5) * dt);
     if (kart.speed < PHYS.reverseMax) kart.speed = PHYS.reverseMax;
 

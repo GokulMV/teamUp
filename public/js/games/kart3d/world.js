@@ -725,7 +725,9 @@ export function buildRace(scene, map, theme, ctx) {
     c.fillText(`🏁  ${map.name.toUpperCase()}  🏁`, w / 2, h / 2 + 2);
   }, false);
   const bannerMat = new THREE.MeshStandardMaterial({ map: bannerTex, emissive: theme.night ? 0xffffff : 0x000000, emissiveMap: theme.night ? bannerTex : null, emissiveIntensity: 0.8 });
-  const banner = new THREE.Mesh(new THREE.BoxGeometry(8, 30, map.width + 70), [postMat, postMat, postMat, postMat, bannerMat, bannerMat]);
+  // The gantry's local x runs along the track, so the banner goes on the ±x faces:
+  // readable when driving through in either direction (reverse races too).
+  const banner = new THREE.Mesh(new THREE.BoxGeometry(8, 30, map.width + 70), [bannerMat, bannerMat, postMat, postMat, postMat, postMat]);
   banner.position.y = 115;
   banner.castShadow = true;
   gantry.add(banner);

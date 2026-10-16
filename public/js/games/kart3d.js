@@ -324,7 +324,7 @@ function projectileModels() {
 // ---------- the renderer ----------
 export class Kart3D {
   constructor(container, opts) {
-    this.map = K.getMap(opts.mapId, opts.type);
+    this.map = K.getMap(opts.mapId, opts.type, { reverse: !!opts.reverse });
     this.arena = this.map.type === 'arena';
     this.theme = THEMES[this.map.theme] || THEMES.meadow;
     const theme = this.theme;
@@ -415,7 +415,7 @@ export class Kart3D {
 
     // Item boxes
     const boxMat = new THREE.MeshStandardMaterial({ map: tex.box(), transparent: true, opacity: 0.92, emissive: 0x332244, roughness: 0.3 });
-    this.boxes = this.map.itemBoxes.map((b, i) => {
+    this.boxes = (opts.items === false ? [] : this.map.itemBoxes).map((b, i) => {
       const mesh = new THREE.Mesh(new RoundedBoxGeometry(24, 24, 24, 2, 3), boxMat);
       mesh.position.set(b.x, 20, b.y);
       mesh.castShadow = true;
