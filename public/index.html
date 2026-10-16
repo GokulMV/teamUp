@@ -3,41 +3,71 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <title>TeamUp Party Games</title>
+  <meta name="theme-color" content="#0b0820">
+  <title>TeamUp · Party games for your whole crew</title>
+  <meta name="description" content="Pictionary, Telephone and 3D Kart Battle for up to 30 players. No downloads.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎮</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600..800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+  <div class="backdrop" aria-hidden="true"><i></i><i></i><i></i></div>
+
   <!-- Home -->
   <section id="screen-home" class="screen active">
-    <div class="home-card">
-      <h1 class="logo">Team<span>Up</span></h1>
-      <p class="tagline">Party games for up to 30 friends: draw, race and laugh together.</p>
-      <div class="mode-pills">
-        <span>🎨 Pictionary</span><span>🏎️ Kart Battle</span><span>📞 Telephone</span>
+    <header class="site-head">
+      <div class="brand">Team<span>Up</span></div>
+      <div class="head-meta">Up to 30 players · No downloads · Free</div>
+    </header>
+    <main class="home">
+      <div class="hero">
+        <span class="eyebrow">✨ New: 3D Kart Battle with 6 maps</span>
+        <h1>Party games for your <em>whole crew</em>.</h1>
+        <p class="lede">Draw, guess, race and laugh together. Make a room, share the link, and up to 30 friends jump straight in from any phone or laptop.</p>
+        <div class="game-tiles">
+          <div class="game-tile t-pict"><span class="tile-art">🎨</span><b>Pictionary</b><small>Draw it. Guess it. Fast.</small></div>
+          <div class="game-tile t-tel"><span class="tile-art">📞</span><b>Telephone</b><small>Watch the message mutate.</small></div>
+          <div class="game-tile t-kart"><span class="tile-art">🏎️</span><b>Kart Battle</b><small>Race or fight in 3D.</small></div>
+        </div>
       </div>
-      <label class="field">
-        <span>Your name</span>
-        <input id="name-input" maxlength="16" placeholder="e.g. Speedy" autocomplete="nickname">
-      </label>
-      <button id="btn-create" class="btn primary big">Create a room</button>
-      <div class="divider"><span>or join one</span></div>
-      <div class="join-row">
-        <input id="code-input" maxlength="4" placeholder="CODE" autocomplete="off">
-        <button id="btn-join" class="btn">Join</button>
+
+      <div class="join-card glass">
+        <div class="avatar-picker">
+          <button class="icon-btn" id="av-prev" aria-label="Previous avatar">‹</button>
+          <button class="avatar-big" id="av-current" title="Choose an avatar"></button>
+          <button class="icon-btn" id="av-next" aria-label="Next avatar">›</button>
+        </div>
+        <button class="link-btn" id="av-all">See all avatars</button>
+        <label class="field">
+          <span>Your name</span>
+          <input id="name-input" maxlength="16" placeholder="e.g. Speedy" autocomplete="nickname">
+        </label>
+        <button id="btn-create" class="btn primary big">Create a room <span aria-hidden="true">→</span></button>
+        <div class="divider"><span>or join with a code</span></div>
+        <div class="code-boxes" id="code-boxes">
+          <input maxlength="1" autocomplete="off" aria-label="Code letter 1">
+          <input maxlength="1" autocomplete="off" aria-label="Code letter 2">
+          <input maxlength="1" autocomplete="off" aria-label="Code letter 3">
+          <input maxlength="1" autocomplete="off" aria-label="Code letter 4">
+        </div>
+        <button id="btn-join" class="btn big">Join room</button>
+        <p id="home-error" class="error" role="alert"></p>
       </div>
-      <p id="home-error" class="error"></p>
-    </div>
+    </main>
   </section>
 
   <!-- Room (lobby + game + results share the side panel) -->
   <section id="screen-room" class="screen">
     <header class="topbar">
       <div class="brand">Team<span>Up</span></div>
-      <button id="btn-copy" class="room-code" title="Copy invite link">Room <b id="room-code">----</b> <small>📋 invite</small></button>
+      <button id="btn-copy" class="room-code" title="Copy invite link">
+        <small>Room</small><b id="room-code">----</b><span class="copy-hint">Copy invite</span>
+      </button>
       <div class="topbar-right">
-        <span id="player-count" class="muted"></span>
-        <button id="btn-mute" class="btn small ghost" title="Sound on/off">🔊</button>
+        <span id="player-count" class="pill"></span>
+        <button id="btn-mute" class="icon-btn" title="Sound on/off">🔊</button>
         <button id="btn-stop" class="btn small danger hidden">End game</button>
         <button id="btn-leave" class="btn small ghost">Leave</button>
       </div>
@@ -47,67 +77,42 @@
       <main id="main">
         <!-- Lobby -->
         <div id="view-lobby" class="view">
-          <div class="lobby-grid">
-            <div class="panel">
-              <h2>Pick a game</h2>
-              <div id="mode-cards" class="mode-cards">
-                <button class="mode-card" data-mode="pictionary">
-                  <div class="emoji">🎨</div><h3>Pictionary</h3>
-                  <p>One player draws, everyone races to guess the word in chat.</p>
+          <div class="lobby">
+            <section class="panel glass lobby-games">
+              <div class="panel-head"><h2>Choose a game</h2><span id="host-note" class="muted small"></span></div>
+              <div id="game-cards" class="game-cards">
+                <button class="game-card" data-mode="pictionary">
+                  <span class="gc-art">🎨</span>
+                  <span class="gc-text"><b>Pictionary</b><small>One draws, everyone guesses. Rounds, hints and custom words.</small></span>
                 </button>
-                <button class="mode-card" data-mode="kart">
-                  <div class="emoji">🏎️</div><h3>Kart Battle</h3>
-                  <p>3D karts: race laps or battle in the arena with rockets, bananas and shields.</p>
+                <button class="game-card" data-mode="telephone">
+                  <span class="gc-art">📞</span>
+                  <span class="gc-text"><b>Telephone</b><small>Write, draw, describe. Five modes, from Speedrun to Secret.</small></span>
                 </button>
-                <button class="mode-card" data-mode="telephone">
-                  <div class="emoji">📞</div><h3>Telephone</h3>
-                  <p>Write, draw, describe, repeat, then watch the chaos unfold.</p>
+                <button class="game-card" data-mode="kart">
+                  <span class="gc-art">🏎️</span>
+                  <span class="gc-text"><b>Kart Battle</b><small>3D racing and arena fights. 6 maps, 10 power-ups.</small></span>
                 </button>
               </div>
-
-              <div class="settings">
-                <label class="toggle">
-                  <input type="checkbox" id="set-teams"> <span>Team mode</span>
-                </label>
-                <label class="setting team-only">Teams
-                  <select id="set-team-count"><option>2</option><option>3</option><option>4</option></select>
-                </label>
-                <label class="setting mode-pictionary">Turns
-                  <input type="number" id="set-turns" min="1" max="30">
-                </label>
-                <label class="setting mode-pictionary mode-telephone">Draw time (s)
-                  <input type="number" id="set-drawtime" min="30" max="180" step="10">
-                </label>
-                <label class="setting mode-kart">Kart mode
-                  <select id="set-kartmode">
-                    <option value="race">🏁 Race</option>
-                    <option value="arena">💥 Arena battle</option>
-                  </select>
-                </label>
-                <label class="setting mode-kart">Map
-                  <select id="set-kartmap"></select>
-                </label>
-                <label class="setting mode-kart kart-race">Laps
-                  <input type="number" id="set-laps" min="1" max="10">
-                </label>
-                <label class="setting mode-kart kart-arena">Battle time (s)
-                  <input type="number" id="set-arenatime" min="60" max="600" step="30">
-                </label>
-                <label class="setting mode-telephone">Chain length (0 = everyone)
-                  <input type="number" id="set-steps" min="0" max="30">
-                </label>
-                <button id="btn-shuffle" class="btn small team-only">🔀 Shuffle teams</button>
+              <div class="settings-head"><h3 id="settings-title">Settings</h3></div>
+              <div id="settings-body" class="settings-body"></div>
+              <div class="team-row">
+                <label class="switch"><input type="checkbox" id="set-teams"><span class="track"><span class="thumb"></span></span><span>Play in teams</span></label>
+                <div class="seg team-only" id="team-count"></div>
+                <button id="btn-shuffle" class="btn small team-only">🔀 Shuffle</button>
               </div>
-              <p id="mode-help" class="muted small-text"></p>
-              <button id="btn-start" class="btn primary big">Start game</button>
-              <p id="lobby-wait" class="muted center hidden">Waiting for the host to start…</p>
-              <p id="lobby-error" class="error"></p>
-            </div>
+            </section>
 
-            <div class="panel" id="teams-panel">
-              <h2>Teams <small class="muted">(click a team to join it)</small></h2>
-              <div id="teams" class="teams"></div>
-            </div>
+            <section class="panel glass lobby-people">
+              <div class="me-card" id="me-card"></div>
+              <div class="panel-head"><h2 id="people-title">Players</h2><span id="people-count" class="pill"></span></div>
+              <div id="teams" class="people"></div>
+            </section>
+          </div>
+          <div class="start-bar">
+            <p id="lobby-error" class="error" role="alert"></p>
+            <button id="btn-start" class="btn primary big">Start game <span aria-hidden="true">→</span></button>
+            <p id="lobby-wait" class="muted hidden">Waiting for the host to start…</p>
           </div>
         </div>
 
@@ -116,9 +121,11 @@
 
         <!-- Results -->
         <div id="view-results" class="view">
-          <div class="panel results">
+          <div class="results glass">
+            <div class="confetti" aria-hidden="true"></div>
             <h2 id="results-title">Results</h2>
             <div id="results-teams" class="results-teams"></div>
+            <div id="podium" class="podium"></div>
             <ol id="results-players" class="results-players"></ol>
             <button id="btn-again" class="btn primary big">Back to lobby</button>
             <p id="results-wait" class="muted center hidden">Waiting for the host…</p>
@@ -127,19 +134,27 @@
       </main>
 
       <aside id="side">
-        <div class="side-players">
-          <h3>Players</h3>
+        <div class="side-players glass">
+          <div class="side-head"><h3>Players</h3><span id="side-count" class="pill"></span></div>
           <ul id="player-list"></ul>
         </div>
-        <div class="chat">
+        <div class="chat glass">
           <div id="chat-log" class="chat-log"></div>
           <form id="chat-form" class="chat-form">
-            <input id="chat-input" maxlength="200" placeholder="Chat / type your guess…" autocomplete="off">
+            <input id="chat-input" maxlength="200" placeholder="Chat or type your guess…" autocomplete="off">
+            <button class="send" aria-label="Send">➤</button>
           </form>
         </div>
       </aside>
     </div>
   </section>
+
+  <div id="avatar-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="avatar-title">
+    <div class="modal-card glass">
+      <div class="panel-head"><h2 id="avatar-title">Pick your avatar</h2><button class="icon-btn" data-close aria-label="Close">✕</button></div>
+      <div id="avatar-grid" class="avatar-grid"></div>
+    </div>
+  </div>
 
   <div id="toast" class="toast"></div>
 
@@ -149,6 +164,7 @@
   <script type="module" src="/js/games/kart3d.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="/js/shared/kart-core.js"></script>
+  <script src="/js/avatars.js"></script>
   <script src="/js/sfx.js"></script>
   <script src="/js/draw-board.js"></script>
   <script src="/js/games/pictionary.js"></script>

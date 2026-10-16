@@ -5,9 +5,11 @@ No installs for players: share a 4-letter room code or invite link and everyone 
 
 | Mode | Inspired by | How it plays |
 |------|-------------|--------------|
-| 🎨 **Pictionary** | Skribbl / Pictionary | One player draws, everyone guesses in chat. Faster guesses score more, hint letters reveal over time. In team mode, teams take turns drawing and scores are pooled. |
-| 🏎️ **Kart Battle** | Mario Kart / Smash Karts | **3D** karts (Three.js) with a chase camera, shadows and explosions. Two modes: **Race** (laps on a circuit, points for placement + hits) and **Arena battle** (timed deathmatch: every hit is a kill, you respawn after 2.5 s). Item boxes give ⚡ boosts, 🚀 homing rockets, 🍌 bananas, 🛡️ shields and triple rockets. In team mode rockets don't hit teammates and team points combine. |
-| 📞 **Telephone** | Gartic Phone | Write a prompt → the next player draws it → the next describes the drawing → … then the host flips through every album. In team mode, books circulate inside each team. |
+| 🎨 **Pictionary** | skribbl.io | One player draws, everyone guesses in chat. Rounds where everyone draws once (or a fixed number of turns), 15-240 s draw time, 1-5 word choices, 0-5 letter hints, **Normal / Hidden / Combination** word modes, custom word lists, fill bucket, 👍/👎 ratings. Team mode alternates teams and pools scores. |
+| 📞 **Telephone** | Gartic Phone | Books pass round the group. Modes: **Normal** (write → draw → describe…), **Speedrun**, **Secret** (draw blind), **Knock-off** (memorise a drawing, redraw it), **Complement** (add to the last drawing). Pace and auto/host reveal options, emoji reactions, save albums as images. |
+| 🏎️ **Kart Battle** | Mario Kart / Smash Karts | **3D** karts (Three.js) with drifting + mini-turbos. **Race** on 4 tracks (Grand Prix, Desert Canyon, Snowy Peaks, Neon City) or fight in 2 **arenas** (Colosseum, Volcano Crater) with health bars and respawns. 10 power-ups: boost, homing rocket, triple rockets, banana, shield, mine, minigun, bomb, shock wave, ghost. |
+
+Everyone picks one of 24 avatars, shown in the lobby, chat, player list and on the podium.
 
 ## Run it
 
@@ -35,7 +37,11 @@ public/                     browser client (plain HTML/CSS/JS, no build step)
   js/app.js                 home, lobby, teams, chat, results
   js/draw-board.js          shared drawing canvas (normalized coordinates)
   js/games/*.js             per-mode client UI
-  js/games/kart3d.js        Three.js 3D renderer for Kart Battle (track, arena, karts, particles)
+  js/games/kart3d.js        Three.js renderer: karts, power-ups, particles, camera
+  js/games/kart3d/world.js  maps' scenery and themes (trees, grass, clouds, lava, neon city...)
+  js/avatars.js             the 24 SVG avatars
+  js/sfx.js                 Web Audio sound effects and the generated kart engine
+  vendor/moonlit/           trees.js from GokulMV/moonlit-cove (grows the 3D trees)
   js/shared/kart-core.js    track + kart physics shared by server and client
 server/
   index.js                  Express + Socket.IO
@@ -61,6 +67,7 @@ The repo includes `railway.json` and a `Dockerfile`, so Railway needs no extra s
 3. Open the service's **Settings → Networking → Generate Domain** to get a public URL, then share `https://<your-domain>/?room=CODE` with friends.
 
 Nothing else is needed: no database and no environment variables (Railway sets `PORT` itself).
+Errors from players' browsers are logged by the server as `[client error] ...`, so they show up in Railway's **Deploy Logs**.
 Game rooms live in memory, so keep the service at **1 replica** (already set in `railway.json`), and expect rooms to reset when you redeploy.
 
 ### Anywhere else
@@ -72,6 +79,5 @@ Any Node 18+ host or container platform that supports WebSockets works (Render, 
 - More kart tracks and arenas, plus a picker
 - Kart customization (colors, hats, bodies)
 - Custom word lists for Pictionary
-- Download Telephone albums as GIFs
 - Sound effects and music
 - Accounts / persistent leaderboards

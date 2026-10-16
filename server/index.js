@@ -12,6 +12,14 @@ app.use(express.static(path.join(__dirname, '..', 'public')));
 app.use('/vendor/three', express.static(path.join(__dirname, '..', 'node_modules', 'three')));
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
+// Browser errors are sent here so they show up in the server logs (e.g. Railway's deploy logs).
+let clientErrors = 0;
+setInterval(() => { clientErrors = 0; }, 60_000).unref();
+app.post('/api/client-error', express.text({ type: '*/*', limit: '8kb' }), (req, res) => {
+  if (clientErrors++ < 50) console.warn('[client error]', String(req.body || '').slice(0, 2000));
+  res.status(204).end();
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   // Telephone drawings are sent as PNG data URLs.

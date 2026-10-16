@@ -243,7 +243,14 @@ class Room {
     this.lastResults = null;
     this.game = new GameClass(this);
     this.broadcastState();
-    this.game.start();
+    try {
+      this.game.start();
+    } catch (err) {
+      // Never leave everyone stuck on a game screen that isn't running.
+      console.error(`Failed to start ${this.settings.mode}:`, err);
+      this.backToLobby();
+      return { ok: false, error: 'The game failed to start. Please try again.' };
+    }
     return { ok: true };
   }
 

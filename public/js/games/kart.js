@@ -66,7 +66,15 @@ window.Games.kart = {
         view3d.setKarts(info.karts, myIdx, (meta) => (teamMode() ? api.teamById(meta.team)?.color : null));
       } catch (err) {
         console.error(err);
-        q('[data-big]').innerHTML = '<span style="font-size:1.4rem">Your browser couldn’t start 3D graphics (WebGL).</span>';
+        window.reportError?.(err);
+        if (!stage.querySelector('.kart-nogl')) {
+          const box = document.createElement('div');
+          box.className = 'overlay kart-nogl';
+          box.innerHTML = `<h2>3D graphics are turned off</h2>
+            <p class="muted">Your browser couldn’t start WebGL, which Kart Battle needs.<br>
+            Try Chrome, Edge, Firefox or Safari with hardware acceleration switched on, then rejoin the room.</p>`;
+          stage.appendChild(box);
+        }
       }
     }
     const onReady = () => createRenderer();
