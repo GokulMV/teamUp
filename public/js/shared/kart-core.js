@@ -10,7 +10,11 @@
   const CURB = 18; // painted curb outside the asphalt; still counts as road
   const RUNOFF = 60; // sand/gravel strip after the curb: a light speed cap
   const RAIL = 36; // bridges and railed roads: the wall is the guard rail, this far outside the asphalt
+  // Bridge decks and railed roads are solid out to here: the kart's centre stops at RAIL, its wheels
+  // (18 either side) just touch the parapet's inner face at RAIL + 18, and the parapet is 12 thick.
+  const DECK = RAIL + 30;
   const SPACING = 32; // world units between centerline samples
+  const CREST_TOL = 45; // units/s²: how much faster than gravity the road must drop away to take off
 
   const PHYS = {
     accel: 500,
@@ -301,9 +305,11 @@
         gap[i] = kind;
         anchor[i] = 0;
         zeroW[i] = 1.5;
-        if (j.rails) railed[i] = 1;
       }
       const r = { h: j.h || 30, up: j.up || 150, down: 30, lift: j.lift || PHYS.rampLift, gap: true };
+      // Guard rails funnel every kart onto the kicker: nobody can slip past the ramp into the gap.
+      const run = g + Math.ceil((r.up + 70) / spacing);
+      for (let k = -run; k <= run; k++) railed[(c + k + n) % n] = 1;
       ramps.push({ ...r, i: (c - g + n) % n, dir: 1 }, { ...r, i: (c + g) % n, dir: -1 });
       // Lava/water rivers flow under their jumps; a 'void' jump can ask for a dry slot canyon.
       if (j.channel === false || (HAZARDS[kind] === 'void' && !j.channel)) continue;
@@ -403,6 +409,12 @@
     });
     const grade = new Float64Array(n);
     for (let i = 0; i < n; i++) grade[i] = (H[(i + 1) % n] - H[(i - 1 + n) % n]) / (2 * spacing);
+    // Direction of the road at each sample (the mitre between its two segments).
+    const miter = tangents.map((b, i) => {
+      const a = tangents[(i - 1 + n) % n];
+      const l = Math.hypot(a[0] + b[0], a[1] + b[1]) || 1;
+      return [(a[0] + b[0]) / l, (a[1] + b[1]) / l];
+    });
 
     const xs = centerline.map((p) => p[0]);
     const ys = centerline.map((p) => p[1]);
@@ -484,13 +496,23 @@
         const d = (qx - x) ** 2 + (qy - y) ** 2;
         if (d < bestD) { bestD = d; px = qx; py = qy; seg = j; tt = t; }
       }
+      // How far along the road: measured between the mitred ends of a segment, so it neither
+      // stalls on the outside of a bend nor skips ahead on the inside (heights stay smooth).
+      const md = (k) => (x - centerline[k][0]) * miter[k][0] + (y - centerline[k][1]) * miter[k][1];
+      let j0 = seg;
+      let d0 = md(j0);
+      let d1 = md((j0 + 1) % n);
+      for (let it = 0; it < 3; it++) {
+        if (d0 < 0) { j0 = (j0 - 1 + n) % n; d1 = d0; d0 = md(j0); } else if (d1 > 0) { j0 = (j0 + 1) % n; d0 = d1; d1 = md((j0 + 1) % n); } else break;
+      }
+      const s = d0 - d1 > 1e-9 ? clamp(d0 / (d0 - d1), 0, 1) : tt;
       // Road height: cubic Hermite between samples (smooth slopes for the karts).
-      const j1 = (seg + 1) % n;
-      const t2 = tt * tt;
-      const t3 = t2 * tt;
-      const h = (2 * t3 - 3 * t2 + 1) * H[seg] + (t3 - 2 * t2 + tt) * grade[seg] * spacing
+      const j1 = (j0 + 1) % n;
+      const t2 = s * s;
+      const t3 = t2 * s;
+      const h = (2 * t3 - 3 * t2 + 1) * H[j0] + (t3 - 2 * t2 + s) * grade[j0] * spacing
         + (-2 * t3 + 3 * t2) * H[j1] + (t3 - t2) * grade[j1] * spacing;
-      return { index: best, dist: Math.sqrt(bestD), px, py, seg, t: tt, u: seg + tt, h };
+      return { index: best, dist: Math.sqrt(bestD), px, py, seg, t: tt, u: j0 + s, h };
     }
 
     // ---- terrain around the road ----
@@ -573,27 +595,31 @@
       const infl = an * (1 - smoothstep(e0, e0 + fa, d));
       return nat + (rh - nat) * infl;
     }
-    // Ramps are bumps across the asphalt (fading out over the curbs).
-    function bumpAt(q) {
-      if (!ramps.length || q.dist > half + CURB) return 0;
-      const k = q.dist <= half ? 1 : 1 - (q.dist - half) / CURB;
+    // Bridges, gaps and railed roads are solid deck out to the parapet: the road's own height
+    // reaches all the way to the guard rail, so there is never a hidden step beside the asphalt.
+    const deckAt = (q) => {
+      const j1 = (q.seg + 1) % n;
+      return bridge[q.seg] || bridge[j1] || gap[q.seg] || gap[j1] || railed[q.seg] || railed[j1];
+    };
+    // Ramps are bumps across the asphalt (fading out over the curbs). The kickers in front of a
+    // gap span the whole deck between the guard rails.
+    function bumpAt(q, deck = deckAt(q)) {
+      if (!ramps.length || q.dist > half + (deck ? DECK : CURB)) return 0;
+      const k = q.dist <= half ? 1 : Math.max(0, 1 - (q.dist - half) / CURB);
       let b = 0;
       for (const r of ramps) {
         const s = wrapD(q.u - r.i) * spacing * r.dir;
         if (s < -r.up || s > r.down) continue;
-        const v = s <= 0 ? r.h * ((s + r.up) / r.up) ** 1.6 : r.h * (1 - smoothstep(0, r.down, s));
+        const v = (s <= 0 ? r.h * ((s + r.up) / r.up) ** 1.6 : r.h * (1 - smoothstep(0, r.down, s))) * (r.gap && deck ? 1 : k);
         if (v > b) b = v;
       }
-      return b * k;
+      return b;
     }
-    const deckAt = (q) => {
-      const j1 = (q.seg + 1) % n;
-      return bridge[q.seg] || bridge[j1] || gap[q.seg] || gap[j1];
-    };
     // What a kart stands on: the road (and ramps, bridge decks) when on it, the terrain otherwise
     // (from the curb outwards the ground blends smoothly into the landscape).
     function surfaceAt(x, y, q) {
-      if (q.dist <= (deckAt(q) ? half + RAIL + 6 : half + CURB)) return q.h + bumpAt(q);
+      const deck = deckAt(q);
+      if (q.dist <= half + (deck ? DECK : CURB)) return q.h + bumpAt(q, deck);
       return terrainAt(x, y, q);
     }
     function heightAt(x, y, hint) {
@@ -608,7 +634,7 @@
       q = q || nearestIndex(x, y);
       const g = gap[q.index];
       if (g && q.dist <= wallAt(q) + 4) return HAZARDS[g];
-      if (q.dist <= half + CURB || (deckAt(q) && q.dist <= half + RAIL + 6)) return null;
+      if (q.dist <= half + CURB || (deckAt(q) && q.dist <= half + DECK)) return null;
       if (water !== null && terrainAt(x, y, q) < water - 3) return 'water';
       for (const l of liquids) if (polyDist(x, y, l.pts).d < l.w * 0.42) return l.kind;
       return null;
@@ -820,7 +846,7 @@
     ],
     terrain: { seed: 3, amp: 0, base: 0, features: [] },
     bridges: [[0.16, 0.36], [0.68, 0.86]],
-    jumps: [{ at: 0.24, gap: 200, kind: 'void', rails: true }, { at: 0.715, gap: 200, kind: 'void', rails: true }],
+    jumps: [{ at: 0.24, gap: 200, kind: 'void' }, { at: 0.715, gap: 200, kind: 'void' }],
     landmarks: [{ kind: 'towers', at: 0.24 }, { kind: 'towers', at: 0.715 }],
     itemRows: [0.06, 0.3, 0.5, 0.64, 0.9],
     boostPads: [[0.04, 0], [0.2, 0], [0.45, 0], [0.58, 0], [0.72, 0]],
@@ -979,9 +1005,23 @@
     const a = Math.atan2(t[1], t[0]);
     Object.assign(kart, {
       x: p[0], y: p[1], angle: a, heading: a, speed: 0, trackIndex: i, safeIndex: i,
-      air: 0, vz: 0, z: null, airTime: 0, trick: 0, tricked: false, trickable: false,
+      air: 0, vz: 0, z: null, gz: null, airTime: 0, trick: 0, tricked: false, trickable: false,
       drift: 0, driftTime: 0, boost: 0, spin: 0, fall: 0, fallKind: null,
     });
+  }
+
+  // Vertical speed of the road under a kart driving along it (+ climbing).
+  function roadVz(kart, map, q) {
+    const t = map.tangents[q.index];
+    const h = kart.heading === undefined ? kart.angle : kart.heading;
+    return map.grade[q.index] * kart.speed * (Math.cos(h) * t[0] + Math.sin(h) * t[1]);
+  }
+
+  // Time until a flying kart comes down (on ground at its take-off height).
+  function timeToLand(kart) {
+    const G = PHYS.gravity;
+    const vz = kart.vz || 0;
+    return (vz + Math.sqrt(Math.max(0, vz * vz + 2 * G * Math.max(0, kart.air || 0)))) / G;
   }
 
   // Heights on race tracks: follow the road, fly off ramps and crests, land, fall into hazards.
@@ -992,15 +1032,21 @@
     if (kart.z === undefined || kart.z === null || !Number.isFinite(kart.z)) {
       kart.z = g + Math.max(0, kart.air || 0);
       kart.vz = 0;
+      kart.gz = null;
     }
+    // The ground's own vertical speed under the kart. Steps in the ground (kerbs, the edge of a
+    // deck) are clamped to the road's slope, so they are bumps, never a catapult.
+    const rv = roadVz(kart, map, q);
+    const groundVz = Number.isFinite(kart.gz) ? clamp((g - kart.gz) / dt, rv - 300, rv + 300) : rv;
     if (kart.air > 0) {
       kart.airTime = (kart.airTime || 0) + dt;
       kart.vz -= G * dt;
       kart.z += kart.vz * dt;
       if (kart.z <= g) {
-        // Touchdown. A trick in the air pays out as a mini boost.
+        // Touchdown: carry on at the slope's speed (a descent is not a new crest). A trick in the
+        // air pays out as a mini boost.
         kart.landed = -kart.vz;
-        kart.z = g; kart.air = 0; kart.vz = 0; kart.airTime = 0; kart.trickable = false;
+        kart.z = g; kart.air = 0; kart.vz = groundVz; kart.airTime = 0; kart.trickable = false;
         if (kart.tricked) kart.boost = Math.max(kart.boost || 0, PHYS.trickBoost);
         kart.tricked = false;
       } else {
@@ -1009,24 +1055,29 @@
     } else {
       const vz0 = kart.vz || 0;
       const free = kart.z + vz0 * dt - G * dt * dt;
-      if (free > g + 0.05 && Math.abs(kart.speed) > 150) {
-        // The road drops away faster than gravity pulls: airborne over the crest.
+      // Airborne over a crest when the road drops away faster than gravity pulls (the tolerance is
+      // an acceleration, so 30 Hz servers and 144 Hz screens agree on when that happens).
+      if (free > g + Math.max(CREST_TOL * dt * dt, 0.05) && Math.abs(kart.speed) > 150) {
         kart.vz = vz0 - G * dt;
         kart.z = free;
         kart.air = free - g;
         kart.airTime = 0;
-        kart.trickable = vz0 > 110;
+        // Only a proper crest on the road is worth a trick (not a bump on a grassy bank).
+        kart.trickable = vz0 > 260 && q.dist <= map.width / 2 + CURB;
       } else {
-        kart.vz = clamp((g - kart.z) / dt, -1500, 1500);
+        kart.vz = groundVz;
         kart.z = g;
         kart.air = 0;
       }
     }
+    kart.gz = g;
 
     const half = map.width / 2;
-    if ((grounded || kart.airTime < 0.1) && kart.speed > 60 && map.ramps.length && q.dist <= half + CURB) {
+    if ((grounded || kart.airTime < 0.1) && kart.speed > 60 && map.ramps.length && q.dist <= map.wallAt(q) + 2) {
       for (const r of map.ramps) {
         if (r.dir !== 1) continue;
+        // Kickers in front of a gap launch everyone between the rails; other ramps only the road.
+        if (!r.gap && q.dist > half + CURB) continue;
         let s0 = prevU - r.i;
         let s1 = q.u - r.i;
         if (s0 > map.n / 2) s0 -= map.n; else if (s0 < -map.n / 2) s0 += map.n;
@@ -1079,6 +1130,7 @@
     const air = !arena && kart.air > 0;
     const steerMul = air ? PHYS.airSteer : 1;
     const steer = (input.left ? -1 : 0) + (input.right ? 1 : 0);
+    const v0 = kart.speed;
     if (spinning) {
       kart.angle += 9 * dt;
       kart.speed *= Math.max(0, 1 - 4 * dt);
@@ -1115,8 +1167,10 @@
       }
     }
     if (!arena) {
-      // Tricks: press drift at take-off or in the air; land it for a mini boost.
-      if (air && !spinning && input.drift && kart.trickable && !kart.tricked && (!kart.prevDrift || kart.airTime < PHYS.trickWindow)) {
+      // Tricks: press drift at take-off or in the air; land it for a mini boost. Only real jumps
+      // count: there must be time to finish the flip before touching down.
+      if (air && !spinning && input.drift && kart.trickable && !kart.tricked && (!kart.prevDrift || kart.airTime < PHYS.trickWindow)
+        && timeToLand(kart) > PHYS.trickTime * 0.6) {
         kart.tricked = true;
         kart.trick = PHYS.trickTime;
       }
@@ -1151,7 +1205,11 @@
     let max = (kart.boost > 0 ? boostSpeed : maxSpeed) * hill;
     if (kart.boost <= 0 && surface) max = (surface === 2 ? offTrackMax : PHYS.runoffMax * mul) * hill;
     if (kart.boost > 0 && !spinning) kart.speed = Math.max(kart.speed, boostSpeed * 0.95);
-    if (kart.speed > max) kart.speed = Math.max(max, kart.speed - (surface ? PHYS.offTrackDecel : PHYS.brake * 1.5) * dt);
+    if (kart.speed > max) {
+      // Over a surface's cap the throttle does nothing: grass and run-off only ever slow you down.
+      const from = surface ? Math.min(kart.speed, v0) : kart.speed;
+      kart.speed = Math.max(max, from - (surface ? PHYS.offTrackDecel : PHYS.brake * 1.5) * dt);
+    }
     if (kart.speed < PHYS.reverseMax) kart.speed = PHYS.reverseMax;
 
     // On slippery maps the kart's travel direction lags behind where it points.
@@ -1188,8 +1246,8 @@
   }
 
   return {
-    KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, SPACING, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP,
-    getMap, mapList, stepKart, driftLevel, itemSpeed, respawnOnTrack, makeRaceMap,
+    KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP,
+    getMap, mapList, stepKart, driftLevel, itemSpeed, respawnOnTrack, makeRaceMap, timeToLand,
     noise: { vnoise, fbm, smoothstep, polyDist },
   };
 });

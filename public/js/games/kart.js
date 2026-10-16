@@ -15,6 +15,7 @@ window.Games.kart = {
     // Snapshot kart row: [idx, x, y, angle*1000, speed, lap, place, item, ammo, flags, kills, deaths, hp, air, fx, roulette]
     const I = KartHud.ICONS;
     const svg = (d, extra = '') => `<svg viewBox="0 0 24 24" class="tc-ic" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
+    const STEP = 1 / 30; // prediction runs at the server's tick, so both agree on every jump and landing
 
     el.innerHTML = `
       <div class="game-wrap">
@@ -78,6 +79,8 @@ window.Games.kart = {
     let latest = null;
     let myIdx = -1;
     let local = null; // predicted state of my kart
+    let predictAcc = 0; // time not yet simulated (less than one STEP)
+    let predPrev = null; // my kart one STEP ago, to draw it smoothly between steps
     let rtt = 80;
     let lastFrame = performance.now();
     let raf = 0;
@@ -127,7 +130,7 @@ window.Games.kart = {
       ShiftLeft: 'drift', ShiftRight: 'drift', KeyX: 'drift', ControlLeft: 'drift',
     };
     function sendInput() { api.socket.emit('game:input', input); }
-    function useItem() { api.socket.emit('game:use'); }
+    function useItem() { if (!local?.falling) api.socket.emit('game:use'); }
     const typing = (e) => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
     function onKey(e, down) {
       // Key releases still count while typing in chat, or a held key would stay down for good.
@@ -270,12 +273,16 @@ window.Games.kart = {
       if (err > 140 || spinning || s.phase !== 'racing') {
         Object.assign(local, { x: sx, y: sy, angle, heading: angle, speed });
         if (err > 140) Object.assign(local, { air, z: null, vz: 0, trackIndex: null });
+        predPrev = null;
       } else {
-        local.x += ex * 0.2;
-        local.y += ey * 0.2;
         let da = angle - local.angle;
         da = Math.atan2(Math.sin(da), Math.cos(da));
-        local.angle += da * 0.2;
+        // Nudge the previous step too, so the correction doesn't read as extra speed.
+        for (const st of predPrev ? [local, predPrev] : [local]) {
+          st.x += ex * 0.2;
+          st.y += ey * 0.2;
+          st.angle += da * 0.2;
+        }
         local.speed += (speed - local.speed) * 0.2;
       }
     }
@@ -549,20 +556,29 @@ window.Games.kart = {
       if (chatOpen && !chatWasOpen) release(); // the chat sheet covers the controls
       chatWasOpen = chatOpen;
 
-      // Predict my kart locally so steering feels instant (same item speed factors as the server).
+      // Predict my kart locally so steering feels instant, in fixed server-sized steps
+      // (with the same item speed factors as the server).
       const myRow = latest?.k.find((r) => r[0] === myIdx);
       if (local && !local.dead && !local.falling && latest?.phase === 'racing') {
-        const fl = local.flags || 0;
-        K.stepKart(local, input, dt, map, { speed: (info.speedMul || 1) * K.itemSpeed(fl & F.star, fl & F.shrunk), noFall: true });
-        // Tricks and landings feel instant for your own kart.
-        if (local.trick > 0 && !prev.trick) Sfx.trick?.();
-        prev.trick = local.trick > 0;
-        if (prev.air > 12 && !(local.air > 0)) {
-          Sfx.land?.(Math.min(1, prev.air / 90));
-          if (local.boost > 0 && prev.trickBoost) hud.callout('TRICK BOOST!', { kind: 'small gold', hold: 800 });
+        predictAcc = Math.min(predictAcc + dt, STEP * 4);
+        while (predictAcc >= STEP) {
+          predictAcc -= STEP;
+          predPrev = { x: local.x, y: local.y, angle: local.angle, air: local.air || 0 };
+          const fl = local.flags || 0;
+          K.stepKart(local, input, STEP, map, { speed: (info.speedMul || 1) * K.itemSpeed(fl & F.star, fl & F.shrunk), noFall: true });
+          // Tricks and landings feel instant for your own kart.
+          if (local.trick > 0 && !prev.trick) Sfx.trick?.();
+          prev.trick = local.trick > 0;
+          if (prev.air > 12 && !(local.air > 0)) {
+            Sfx.land?.(Math.min(1, prev.air / 90));
+            if (local.boost > 0 && prev.trickBoost) hud.callout('TRICK BOOST!', { kind: 'small gold', hold: 800 });
+          }
+          prev.trickBoost = !!local.tricked;
+          prev.air = local.air || 0;
         }
-        prev.trickBoost = !!local.tricked;
-        prev.air = local.air || 0;
+      } else {
+        predictAcc = 0;
+        predPrev = null;
       }
       if (local && myRow && latest?.phase === 'racing' && !(myRow[9] & F.dead)) {
         Sfx.engine(Math.abs(local.speed) / K.PHYS.maxSpeed, !!(myRow[9] & (F.boost | F.star)), !!(myRow[9] & F.drift), local.falling ? 0 : local.surface);
@@ -578,8 +594,16 @@ window.Games.kart = {
       const karts = view ? view.karts : [];
       const me = karts.find((k) => k.idx === myIdx);
       if (local && me && !(me.flags & F.dead) && !(me.fx & 1)) {
-        me.x = local.x; me.y = local.y; me.angle = local.angle; me.speed = local.speed;
-        me.air = local.air || 0;
+        // Carry the last step's motion on for the time since it (no added input lag).
+        const pp = predPrev || local;
+        const f = predPrev ? predictAcc / STEP : 0;
+        let da = local.angle - pp.angle;
+        da = Math.atan2(Math.sin(da), Math.cos(da));
+        me.x = local.x + (local.x - pp.x) * f;
+        me.y = local.y + (local.y - pp.y) * f;
+        me.angle = local.angle + da * f;
+        me.speed = local.speed;
+        me.air = Math.max(0, (local.air || 0) + ((local.air || 0) - pp.air) * f);
         me.fx = (me.fx & ~2) | (local.trick > 0 ? 2 : 0);
       }
 
