@@ -16,7 +16,7 @@ const RESPAWN_TIME = 2.5; // arena: seconds dead before respawning
 const SPAWN_SHIELD = 2;
 const KILL_POINTS = 100;
 
-const NO_INPUT = { up: false, down: false, left: false, right: false };
+const NO_INPUT = { up: false, down: false, left: false, right: false, drift: false };
 
 // Kart Battle has two variants:
 //  - race:  laps around a circuit, items, points for placement + hits
@@ -113,7 +113,7 @@ class KartBattle {
     const kart = this.karts.get(player.id);
     if (!kart) return;
     if (event === 'input') {
-      kart.input = { up: !!data?.up, down: !!data?.down, left: !!data?.left, right: !!data?.right };
+      kart.input = { up: !!data?.up, down: !!data?.down, left: !!data?.left, right: !!data?.right, drift: !!data?.drift };
     } else if (event === 'use') {
       if (this.phase === 'racing') this.useItem(kart);
     }
@@ -183,8 +183,12 @@ class KartBattle {
       target.boost = 0;
       target.item = null;
       target.ammo = 0;
+      target.streak = 0;
       // Banana kills on teammates don't count for the dropper.
-      if (attacker && !this.isFriendly(attacker.id, target.id)) attacker.kills++;
+      if (attacker && !this.isFriendly(attacker.id, target.id)) {
+        attacker.kills++;
+        attacker.streak = (attacker.streak || 0) + 1;
+      }
     } else {
       target.spin = SPIN_TIME;
       target.invuln = SPIN_TIME + 1;
@@ -193,6 +197,7 @@ class KartBattle {
     }
     this.room.emit('game:kart:hit', {
       target: target.idx, by: attacker ? attacker.idx : -1, x: Math.round(target.x), y: Math.round(target.y), kill: this.map === 'arena',
+      streak: attacker && this.map === 'arena' ? attacker.streak || 0 : 0,
     });
   }
 
@@ -389,7 +394,9 @@ class KartBattle {
         k.idx, Math.round(k.x), Math.round(k.y), Math.round(k.angle * 1000), Math.round(k.speed),
         Math.max(1, Math.min(this.laps, k.lap)), place.get(k.id), itemCode(k.item), k.ammo,
         (k.spin > 0 ? 1 : 0) | (k.boost > 0 ? 2 : 0) | (k.shield > 0 ? 4 : 0) | (k.finished ? 8 : 0)
-          | (k.invuln > 0 ? 16 : 0) | (k.dead > 0 ? 32 : 0),
+          | (k.invuln > 0 ? 16 : 0) | (k.dead > 0 ? 32 : 0)
+          | (k.drift ? 64 : 0) | (k.drift && K.driftLevel(k.driftTime) >= 1 ? 128 : 0)
+          | (k.drift && K.driftLevel(k.driftTime) >= 2 ? 256 : 0) | (k.drift < 0 ? 512 : 0),
         k.kills, k.deaths,
       ]),
       r: this.rockets.map((r) => [r.id, Math.round(r.x), Math.round(r.y), Math.round(r.angle * 1000)]),

@@ -96,7 +96,16 @@
     offTrackMax: 230,
     drag: 1.4,
     turnRate: 3.1,
+    driftMinSpeed: 260,
+    driftLevels: [0.7, 1.5], // seconds of drifting for blue / orange sparks
+    miniTurbo: [0.55, 1.0], // boost seconds for each level
   };
+
+  function driftLevel(t) {
+    if (t >= PHYS.driftLevels[1]) return 2;
+    if (t >= PHYS.driftLevels[0]) return 1;
+    return 0;
+  }
 
   // ---------- Arena (battle mode) ----------
   const ARENA_SIZE = 2600;
@@ -163,17 +172,40 @@
   function stepKart(kart, input, dt, map) {
     const arena = map === 'arena';
     const spinning = kart.spin > 0;
+    const steer = (input.left ? -1 : 0) + (input.right ? 1 : 0);
     if (spinning) {
       kart.angle += 9 * dt;
       kart.speed *= Math.max(0, 1 - 4 * dt);
+      kart.drift = 0;
+      kart.driftTime = 0;
     } else {
       if (input.up) kart.speed += PHYS.accel * dt;
       else if (input.down) kart.speed -= (kart.speed > 0 ? PHYS.brake : PHYS.accel * 0.6) * dt;
       else kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), PHYS.drag * 100 * dt);
 
-      const steer = (input.left ? -1 : 0) + (input.right ? 1 : 0);
-      const grip = Math.min(1, Math.abs(kart.speed) / 140);
-      kart.angle += steer * PHYS.turnRate * grip * dt * (kart.speed >= 0 ? 1 : -1);
+      // Drifting: hold drift while steering at speed. The kart slides into the
+      // turn; the longer you hold it, the bigger the mini-turbo on release.
+      if (!kart.drift && input.drift && steer && kart.speed > PHYS.driftMinSpeed) {
+        kart.drift = steer;
+        kart.driftTime = 0;
+      }
+      if (kart.drift) {
+        if (!input.drift || kart.speed < PHYS.driftMinSpeed * 0.6) {
+          const level = driftLevel(kart.driftTime);
+          if (level > 0) kart.boost = Math.max(kart.boost || 0, PHYS.miniTurbo[level - 1]);
+          kart.drift = 0;
+          kart.driftTime = 0;
+        } else {
+          kart.driftTime += dt;
+          // Steering tightens or widens the drift but never reverses it.
+          const tight = 1 + 0.55 * steer * kart.drift;
+          kart.angle += kart.drift * PHYS.turnRate * 0.78 * tight * dt;
+          kart.speed -= 60 * dt;
+        }
+      } else {
+        const grip = Math.min(1, Math.abs(kart.speed) / 140);
+        kart.angle += steer * PHYS.turnRate * grip * dt * (kart.speed >= 0 ? 1 : -1);
+      }
     }
 
     let offTrack = false;
@@ -227,6 +259,6 @@
 
   return {
     TRACK_WIDTH, KART_RADIUS, WORLD, CENTERLINE, TANGENTS, N, PHYS, ITEM_BOXES, ITEMS,
-    ARENA, nearestIndex, trackPoint, gridPosition, stepKart, arenaBlocked,
+    ARENA, nearestIndex, trackPoint, gridPosition, stepKart, arenaBlocked, driftLevel,
   };
 });

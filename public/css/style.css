@@ -220,6 +220,20 @@ input:focus, select:focus { border-color: var(--accent); }
 .kart-dead h2 { font-size: 3rem; margin: 0; }
 .kart-dead p { margin: 4px 0; font-size: 1.2rem; }
 .kart-dead .muted { color: #fde2e8; }
+.kart-speedlines {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 0.2s;
+  background: repeating-conic-gradient(from 0deg at 50% 55%, rgba(255,255,255,0.0) 0deg 4deg, rgba(255,255,255,0.22) 4.5deg 5deg, rgba(255,255,255,0) 5.5deg 11deg);
+  -webkit-mask-image: radial-gradient(circle at 50% 55%, transparent 28%, #000 70%);
+  mask-image: radial-gradient(circle at 50% 55%, transparent 28%, #000 70%);
+}
+.kart-speedlines.on { opacity: 1; animation: speedlines 0.25s linear infinite; }
+@keyframes speedlines { 50% { transform: rotate(1.5deg) scale(1.03); } }
+.kart-announce {
+  position: absolute; top: 28%; left: 0; right: 0; text-align: center; font-size: 3.4rem; font-weight: 900; font-style: italic;
+  color: #ffd166; text-shadow: 0 4px 0 #c2410c, 0 0 24px rgba(255,140,0,0.8); pointer-events: none; opacity: 0;
+}
+.kart-announce.show { animation: announce 1.6s ease-out; }
+@keyframes announce { 0% { opacity: 0; transform: scale(2.2); } 15% { opacity: 1; transform: scale(1); } 75% { opacity: 1; } 100% { opacity: 0; transform: translateY(-30px); } }
 .kart-minimap { position: absolute; bottom: 12px; right: 12px; width: 180px; height: 180px; pointer-events: none; }
 .touch-controls { position: absolute; bottom: 12px; left: 0; right: 0; display: none; justify-content: space-between; padding: 0 12px; pointer-events: none; }
 .touch-controls .grp { display: flex; gap: 10px; pointer-events: auto; }

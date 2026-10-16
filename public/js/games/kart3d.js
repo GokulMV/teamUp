@@ -3,6 +3,10 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
 const K = window.KartCore;
 const MOBILE = matchMedia('(pointer: coarse)').matches;
@@ -235,7 +239,9 @@ function sharedKartParts() {
   SHARED.dark = new THREE.MeshStandardMaterial({ color: 0x23262e, roughness: 0.7, metalness: 0.3 });
   SHARED.metal = new THREE.MeshStandardMaterial({ color: 0xc9ced8, roughness: 0.25, metalness: 0.9 });
   SHARED.rubber = new THREE.MeshStandardMaterial({ color: 0x15161a, roughness: 0.95 });
-  SHARED.skin = new THREE.MeshStandardMaterial({ color: 0x1b1f2a, roughness: 0.2, metalness: 0.6 }); // visor
+  SHARED.skins = ['#ffd7b5', '#f1b98c', '#c98b5e', '#8d5a3b', '#ffe0c4'].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }));
+  SHARED.eyeWhite = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
+  SHARED.pupil = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2 });
   SHARED.flame = new THREE.MeshBasicMaterial({ color: 0xff8a1f, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
   SHARED.shield = new THREE.MeshBasicMaterial({ color: 0x60a5fa, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false });
 
@@ -290,8 +296,14 @@ function sharedKartParts() {
     part(new THREE.CylinderGeometry(1.6, 1.6, 9, 8), 2, 16, 4.5, 0, 0, 1.2).toNonIndexed(),
     part(new THREE.CylinderGeometry(1.6, 1.6, 9, 8), 2, 16, -4.5, 0, 0, 1.2).toNonIndexed(),
   ]);
-  SHARED.helmetGeo = part(new THREE.SphereGeometry(6.3, 18, 14), -3, 24, 0);
-  SHARED.visorGeo = part(new THREE.SphereGeometry(6.4, 16, 10, -Math.PI / 2.6, Math.PI / 1.3, Math.PI / 3, Math.PI / 3.2), -3, 24, 0, 0, Math.PI / 2, 0);
+  // Cartoon head: skin sphere, cap in the player's color, big eyes facing forward (+x).
+  SHARED.headGeo = part(new THREE.SphereGeometry(7, 20, 16), -3, 25, 0);
+  SHARED.capGeo = mergeGeometries([
+    part(new THREE.SphereGeometry(7.4, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2.1), -3, 26, 0, 0, 0, 0.12).toNonIndexed(),
+    part(new THREE.CylinderGeometry(5, 5, 0.9, 16, 1, false, -Math.PI / 2, Math.PI), 2.5, 27.6, 0, 0, 0, 0.1).toNonIndexed(),
+  ]);
+  SHARED.eyesGeo = mergeGeometries([2.6, -2.6].map((z) => part(new THREE.SphereGeometry(2.1, 12, 10), 2.6, 25, z).toNonIndexed()));
+  SHARED.pupilsGeo = mergeGeometries([2.6, -2.6].map((z) => part(new THREE.SphereGeometry(1.1, 10, 8), 4.4, 25, z).toNonIndexed()));
   SHARED.flameGeo = new THREE.ConeGeometry(2.4, 10, 10);
   SHARED.flameGeo.rotateZ(Math.PI / 2);
   SHARED.shieldGeo = new THREE.SphereGeometry(30, 24, 16);
@@ -341,8 +353,12 @@ function buildKart(meta, accentHex, isMe) {
   add(S.metalGeo, S.metal);
   add(S.torsoGeo, accentMat);
   add(S.armsGeo, accentMat);
-  add(S.helmetGeo, bodyMat);
-  add(S.visorGeo, S.skin);
+  let hash = 0;
+  for (const ch of meta.name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+  add(S.headGeo, S.skins[hash % S.skins.length]);
+  add(S.capGeo, bodyMat);
+  add(S.eyesGeo, S.eyeWhite);
+  add(S.pupilsGeo, S.pupil);
 
   const wheels = [];
   for (const [x, z, r, w, front] of [[13, 13.5, 6, 5, true], [13, -13.5, 6, 5, true], [-12, 14.5, 7.5, 7, false], [-12, -14.5, 7.5, 7, false]]) {
@@ -375,7 +391,7 @@ function buildKart(meta, accentHex, isMe) {
     label.position.y = 44;
     group.add(label);
   }
-  return { group, chassis, wheels, flames, shield, label, bodyMat, accentMat, steer: 0, lastAngle: null, smoke: 0 };
+  return { group, chassis, wheels, flames, shield, label, bodyMat, accentMat, steer: 0, lastAngle: null, smoke: 0, slide: 0, hop: 0, wasSpin: false, wasDead: false };
 }
 
 // ---------- world builders ----------
@@ -736,6 +752,30 @@ class Kart3D {
     scene.traverse((o) => { if (o.userData.spin) this.spinners.push(o); });
 
     this.camera = new THREE.PerspectiveCamera(62, 1, 2, 12000);
+    if (!MOBILE) {
+      // Bloom makes flames, explosions, item boxes and neon glow.
+      this.composer = new EffectComposer(this.renderer);
+      this.composer.addPass(new RenderPass(scene, this.camera));
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.45, 0.5, 0.82);
+      this.composer.addPass(this.bloom);
+      this.composer.addPass(new OutputPass());
+    }
+
+    // Skid marks: a ring buffer of flat dark quads.
+    this.skidMax = 1600;
+    this.skidIdx = 0;
+    this.skids = new THREE.InstancedMesh(new THREE.PlaneGeometry(5, 9).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x1a1a1a, transparent: true, opacity: 0.4, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }),
+      this.skidMax);
+    const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+    for (let i = 0; i < this.skidMax; i++) this.skids.setMatrixAt(i, zero);
+    this.skids.frustumCulled = false;
+    this.skids.renderOrder = 1;
+    scene.add(this.skids);
+    this.tmpM = new THREE.Matrix4();
+    this.tmpQ = new THREE.Quaternion();
+    this.tmpV = new THREE.Vector3(1, 1, 1);
+    this.effects = []; // short-lived meshes (respawn beams, shockwaves)
     this.camPos = null;
     this.camLook = new THREE.Vector3();
     this.camHeading = 0;
@@ -757,6 +797,9 @@ class Kart3D {
       return mesh;
     });
 
+    this.colBlue = new THREE.Color(0x4da6ff);
+    this.colOrange = new THREE.Color(0xff9a1f);
+    this.colWhite = new THREE.Color(0xfff6d5);
     this.karts = new Map();
     this.rockets = new Map();
     this.bananas = new Map();
@@ -789,6 +832,10 @@ class Kart3D {
     this.renderer.domElement.style.width = `${w}px`;
     this.renderer.domElement.style.height = `${h}px`;
     this.camera.aspect = w / h;
+    if (this.composer) {
+      this.composer.setPixelRatio(this.renderer.getPixelRatio());
+      this.composer.setSize(w, h);
+    }
     this.camera.updateProjectionMatrix();
     this.fire.points.material.uniforms.scale.value = h * 0.9;
     this.smoke.points.material.uniforms.scale.value = h * 0.9;
@@ -829,10 +876,59 @@ class Kart3D {
       const sp = 250 + Math.random() * 200;
       this.fire.emit(x, 10, z, Math.cos(a) * sp, 120 + Math.random() * 200, Math.sin(a) * sp, spark, 6, 0.6, { drag: 1.2, rise: -500 });
     }
+    if (big) this.shockwave(x, z);
     if (this.focus) {
       const d = Math.hypot(this.focus.x - x, this.focus.y - z);
       this.shake = Math.max(this.shake, Math.max(0, 1 - d / 600) * (big ? 14 : 6));
     }
+  }
+
+  addSkid(x, z, angle) {
+    this.tmpQ.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -angle + Math.PI / 2);
+    this.tmpM.compose(new THREE.Vector3(x, 1.0, z), this.tmpQ, this.tmpV);
+    this.skids.setMatrixAt(this.skidIdx, this.tmpM);
+    this.skidIdx = (this.skidIdx + 1) % this.skidMax;
+    this.skids.instanceMatrix.needsUpdate = true;
+  }
+
+  respawnBeam(x, z) {
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(26, 34, 500, 20, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    beam.position.set(x, 250, z);
+    this.scene.add(beam);
+    this.effects.push({ mesh: beam, life: 0.9, max: 0.9, kind: 'beam' });
+    const col = new THREE.Color(0x9be7ff);
+    for (let i = 0; i < 30; i++) {
+      const a = Math.random() * Math.PI * 2;
+      this.fire.emit(x + Math.cos(a) * 30, 5, z + Math.sin(a) * 30, Math.cos(a) * 40, 150 + Math.random() * 200, Math.sin(a) * 40, col, 8, 0.8, { drag: 1 });
+    }
+  }
+
+  shockwave(x, z) {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.7, 1, 40).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    ring.position.set(x, 3, z);
+    this.scene.add(ring);
+    this.effects.push({ mesh: ring, life: 0.5, max: 0.5, kind: 'ring' });
+  }
+
+  updateEffects(dt) {
+    this.effects = this.effects.filter((e) => {
+      e.life -= dt;
+      const p = 1 - e.life / e.max;
+      if (e.kind === 'beam') {
+        e.mesh.material.opacity = 0.6 * (1 - p);
+        e.mesh.scale.set(1 - p * 0.7, 1, 1 - p * 0.7);
+      } else {
+        e.mesh.scale.setScalar(20 + p * 160);
+        e.mesh.material.opacity = 0.8 * (1 - p);
+      }
+      if (e.life > 0) return true;
+      this.scene.remove(e.mesh);
+      e.mesh.geometry.dispose();
+      e.mesh.material.dispose();
+      return false;
+    });
   }
 
   sparkle(x, z) {
@@ -859,9 +955,27 @@ class Kart3D {
       seen.add(k.idx);
       const dead = k.flags & 32;
       kart.group.visible = !dead && !((k.flags & 16) && !(k.flags & 1) && !(k.flags & 4) && Math.floor(now / 90) % 2);
-      if (dead) { kart.lastAngle = null; continue; }
+      if (dead) { kart.lastAngle = null; kart.wasDead = true; continue; }
+      if (kart.wasDead) { kart.wasDead = false; this.respawnBeam(k.x, k.y); }
+      const drifting = k.flags & 64;
+      const driftDir = k.flags & 512 ? -1 : 1;
+      const driftLevel = k.flags & 256 ? 2 : k.flags & 128 ? 1 : 0;
+      // Drifting karts point their nose further into the turn.
+      kart.slide += ((drifting ? driftDir * 0.42 : 0) - kart.slide) * Math.min(1, dt * 8);
       kart.group.position.set(k.x, 0, k.y);
-      kart.group.rotation.y = -k.angle;
+      kart.group.rotation.y = -(k.angle + kart.slide);
+      // Getting hit in a race: the kart pops up and does a flip.
+      const spinNow = !!(k.flags & 1);
+      if (spinNow && !kart.wasSpin) kart.hop = 0.8;
+      kart.wasSpin = spinNow;
+      if (kart.hop > 0) {
+        kart.hop = Math.max(0, kart.hop - dt);
+        const p = 1 - kart.hop / 0.8;
+        kart.group.position.y = Math.sin(p * Math.PI) * 30;
+        kart.chassis.rotation.z = p * Math.PI * 2;
+      } else {
+        kart.chassis.rotation.z = 0;
+      }
 
       // Visual steering estimate from heading change.
       let dAng = kart.lastAngle === null ? 0 : k.angle - kart.lastAngle;
@@ -885,6 +999,11 @@ class Kart3D {
         f.visible = !!boosting;
         if (boosting) f.scale.set(0.8 + Math.random() * 0.8, 1, 1);
       }
+      if (kart.label) {
+        const d = this.camera.position.distanceTo(kart.group.position);
+        const w = Math.max(24, Math.min(90, d * 0.11));
+        kart.label.scale.set(w, w / 4, 1);
+      }
       kart.shield.visible = !!(k.flags & 4);
       if (kart.shield.visible) kart.shield.scale.setScalar(1 + Math.sin(t * 8) * 0.04);
 
@@ -904,7 +1023,19 @@ class Kart3D {
           this.smoke.emit(ex, 8, ez, -cos * 30, 18, -sin * 30, smokeCol, 7, 0.6, { alpha: 0.35, grow: 2.2, drag: 1 });
         }
       }
-      if (!spinning && Math.abs(kart.steer) > 0.6 && Math.abs(k.speed) > 320) {
+      if (drifting) {
+        const sparkCol = driftLevel === 2 ? this.colOrange : driftLevel === 1 ? this.colBlue : this.colWhite;
+        for (const side of [1, -1]) {
+          const wx = k.x - cos * 13 - sin * 15 * side;
+          const wz = k.y - sin * 13 + cos * 15 * side;
+          this.addSkid(wx, wz, k.angle + kart.slide);
+          const n = driftLevel ? 3 : 1;
+          for (let i = 0; i < n; i++) {
+            this.fire.emit(wx, 3, wz, -cos * 60 + (Math.random() - 0.5) * 120, 40 + Math.random() * 90, -sin * 60 + (Math.random() - 0.5) * 120,
+              sparkCol, driftLevel ? 7 : 5, 0.25, { drag: 2, rise: -400 });
+          }
+        }
+      } else if (!spinning && Math.abs(kart.steer) > 0.6 && Math.abs(k.speed) > 320) {
         for (const side of [1, -1]) {
           this.smoke.emit(k.x - cos * 14 - sin * 14 * side, 3, k.y - sin * 14 + cos * 14 * side, 0, 10, 0,
             dustCol, 9, 0.7, { alpha: 0.4, grow: 2, drag: 1 });
@@ -970,6 +1101,7 @@ class Kart3D {
 
     this.fire.update(dt);
     this.smoke.update(dt);
+    this.updateEffects(dt);
 
     // Chase camera
     const focus = view.focus;
@@ -979,7 +1111,7 @@ class Kart3D {
       if (!focus.spinning) {
         let d = focus.angle - this.camHeading;
         d = Math.atan2(Math.sin(d), Math.cos(d));
-        this.camHeading += d * Math.min(1, dt * 5);
+        this.camHeading += d * Math.min(1, dt * 8);
       }
       const arena = this.map === 'arena';
       const back = arena ? 175 : 150;
@@ -1001,8 +1133,17 @@ class Kart3D {
         this.camPos = desired.clone();
         this.camLook.copy(look);
       } else {
-        this.camPos.lerp(desired, 1 - Math.exp(-dt * 7));
-        this.camLook.lerp(look, 1 - Math.exp(-dt * 10));
+        this.camPos.lerp(desired, 1 - Math.exp(-dt * 9));
+        this.camLook.lerp(look, 1 - Math.exp(-dt * 12));
+        // Never let the camera fall in on top of the kart.
+        const dx = this.camPos.x - focus.x;
+        const dz = this.camPos.z - focus.y;
+        const hd = Math.hypot(dx, dz);
+        const minD = (this.camDist ?? back) * 0.85;
+        if (hd < minD && hd > 0.01) {
+          this.camPos.x = focus.x + (dx / hd) * minD;
+          this.camPos.z = focus.y + (dz / hd) * minD;
+        }
       }
       const fov = focus.boost ? 74 : 62;
       this.camera.fov += (fov - this.camera.fov) * Math.min(1, dt * 4);
@@ -1024,7 +1165,8 @@ class Kart3D {
       this.sun.target.position.set(cx, 0, cz);
     }
     this.sky.position.copy(this.camera.position);
-    this.renderer.render(this.scene, this.camera);
+    if (this.composer) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   dispose() {

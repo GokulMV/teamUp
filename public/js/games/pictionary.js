@@ -78,9 +78,12 @@ window.Games.pictionary = {
       api.setSideInfo(info);
     }
 
+    let lastLeft = null;
     const tick = setInterval(() => {
       if (!phase) return;
       const left = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      if (left !== lastLeft && left <= 10 && left > 0 && phase.phase === 'drawing') window.Sfx.tick();
+      lastLeft = left;
       q('[data-timer]').textContent = left;
     }, 250);
 

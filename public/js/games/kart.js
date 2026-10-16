@@ -22,10 +22,12 @@ window.Games.kart = {
           <div class="kart-big" data-big></div>
           <div class="kart-dead hidden" data-dead><h2>💥 Destroyed!</h2><p data-dead-by></p><p class="muted">Respawning…</p></div>
           <canvas class="kart-minimap" data-minimap width="180" height="180"></canvas>
-          <div class="kart-help">Arrows / WASD to drive · Space to fire</div>
+          <div class="kart-speedlines" data-speedlines></div>
+          <div class="kart-announce" data-announce></div>
+          <div class="kart-help">Arrows / WASD drive · Shift drift · Space fire</div>
           <div class="touch-controls">
             <div class="grp"><button data-key="left">◀</button><button data-key="right">▶</button></div>
-            <div class="grp"><button data-key="down">▼</button><button data-key="use">🔥</button><button data-key="up">▲</button></div>
+            <div class="grp"><button data-key="drift">↯</button><button data-key="down">▼</button><button data-key="use">🔥</button><button data-key="up">▲</button></div>
           </div>
         </div>
       </div>`;
@@ -44,7 +46,9 @@ window.Games.kart = {
     let raf = 0;
     let view3d = null;
     let snapCamera = true;
-    const input = { up: false, down: false, left: false, right: false };
+    const input = { up: false, down: false, left: false, right: false, drift: false };
+    const Sfx = window.Sfx;
+    const prev = { item: 0, boost: false, drift: 0, count: null, finished: false };
     const teamMode = () => !!api.room()?.settings.teamMode;
     const colorOf = (meta) => (teamMode() ? api.teamById(meta?.team)?.color : meta?.color) || '#fff';
 
@@ -66,13 +70,21 @@ window.Games.kart = {
     const keyMap = {
       ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
       ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
+      ShiftLeft: 'drift', ShiftRight: 'drift', KeyX: 'drift', ControlLeft: 'drift',
     };
     function sendInput() { api.socket.emit('game:input', input); }
-    function useItem() { api.socket.emit('game:use'); }
+    function useItem() {
+      api.socket.emit('game:use');
+      const item = prev.item;
+      if (!item || latest?.phase !== 'racing') return;
+      if (item === 2 || item === 5) Sfx.rocket();
+      else if (item === 3) Sfx.banana();
+      else if (item === 4) Sfx.shield();
+    }
     const typing = (e) => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
     function onKey(e, down) {
       if (typing(e)) return;
-      if (e.code === 'Space' || e.code === 'KeyE' || e.code === 'ShiftLeft') {
+      if (e.code === 'Space' || e.code === 'KeyE') {
         if (down && !e.repeat) useItem();
         e.preventDefault();
         return;
@@ -257,8 +269,28 @@ window.Games.kart = {
       }
 
       const row = latest.k.find((r) => r[0] === myIdx);
+      // Countdown beeps
+      if (latest.phase === 'countdown') {
+        const n = Math.ceil(latest.countdown - 1);
+        if (n !== prev.count && n > 0 && n <= 3) Sfx.beep();
+        prev.count = n;
+      } else if (latest.phase === 'racing' && prev.count !== 'go') {
+        if (prev.count !== null) Sfx.go();
+        prev.count = 'go';
+      }
+
       if (row) {
         const [, , , , , lap, place, item, ammo, flags, kills, deaths] = row;
+        if (item && !prev.item) Sfx.pickup();
+        prev.item = item;
+        const boosting = !!(flags & 2);
+        const driftLvl = flags & 256 ? 2 : flags & 128 ? 1 : 0;
+        if (boosting && !prev.boost) (prev.drift > 0 && !(flags & 64) ? Sfx.miniTurbo(prev.drift) : Sfx.boost());
+        prev.boost = boosting;
+        prev.drift = flags & 64 ? driftLvl : 0;
+        if (flags & 8 && !prev.finished) Sfx.finish();
+        prev.finished = !!(flags & 8);
+        q('[data-speedlines]').classList.toggle('on', boosting);
         if (arena) {
           q('[data-place]').textContent = `#${place}`;
           q('[data-lap]').textContent = `💥 ${kills} kills`;
@@ -293,6 +325,19 @@ window.Games.kart = {
       }
     }
 
+    function volumeAt(x, y) {
+      if (!local) return 0.5;
+      return Math.max(0.08, 1 - Math.hypot(local.x - x, local.y - y) / 1400);
+    }
+
+    function announce(text) {
+      const a = q('[data-announce]');
+      a.textContent = text;
+      a.classList.remove('show');
+      void a.offsetWidth; // restart the animation
+      a.classList.add('show');
+    }
+
     function feed(html) {
       const f = q('[data-feed]');
       const div = document.createElement('div');
@@ -314,6 +359,12 @@ window.Games.kart = {
       if (local && !local.dead && latest?.phase === 'racing') {
         const finished = myRow && myRow[9] & 8;
         K.stepKart(local, finished ? { down: true } : input, dt, info.map);
+      }
+
+      if (local && myRow && latest?.phase === 'racing' && !(myRow[9] & 32)) {
+        Sfx.engine(Math.abs(local.speed) / K.PHYS.maxSpeed, !!(myRow[9] & 2), !!(myRow[9] & 64));
+      } else {
+        Sfx.engineStop();
       }
 
       const view = interpolated();
@@ -349,18 +400,24 @@ window.Games.kart = {
       onEvent(event, data) {
         if (event === 'game:kart:init') onInit(data);
         else if (event === 'game:kart:state') onState(data);
-        else if (event === 'game:kart:boom') view3d?.explode(data.x, data.y, false);
+        else if (event === 'game:kart:boom') { view3d?.explode(data.x, data.y, false); Sfx.explosion(volumeAt(data.x, data.y) * 0.5); }
         else if (event === 'game:kart:hit') {
           view3d?.explode(data.x, data.y, data.kill);
+          Sfx.explosion(volumeAt(data.x, data.y));
           const victim = kartsByIdx.get(data.target);
           const killer = data.by >= 0 ? kartsByIdx.get(data.by) : null;
           const name = (m) => `<b style="color:${colorOf(m)}">${api.escapeHtml(m?.name || '?')}</b>`;
           if (data.kill) feed(killer ? `${name(killer)} 💥 ${name(victim)}` : `${name(victim)} 🍌 slipped`);
+          const STREAKS = { 2: 'DOUBLE KILL!', 3: 'TRIPLE KILL!', 4: 'MULTI KILL!', 5: 'RAMPAGE!', 7: 'UNSTOPPABLE!', 10: 'GODLIKE!' };
+          if (data.streak >= 3 && STREAKS[data.streak] && killer) feed(`🔥 ${name(killer)} ${STREAKS[data.streak].toLowerCase().replace('!', '')}`);
           if (data.target === myIdx) {
             q('[data-dead-by]').innerHTML = killer ? `by ${name(killer)}` : '';
+            Sfx.hit();
             if (!data.kill) api.toast('💥 You got hit!');
           } else if (data.by === myIdx) {
-            api.toast(`🎯 You ${data.kill ? 'destroyed' : 'hit'} ${victim?.name || 'someone'}!`);
+            Sfx.kill();
+            if (data.kill && STREAKS[data.streak]) { announce(STREAKS[data.streak]); Sfx.streak(); }
+            else api.toast(`🎯 You ${data.kill ? 'destroyed' : 'hit'} ${victim?.name || 'someone'}!`);
           }
         } else if (event === 'game:kart:finish' && data.idx === myIdx) {
           api.toast(`🏁 You finished #${data.place} in ${data.time.toFixed(1)}s!`);
@@ -368,6 +425,7 @@ window.Games.kart = {
       },
       unmount() {
         cancelAnimationFrame(raf);
+        Sfx.engineStop();
         clearInterval(resend);
         clearInterval(pinger);
         view3d?.dispose();

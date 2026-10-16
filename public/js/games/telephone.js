@@ -43,6 +43,7 @@ window.Games.telephone = {
     }
 
     function showTask(t) {
+      if (!task || task.step !== t.step) window.Sfx.pop();
       task = t;
       submitted = t.submitted;
       deadline = Date.now() + t.timeLeft * 1000;

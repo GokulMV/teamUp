@@ -314,6 +314,12 @@
   }
   $('btn-again').onclick = () => emit('game:stop');
 
+  // ---------- Sound toggle ----------
+  const muteBtn = $('btn-mute');
+  const syncMute = () => { muteBtn.textContent = window.Sfx.muted ? '🔇' : '🔊'; };
+  muteBtn.onclick = () => { window.Sfx.setMuted(!window.Sfx.muted); syncMute(); };
+  syncMute();
+
   // ---------- Chat ----------
   $('chat-form').onsubmit = (e) => {
     e.preventDefault();
@@ -329,7 +335,7 @@
     div.className = 'msg';
     if (m.system) {
       div.classList.add('sys');
-      if (m.good) div.classList.add('good');
+      if (m.good) { div.classList.add('good'); window.Sfx.correct(); }
       div.textContent = m.text;
     } else {
       const team = state.room?.settings.teamMode ? teamById(m.team) : null;
