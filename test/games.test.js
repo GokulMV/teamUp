@@ -652,7 +652,7 @@ test('kart items: none removes the boxes, weapons only rolls weapons, custom lis
   ctx.game.broadcast();
   assert.deepStrictEqual((await state).x, []);
   const kart = ctx.game.karts.get(ctx.players[0].id);
-  Object.assign(kart, { x: K.MAPS.grandprix.itemBoxes[0].x, y: K.MAPS.grandprix.itemBoxes[0].y });
+  Object.assign(kart, { x: K.MAPS.grandprix.itemBoxes[0].x, y: K.MAPS.grandprix.itemBoxes[0].y, trackIndex: null });
   ctx.run(0.2);
   assert.strictEqual(kart.item, null);
   ctx.room.destroy();
@@ -1101,7 +1101,7 @@ test('falling into water, lava or a gap fishes you back onto the road', async ()
   const state = once(host, 'game:kart:state');
   game.broadcast();
   const row = (await state).k.find((r) => r[0] === me.idx);
-  assert.strictEqual(row.length, 15, 'air and fx appended to the kart row');
+  assert.strictEqual(row.length, 16, 'air and fx appended to the kart row (then the item roulette)');
   assert.ok(row[14] & 1 && row[14] & 4, 'falling into lava');
   Object.assign(me, { shield: 0, invuln: 0, ghost: 0 });
   game.damage(me, 50, null, 'rocket');
@@ -1155,20 +1155,20 @@ test('item roulette: the item is decided at pickup but can only be used once the
   assert.deepStrictEqual(c.init.itemList, ['boost'], 'the roulette knows which items can come up');
   const k = c.game.karts.get(c.players[0].id);
   const box = c.game.map.itemBoxes[0];
-  Object.assign(k, { x: box.x, y: box.y, speed: 0 });
+  Object.assign(k, { x: box.x, y: box.y, speed: 0, trackIndex: null });
   c.run(1 / 30);
   assert.strictEqual(k.item, 'boost');
   assert.ok(k.roulette > 1 && k.roulette <= KC.ITEM_FX.roulette, `roulette started (${k.roulette})`);
   const { row } = await latestRow(c, k.idx);
   assert.strictEqual(row[7], KC.ITEMS.indexOf('boost') + 1);
-  assert.strictEqual(row[13], 110, 'hundredths of a second of roulette left, at the end of the row');
+  assert.strictEqual(row[15], 110, 'hundredths of a second of roulette left, at the end of the row');
   assert.strictEqual(c.game.useItem(k), false, 'cannot use the item while the roulette spins');
   c.run(0.6);
   assert.strictEqual(c.game.useItem(k), false);
   assert.strictEqual(k.item, 'boost');
   c.run(0.6);
   assert.strictEqual(k.roulette, 0);
-  assert.strictEqual((await latestRow(c, k.idx)).row[13], 0);
+  assert.strictEqual((await latestRow(c, k.idx)).row[15], 0);
   assert.strictEqual(c.game.useItem(k), true);
   assert.ok(k.boost > 0);
   assert.strictEqual(k.item, null);
@@ -1202,8 +1202,9 @@ test('bouncer: bounces off walls and obstacles, comes back for its owner, breaks
   assert.ok(!game.shots.includes(shell), 'shattered');
   assert.ok(booms.some((e) => e.kind === 'bouncer'), 'with a little blast');
 
-  // A rival in its path takes the hit.
+  // A rival in its path takes the hit (holding nothing: a trailing banana or mine would block it).
   place(0, 1000, 400); place(1, 1250, 400);
+  Object.assign(b, { item: null, ammo: 0 });
   Object.assign(a, { item: 'bouncer', ammo: 1 });
   game.useItem(a);
   step(game, 12);
