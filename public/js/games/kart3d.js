@@ -8,6 +8,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { MOBILE, THEMES, tex, part, buildRace, buildArena, loadMoonlit } from './kart3d/world.js';
+import { buildDriver } from './kart3d/driver.js';
 
 const K = window.KartCore;
 
@@ -41,9 +42,11 @@ class Particles {
         attribute float size; attribute float alpha; varying vec3 vColor; varying float vAlpha;
         uniform float scale;
         void main() {
-          vColor = color; vAlpha = alpha;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = size * scale / -mv.z;
+          vColor = color;
+          // Fade out right in front of the lens and cap the size, so no puff ever fills the screen.
+          vAlpha = alpha * clamp((-mv.z - 25.0) / 60.0, 0.0, 1.0);
+          gl_PointSize = min(size * scale / -mv.z, scale * 0.35);
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: `
@@ -113,9 +116,6 @@ function sharedKartParts() {
   SHARED.dark = new THREE.MeshStandardMaterial({ color: 0x23262e, roughness: 0.7, metalness: 0.3 });
   SHARED.metal = new THREE.MeshStandardMaterial({ color: 0xc9ced8, roughness: 0.25, metalness: 0.9 });
   SHARED.rubber = new THREE.MeshStandardMaterial({ color: 0x15161a, roughness: 0.95 });
-  SHARED.skins = ['#ffd7b5', '#f1b98c', '#c98b5e', '#8d5a3b', '#ffe0c4'].map((c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.6 }));
-  SHARED.eyeWhite = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3 });
-  SHARED.pupil = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2 });
   SHARED.head = new THREE.MeshStandardMaterial({ color: 0xfff4d6, emissive: 0xfff1c2, emissiveIntensity: 1.6 });
   SHARED.tail = new THREE.MeshStandardMaterial({ color: 0xff2a2a, emissive: 0xff1a1a, emissiveIntensity: 1.2 });
   SHARED.flame = new THREE.MeshBasicMaterial({ color: 0xff8a1f, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
@@ -133,12 +133,14 @@ function sharedKartParts() {
     part(new RoundedBoxGeometry(16, 6, 5, 2, 2), -2, 7, 12.5),
     part(new RoundedBoxGeometry(16, 6, 5, 2, 2), -2, 7, -12.5),
   ]);
+  // Rear wing and hood stripe in a darker shade of the kart colour; in team mode the wing's
+  // end plates and a stripe along its top carry the team colour.
   SHARED.accentGeo = mergeGeometries([
     part(new THREE.BoxGeometry(5, 1.6, 27), -19, 18, 0),
-    part(new THREE.BoxGeometry(4, 6, 1.4), -19, 15, 13),
-    part(new THREE.BoxGeometry(4, 6, 1.4), -19, 15, -13),
     part(new THREE.BoxGeometry(24, 0.6, 4), 6, 10.7, 0),
   ]);
+  SHARED.plateGeo = mergeGeometries([13, -13].map((z) => part(new THREE.BoxGeometry(4, 6, 1.4), -19, 15, z)));
+  SHARED.teamStripeGeo = new THREE.BoxGeometry(2, 0.5, 27.2).translate(-19, 19, 0);
   SHARED.darkGeo = mergeGeometries([
     part(new THREE.BoxGeometry(40, 2, 18), 0, 3, 0),
     part(new THREE.BoxGeometry(4, 3, 26), 24, 4, 0),
@@ -154,27 +156,38 @@ function sharedKartParts() {
   ]);
   SHARED.headlightGeo = mergeGeometries([6.5, -6.5].map((z) => part(new THREE.BoxGeometry(1.2, 2.4, 4), 25.6, 6, z)));
   SHARED.taillightGeo = mergeGeometries([8, -8].map((z) => part(new THREE.BoxGeometry(1, 2, 4), -17.6, 7, z)));
-  // Driver: torso and arms (jersey), cartoon head with a cap and big eyes facing forward (+x).
-  SHARED.torsoGeo = part(new THREE.CylinderGeometry(4.2, 5.5, 10, 12), -3, 15, 0);
-  SHARED.armsGeo = mergeGeometries([
-    part(new THREE.CylinderGeometry(1.6, 1.6, 9, 8), 2, 16, 4.5, 0, 0, 1.2),
-    part(new THREE.CylinderGeometry(1.6, 1.6, 9, 8), 2, 16, -4.5, 0, 0, 1.2),
-  ]);
-  SHARED.headGeo = part(new THREE.SphereGeometry(7, 20, 16), -3, 25, 0);
-  SHARED.capGeo = mergeGeometries([
-    part(new THREE.SphereGeometry(7.4, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2.1), -3, 26, 0, 0, 0, 0.12),
-    part(new THREE.CylinderGeometry(5, 5, 0.9, 16, 1, false, -Math.PI / 2, Math.PI), 2.5, 27.6, 0, 0, 0, 0.1),
-  ]);
-  SHARED.eyesGeo = mergeGeometries([2.6, -2.6].map((z) => part(new THREE.SphereGeometry(2.1, 12, 10), 2.6, 25, z)));
-  SHARED.pupilsGeo = mergeGeometries([2.6, -2.6].map((z) => part(new THREE.SphereGeometry(1.1, 10, 8), 4.4, 25, z)));
   SHARED.flameGeo = new THREE.ConeGeometry(2.4, 10, 10).rotateZ(Math.PI / 2);
   SHARED.shieldGeo = new THREE.SphereGeometry(30, 24, 16);
   SHARED.ready = true;
   return SHARED;
 }
 
-// Name tag (and, in the arena, a health bar) drawn on a canvas sprite.
-function makeLabel(text, color) {
+// Name tags: the site font on a dark pill, a dot in the player's colour, a team-colour underline
+// in team mode and (arena) a health bar. They keep a constant size in the world (so perspective
+// shrinks the far ones) but never grow past a fixed size on screen up close.
+// The canvas is 256x88; without a health bar only its top 64 rows are shown.
+const LABEL_W = 58; // world units
+const LABEL_TOP = 38; // the tag sits just above the driver's head
+const labelRedraws = new Set();
+let labelFont = 'system-ui, sans-serif';
+document.fonts?.load('700 30px Inter').then((faces) => {
+  if (!faces.length) return;
+  labelFont = 'Inter, system-ui, sans-serif';
+  for (const redraw of labelRedraws) redraw();
+}).catch(() => {});
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function makeLabel(text, color, teamColor) {
+  const name = text.length > 12 ? `${text.slice(0, 11).trim()}…` : text;
   const c = document.createElement('canvas');
   c.width = 256; c.height = 88;
   const ctx = c.getContext('2d');
@@ -182,35 +195,54 @@ function makeLabel(text, color) {
   texture.colorSpace = THREE.SRGBColorSpace;
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false }));
   sprite.renderOrder = 10;
-  sprite.center.set(0.5, 0.2);
-  let shown = -1;
-  const draw = (hp) => {
-    const bucket = hp === null ? -2 : Math.round(hp / 4);
-    if (bucket === shown) return;
+  sprite.center.set(0.5, 1); // anchored at the top so the pill stays put when the bar appears
+  let shown = null;
+  let rows = 64;
+  let width = LABEL_W;
+  const size = (w) => {
+    width = w;
+    sprite.scale.set(w, (w * rows) / 256, 1);
+    sprite.position.y = LABEL_TOP + (w * 64) / 256;
+  };
+  const draw = (hp, force) => {
+    const bucket = hp === null ? -1 : Math.round(hp / 4);
+    if (bucket === shown && !force) return;
+    rows = hp === null ? 64 : 88;
+    texture.repeat.set(1, rows / 88);
+    texture.offset.set(0, 1 - rows / 88);
+    size(width);
     shown = bucket;
     ctx.clearRect(0, 0, 256, 88);
-    ctx.font = 'bold 34px "Trebuchet MS", sans-serif';
-    const w = Math.min(250, ctx.measureText(text).width + 44);
-    ctx.fillStyle = 'rgba(15,10,35,0.65)';
-    ctx.beginPath(); ctx.roundRect((256 - w) / 2, 4, w, 46, 23); ctx.fill();
+    ctx.font = `700 30px ${labelFont}`;
+    const w = Math.min(248, ctx.measureText(name).width + 58);
+    const x = (256 - w) / 2;
+    ctx.fillStyle = 'rgba(14,10,36,0.72)';
+    roundRect(ctx, x, 6, w, 40, 20); ctx.fill();
     ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc((256 - w) / 2 + 22, 27, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + 22, 26, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2; ctx.stroke();
     ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle';
-    ctx.fillText(text, (256 - w) / 2 + 38, 28, w - 46);
+    ctx.fillText(name, x + 38, 27, w - 50);
+    if (teamColor) {
+      ctx.fillStyle = teamColor;
+      roundRect(ctx, x + 14, 50, w - 28, 4, 2); ctx.fill();
+    }
     if (hp !== null) {
-      ctx.fillStyle = 'rgba(15,10,35,0.75)';
-      ctx.beginPath(); ctx.roundRect(48, 60, 160, 20, 10); ctx.fill();
+      ctx.fillStyle = 'rgba(14,10,36,0.78)';
+      roundRect(ctx, 48, 62, 160, 14, 7); ctx.fill();
       const f = Math.max(0, Math.min(1, hp / 100));
-      ctx.fillStyle = f > 0.5 ? '#22c55e' : f > 0.25 ? '#facc15' : '#ef4444';
-      if (f > 0) { ctx.beginPath(); ctx.roundRect(51, 63, 154 * f, 14, 7); ctx.fill(); }
+      ctx.fillStyle = f > 0.5 ? '#4ade80' : f > 0.25 ? '#fbbf24' : '#fb7185';
+      if (f > 0) { roundRect(ctx, 50, 64, Math.max(10, 156 * f), 10, 5); ctx.fill(); }
     }
     texture.needsUpdate = true;
   };
   draw(null);
-  return { sprite, draw };
+  const redraw = () => draw(shown === -1 ? null : shown * 4, true);
+  labelRedraws.add(redraw);
+  return { sprite, draw, size, dispose: () => labelRedraws.delete(redraw) };
 }
 
-function buildKart(meta, accentHex, isMe, night) {
+function buildKart(meta, teamColor, isMe, night) {
   const S = sharedKartParts();
   const group = new THREE.Group();
   const chassis = new THREE.Group(); // rolls/pitches; wheels stay on the ground
@@ -218,10 +250,11 @@ function buildKart(meta, accentHex, isMe, night) {
   const meshes = [];
 
   const bodyMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(meta.color), roughness: 0.32, metalness: 0.35 });
-  const accentMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(accentHex), roughness: 0.4, metalness: 0.2 });
+  const accentMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(meta.color).multiplyScalar(0.8), roughness: 0.38, metalness: 0.3 });
   const add = (geo, mat, parent = chassis) => {
-    const m = new THREE.Mesh(geo, mat);
-    m.castShadow = true;
+    const m = geo.isMesh ? geo : new THREE.Mesh(geo, mat);
+    mat = m.material;
+    m.castShadow = !m.userData.noShadow;
     m.receiveShadow = true;
     m.userData.mat = mat;
     parent.add(m);
@@ -230,16 +263,13 @@ function buildKart(meta, accentHex, isMe, night) {
   };
   add(S.bodyGeo, bodyMat);
   add(S.accentGeo, accentMat);
+  const teamMat = teamColor ? new THREE.MeshStandardMaterial({ color: new THREE.Color(teamColor), roughness: 0.4, metalness: 0.2 }) : null;
+  add(S.plateGeo, teamMat || accentMat);
+  if (teamMat) add(S.teamStripeGeo, teamMat);
   add(S.darkGeo, S.dark);
   add(S.metalGeo, S.metal);
-  add(S.torsoGeo, accentMat);
-  add(S.armsGeo, accentMat);
-  let hash = 0;
-  for (const ch of meta.name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  add(S.headGeo, S.skins[hash % S.skins.length]);
-  add(S.capGeo, bodyMat);
-  add(S.eyesGeo, S.eyeWhite);
-  add(S.pupilsGeo, S.pupil);
+  const driver = buildDriver(meta.avatar);
+  for (const m of driver.meshes) add(m);
   add(S.headlightGeo, S.head).castShadow = false;
   add(S.taillightGeo, S.tail).castShadow = false;
   S.head.emissiveIntensity = night ? 3 : 1.2;
@@ -271,12 +301,12 @@ function buildKart(meta, accentHex, isMe, night) {
 
   let label = null;
   if (!isMe) {
-    label = makeLabel(meta.name, accentHex);
-    label.sprite.position.y = 38;
+    label = makeLabel(meta.name, meta.color, teamColor);
+    label.sprite.visible = false;
     group.add(label.sprite);
   }
   return {
-    group, chassis, wheels, flames, shield, label, meshes, ghosted: false,
+    group, chassis, wheels, flames, shield, label, meshes, ghosted: false, halo: driver.halo, hitAt: -99, lastHp: 100,
     steer: 0, lastAngle: null, smoke: 0, slide: 0, hop: 0, wasSpin: false, wasDead: false,
   };
 }
@@ -322,6 +352,13 @@ function projectileModels() {
 }
 
 // ---------- the renderer ----------
+// Chase-camera poses: distance behind, height, look-ahead and look-at height.
+const CAM = {
+  race: { back: 132, up: 72, look: 110, at: 18 },
+  arena: { back: 150, up: 90, look: 110, at: 18 },
+  grid: { back: 120, up: 114, look: 150, at: 12 },
+};
+
 export class Kart3D {
   constructor(container, opts) {
     this.map = K.getMap(opts.mapId, opts.type, { reverse: !!opts.reverse });
@@ -412,6 +449,20 @@ export class Kart3D {
     this.tmpQ = new THREE.Quaternion();
     this.tmpV = new THREE.Vector3(1, 1, 1);
     this.effects = []; // short-lived meshes (respawn beams, shockwaves)
+    // Body panels flying off smashed karts: one pooled instanced mesh.
+    const debrisMax = 48;
+    const debris = new THREE.InstancedMesh(new RoundedBoxGeometry(6, 3, 4, 1, 1), new THREE.MeshStandardMaterial({ roughness: 0.45, metalness: 0.3 }), debrisMax);
+    debris.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    for (let i = 0; i < debrisMax; i++) { debris.setMatrixAt(i, zero); debris.setColorAt(i, new THREE.Color(0xffffff)); }
+    debris.frustumCulled = false;
+    scene.add(debris);
+    this.debris = {
+      mesh: debris, max: debrisMax, next: 0, active: false,
+      pos: Array.from({ length: debrisMax }, () => new THREE.Vector3()),
+      vel: Array.from({ length: debrisMax }, () => new THREE.Vector3()),
+      axis: Array.from({ length: debrisMax }, () => new THREE.Vector3(0, 1, 0)),
+      spin: new Float32Array(debrisMax), life: new Float32Array(debrisMax),
+    };
 
     // Item boxes
     const boxMat = new THREE.MeshStandardMaterial({ map: tex.box(), transparent: true, opacity: 0.92, emissive: 0x332244, roughness: 0.3 });
@@ -453,11 +504,10 @@ export class Kart3D {
   }
 
   setKarts(list, myIdx, teamColorOf) {
-    for (const k of this.karts.values()) this.scene.remove(k.group);
+    for (const k of this.karts.values()) { this.scene.remove(k.group); k.label?.dispose(); }
     this.karts.clear();
     for (const meta of list) {
-      const accent = teamColorOf(meta) || '#f8fafc';
-      const kart = buildKart(meta, accent, meta.idx === myIdx, this.theme.night);
+      const kart = buildKart(meta, teamColorOf(meta), meta.idx === myIdx, this.theme.night);
       this.scene.add(kart.group);
       this.karts.set(meta.idx, kart);
     }
@@ -469,8 +519,13 @@ export class Kart3D {
     this.shakeAmt = Math.max(this.shakeAmt, Math.max(0, 1 - d / 700) * amount);
   }
 
-  // kind: rocket | mine | bomb | kill | hit | bullet
-  explode(x, z, kind = 'rocket', radius = 60) {
+  groundY(x, z) {
+    return this.map.heightAt ? this.map.heightAt(x, z) || 0 : 0;
+  }
+
+  // kind: rocket | mine | bomb | kill | hit | bullet. `color` is the victim's kart colour (kills).
+  explode(x, z, kind = 'rocket', radius = 60, color = null) {
+    if (kind === 'kill') this.killBurst(x, z, radius, color);
     if (kind === 'bullet') {
       for (let i = 0; i < 6; i++) {
         const a = Math.random() * Math.PI * 2;
@@ -504,6 +559,65 @@ export class Kart3D {
     }
     if (big) this.ring(x, z, 0xffb347, radius * 1.6, 0.5);
     this.shake(x, z, big ? 14 * Math.min(1.5, scale) : 6);
+  }
+
+  // A smashed kart: a hot core flash, confetti in its colour and a few tumbling body panels.
+  killBurst(x, z, radius, color) {
+    const y = this.groundY(x, z);
+    const col = new THREE.Color(color || '#ffffff');
+    const white = new THREE.Color(0xffffff);
+    for (let i = 0; i < 36; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 120 + Math.random() * 220;
+      this.smoke.emit(x, y + 16, z, Math.cos(a) * sp, 260 + Math.random() * 260, Math.sin(a) * sp,
+        i % 3 ? col : white, 6, 1 + Math.random() * 0.5, { drag: 1.4, rise: -300 });
+    }
+    const flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex.spark(), color: 0xfff1c2, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+    flash.position.set(x, y + 18, z);
+    flash.scale.setScalar(0.01);
+    flash.renderOrder = 4;
+    this.scene.add(flash);
+    this.effects.push({ mesh: flash, life: 0.37, max: 0.37, kind: 'flash', radius });
+    const D = this.debris;
+    for (let n = 0; n < 6; n++) {
+      const i = D.next;
+      D.next = (D.next + 1) % D.max;
+      const a = Math.random() * Math.PI * 2;
+      const sp = 140 + Math.random() * 160;
+      D.pos[i].set(x, y + 14, z);
+      D.vel[i].set(Math.cos(a) * sp, 280 + Math.random() * 220, Math.sin(a) * sp);
+      D.axis[i].set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+      D.spin[i] = 6 + Math.random() * 10;
+      D.life[i] = 1.2;
+      D.mesh.setColorAt(i, n % 3 ? col : white);
+    }
+    D.mesh.instanceColor.needsUpdate = true;
+    D.active = true;
+  }
+
+  updateDebris(dt) {
+    const D = this.debris;
+    if (!D.active) return;
+    let alive = false;
+    for (let i = 0; i < D.max; i++) {
+      if (D.life[i] <= 0) continue;
+      D.life[i] -= dt;
+      const p = D.pos[i];
+      const v = D.vel[i];
+      v.y -= 900 * dt;
+      p.addScaledVector(v, dt);
+      const floor = this.groundY(p.x, p.z) + 2;
+      if (p.y < floor) { p.y = floor; v.y *= -0.35; v.x *= 0.6; v.z *= 0.6; D.spin[i] *= 0.6; }
+      this.tmpQ.setFromAxisAngle(D.axis[i], D.spin[i] * (1.2 - D.life[i]));
+      const sc = D.life[i] > 0 ? Math.min(1, D.life[i] / 0.25) : 0;
+      this.tmpV.setScalar(sc);
+      this.tmpM.compose(p, this.tmpQ, this.tmpV);
+      D.mesh.setMatrixAt(i, this.tmpM);
+      if (D.life[i] > 0) alive = true;
+    }
+    this.tmpV.set(1, 1, 1);
+    D.mesh.instanceMatrix.needsUpdate = true;
+    D.active = alive;
   }
 
   shock(x, z, radius) {
@@ -543,9 +657,21 @@ export class Kart3D {
   }
 
   respawnBeam(x, z) {
-    const beam = new THREE.Mesh(new THREE.CylinderGeometry(26, 34, 500, 20, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0x9be7ff, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    beam.position.set(x, 250, z);
+    // A short column of light that fades upward: never a wall of white in front of the camera.
+    const y = this.groundY(x, z);
+    if (!this.beamTex) {
+      const c = document.createElement('canvas');
+      c.width = 4; c.height = 64;
+      const g = c.getContext('2d');
+      const grad = g.createLinearGradient(0, 0, 0, 64);
+      grad.addColorStop(0, 'rgba(255,255,255,0)'); grad.addColorStop(0.7, 'rgba(255,255,255,0.45)'); grad.addColorStop(1, '#fff');
+      g.fillStyle = grad; g.fillRect(0, 0, 4, 64);
+      this.beamTex = new THREE.CanvasTexture(c);
+    }
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(22, 30, 160, 20, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x9be7ff, map: this.beamTex, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    beam.position.set(x, y + 80, z);
+    this.ring(x, z, 0x9be7ff, 70, 0.6);
     this.scene.add(beam);
     this.effects.push({ mesh: beam, life: 0.9, max: 0.9, kind: 'beam' });
     const col = new THREE.Color(0x9be7ff);
@@ -568,15 +694,19 @@ export class Kart3D {
       e.life -= dt;
       const p = 1 - e.life / e.max;
       if (e.kind === 'beam') {
-        e.mesh.material.opacity = 0.6 * (1 - p);
+        e.mesh.material.opacity = 0.45 * (1 - p);
         e.mesh.scale.set(1 - p * 0.7, 1, 1 - p * 0.7);
+      } else if (e.kind === 'flash') {
+        const age = e.max - e.life;
+        e.mesh.scale.setScalar(Math.max(0.01, Math.min(1, age / 0.12) * e.radius * 2.2));
+        e.mesh.material.opacity = Math.max(0, 1 - age / e.max);
       } else {
         e.mesh.scale.setScalar(10 + p * e.radius);
         e.mesh.material.opacity = 0.85 * (1 - p);
       }
       if (e.life > 0) return true;
       this.scene.remove(e.mesh);
-      e.mesh.geometry.dispose();
+      if (!e.mesh.isSprite) e.mesh.geometry.dispose(); // sprites share one geometry
       e.mesh.material.dispose();
       return false;
     });
@@ -600,7 +730,7 @@ export class Kart3D {
   }
 
   // view: { karts:[{idx,x,y,angle,speed,flags,hp}], shots:[[id,kind,x,y,a,prog]], mines:[[id,x,y,armed]],
-  //         bananas:[[id,x,y]], boxes:[0|1], focus }
+  //         bananas:[[id,x,y]], boxes:[0|1], countdown, focus: {idx,x,y,angle,spinning,boost,grid,snap} }
   update(view, dt, now) {
     const t = now / 1000;
     const flameCol = [new THREE.Color(0xffe066), new THREE.Color(0xff8c1a), new THREE.Color(0xff4d00)];
@@ -654,12 +784,9 @@ export class Kart3D {
         if (w.front) w.pivot.rotation.y = -kart.steer * 0.45;
       }
 
-      if (kart.label) {
-        const d = this.camera.position.distanceTo(kart.group.position);
-        const w = Math.max(24, Math.min(90, d * 0.11));
-        kart.label.sprite.scale.set(w, w * (88 / 256), 1);
-        kart.label.draw(this.arena ? k.hp : null);
-      }
+      if (kart.halo) kart.halo.rotation.y = t;
+      if (k.hp < kart.lastHp) kart.hitAt = t;
+      kart.lastHp = k.hp;
       const boosting = k.flags & 2;
       const cos = Math.cos(k.angle);
       const sin = Math.sin(k.angle);
@@ -746,9 +873,35 @@ export class Kart3D {
     this.fire.update(dt);
     this.smoke.update(dt);
     this.updateEffects(dt);
+    this.updateDebris(dt);
     this.updateCamera(view.focus, dt, t);
+    this.updateLabels(view, now, t);
     if (this.composer) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
+  }
+
+  // Name tags: only the 8 karts nearest the camera (re-sorted 4 times a second), only at a
+  // readable distance, never during the countdown; arena health bars while hurt or just hit.
+  updateLabels(view, now, t) {
+    const c = this.camera.position;
+    if (!this.labelSet || now - this.labelSortAt > 250 || view.focus?.snap) {
+      this.labelSortAt = now;
+      const near = view.karts.filter((k) => !(k.flags & 32) && this.karts.get(k.idx)?.label)
+        .map((k) => [k.idx, (k.x - c.x) ** 2 + (k.y - c.z) ** 2])
+        .sort((a, b) => a[1] - b[1]);
+      this.labelSet = new Set(near.slice(0, 8).map((e) => e[0]));
+    }
+    for (const k of view.karts) {
+      const kart = this.karts.get(k.idx);
+      if (!kart?.label) continue;
+      const d = c.distanceTo(kart.group.position);
+      const on = kart.group.visible && this.labelSet.has(k.idx) && !view.countdown && d > 110 && d < 1500;
+      kart.label.sprite.visible = on;
+      if (!on) continue;
+      kart.label.size(Math.min(LABEL_W, d * 0.2));
+      kart.label.sprite.material.opacity = d > 1150 ? 1 - (d - 1150) / 350 : 1;
+      kart.label.draw(this.arena && (k.hp < 100 || t - kart.hitAt < 3) ? k.hp : null);
+    }
   }
 
   updateShots(list, dt, flameCol, smokeCol) {
@@ -846,21 +999,29 @@ export class Kart3D {
         d = Math.atan2(Math.sin(d), Math.cos(d));
         this.camHeading += d * Math.min(1, dt * 8);
       }
-      const back = this.arena ? 175 : 150;
-      const up = this.arena ? 105 : 78;
+      // During the countdown a high grid cam looks over the karts ahead; after GO it eases
+      // (about 0.9 s) into the chase cam.
+      const gridTarget = focus.grid ? 1 : 0;
+      if (focus.snap || this.gridMix === undefined) this.gridMix = gridTarget;
+      else this.gridMix += (gridTarget - this.gridMix) * (1 - Math.exp(-dt * 3));
+      const chase = this.arena ? CAM.arena : CAM.race;
+      const mix = (key) => chase[key] + (CAM.grid[key] - chase[key]) * this.gridMix;
+      const back = mix('back');
       const ch = Math.cos(this.camHeading);
       const sh = Math.sin(this.camHeading);
-      // In the arena, pull the camera in so walls and obstacles never block the view.
+      // In the arena, pull the camera in when a wall or obstacle is behind the kart, and lift it
+      // so it looks over the top instead of into the driver's head.
       let dist = back;
       if (this.arena) {
         for (let d = 20; d <= back; d += 10) {
-          if (this.map.blocked(focus.x - ch * d, focus.y - sh * d, 18)) { dist = Math.max(45, d - 25); break; }
+          if (this.map.blocked(focus.x - ch * d, focus.y - sh * d, 18)) { dist = Math.max(90, d - 25); break; }
         }
       }
-      this.camDist = this.camDist === undefined ? dist : this.camDist + (dist - this.camDist) * Math.min(1, dt * (dist < this.camDist ? 14 : 3));
-      const camUp = up * (0.55 + 0.45 * (this.camDist / back));
+      this.camDist = this.camDist === undefined || focus.snap ? dist : this.camDist + (dist - this.camDist) * Math.min(1, dt * (dist < this.camDist ? 14 : 3));
+      const camUp = mix('up') + Math.max(0, back - this.camDist) * 0.6;
+      const ahead = mix('look');
       const desired = new THREE.Vector3(focus.x - ch * this.camDist, camUp, focus.y - sh * this.camDist);
-      const look = new THREE.Vector3(focus.x + ch * 70, 14, focus.y + sh * 70);
+      const look = new THREE.Vector3(focus.x + ch * ahead, mix('at'), focus.y + sh * ahead);
       if (!this.camPos || focus.snap) {
         this.camPos = desired.clone();
         this.camLook.copy(look);
@@ -877,8 +1038,10 @@ export class Kart3D {
           this.camPos.z = focus.y + (dz / hd) * minD;
         }
       }
-      const fov = focus.boost ? 74 : 62;
-      this.camera.fov += (fov - this.camera.fov) * Math.min(1, dt * 4);
+      // Keep at least ~74 degrees of horizontal view, so portrait phones still see the corners.
+      const base = Math.max(62, Math.min(88, (2 * Math.atan(Math.tan((37 * Math.PI) / 180) / this.camera.aspect) * 180) / Math.PI));
+      const fov = base + (focus.boost ? 10 : 0);
+      this.camera.fov = focus.snap ? fov : this.camera.fov + (fov - this.camera.fov) * Math.min(1, dt * 4);
       this.camera.updateProjectionMatrix();
       this.camera.position.copy(this.camPos);
       if (this.shakeAmt > 0.01) {
@@ -897,6 +1060,21 @@ export class Kart3D {
       this.sun.target.position.set(cx, 0, cz);
     }
     this.sky.position.copy(this.camera.position);
+    // Rivals right next to the lens would fill the screen, and one sitting on the line between the
+    // camera and your kart would hide it: don't draw them.
+    const cp = this.camera.position;
+    const fx = focus ? focus.x - cp.x : 0;
+    const fz = focus ? focus.y - cp.z : 0;
+    const fd2 = fx * fx + fz * fz;
+    for (const [idx, kart] of this.karts) {
+      if (idx === focus?.idx || !kart.group.visible) continue;
+      const p = kart.group.position;
+      const dx = p.x - cp.x;
+      const dz = p.z - cp.z;
+      if (dx * dx + (p.y - cp.y) ** 2 + dz * dz < 70 * 70) { kart.group.visible = false; continue; }
+      const along = fd2 > 0 ? (dx * fx + dz * fz) / fd2 : 1;
+      if (along > 0 && along < 0.8 && Math.abs(dx * fz - dz * fx) / Math.sqrt(fd2) < 24) kart.group.visible = false;
+    }
   }
 
   dispose() {

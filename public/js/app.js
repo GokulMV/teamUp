@@ -62,7 +62,7 @@
       { key: 'arenaKillLimit', type: 'seg', label: 'Kill limit', def: 0, options: [[0, 'Off'], [5, '5'], [10, '10'], [15, '15'], [25, '25']], show: (s) => s.kartMode === 'arena' },
       { key: 'kartBots', type: 'stepper', label: 'CPU drivers', hint: 'Fill the grid with AI', def: 0, min: 0, max: 15 },
       { key: 'kartBotSkill', type: 'seg', label: 'CPU skill', def: 'normal', options: [['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']], show: (s) => (s.kartBots ?? 0) > 0 },
-      { key: 'kartClass', type: 'seg', label: 'Speed', def: 'standard', options: [['chill', 'Chill'], ['standard', 'Standard'], ['turbo', 'Turbo']] },
+      { key: 'kartClass', type: 'seg', label: 'Speed', def: 'standard', options: [['chill', 'Chill'], ['standard', 'Std'], ['turbo', 'Turbo']] },
       { key: 'kartItems', type: 'seg', label: 'Items', def: 'all', adv: true, block: true, options: [['all', 'All items'], ['weapons', 'Weapons only'], ['none', 'No items'], ['custom', 'Custom']] },
       { key: 'kartItemList', type: 'items', label: 'Pick items', def: ITEM_IDS, adv: true, block: true, show: (s) => (s.kartItems ?? 'all') === 'custom' },
       { key: 'kartBoxRespawn', type: 'seg', label: 'Item boxes', def: 'normal', adv: true, options: [['rare', 'Rare'], ['normal', 'Normal'], ['frequent', 'Lots']], show: (s) => (s.kartItems ?? 'all') !== 'none' },
@@ -140,6 +140,8 @@
     teamById,
     setSideInfo(info) { state.sideInfo = info || {}; renderPlayerList(); },
     focusChat() { if (matchMedia('(pointer: fine)').matches) $('chat-input').focus(); },
+    toggleChat: () => toggleChat(),
+    openMenu: (anchor) => openMenu(anchor),
   };
 
   // ---------- Avatars ----------
@@ -289,6 +291,12 @@
     $('side-count').textContent = `${online}`;
     $('btn-stop').classList.toggle('hidden', !(isHost() && room.state === 'playing'));
     document.body.classList.toggle('in-lobby', room.state === 'lobby');
+    // Kart games take over the screen: on phones the page jumps back to the top and chat becomes a sheet.
+    const kartPlaying = room.state === 'playing' && room.settings.mode === 'kart';
+    if (kartPlaying && !document.body.classList.contains('kart-playing') && matchMedia('(pointer: coarse), (max-width: 980px)').matches) window.scrollTo(0, 0);
+    document.body.classList.toggle('kart-playing', kartPlaying);
+    if (!kartPlaying) { toggleChat(false); closeMenu(); }
+    $('chat-input').placeholder = room.state === 'playing' && room.settings.mode === 'pictionary' ? 'Chat or type your guess…' : 'Chat…';
 
     if (room.state === 'lobby') {
       unmountGame();
@@ -564,13 +572,14 @@
     const p = me();
     if (!p) return;
     const card = $('me-card');
-    const sig = `${p.name}|${p.avatar}`;
+    const kart = state.room.settings.mode === 'kart';
+    const sig = `${p.name}|${p.avatar}|${kart}`;
     const nameInput = card.querySelector('input');
     if (sig === meSig || (nameInput && document.activeElement === nameInput)) return;
     meSig = sig;
     card.innerHTML = `
       <span title="Change avatar" data-avatar>${avatarHtml(p.avatar)}</span>
-      <div class="me-info"><small>You</small><input maxlength="16" value="${escapeHtml(p.name)}" aria-label="Your name"></div>
+      <div class="me-info"><small>${kart ? 'Your driver' : 'You'}</small><input maxlength="16" value="${escapeHtml(p.name)}" aria-label="Your name"></div>
       <button class="icon-btn" data-avatar title="Change avatar" aria-label="Change avatar">🎭</button>`;
     card.querySelectorAll('[data-avatar]').forEach((el) => { el.onclick = () => { state.avatar = p.avatar; openAvatarModal(); }; });
     const input = card.querySelector('input');
@@ -642,33 +651,39 @@
       $('results-players').innerHTML = '';
       return;
     }
-    $('results-title').textContent = r.map === 'arena' ? '💥 Arena battle results' : `${MODE_ICONS[r.mode]} ${MODE_NAMES[r.mode]} results`;
+    const nobody = r.mode === 'kart' && r.map === 'arena' && r.players.every((p) => !p.score);
+    $('results-title').textContent = nobody ? 'Nobody got smashed!' : r.map === 'arena' ? '💥 Arena battle results' : `${MODE_ICONS[r.mode]} ${MODE_NAMES[r.mode]} results`;
     $('results-teams').innerHTML = (r.teams || []).map((t, i) => `
       <div class="team-score" style="--team:${t.color}">${i === 0 ? '🏆 ' : ''}${t.name}<b>${t.score}</b></div>`).join('');
 
+    const arena = r.mode === 'kart' && r.map === 'arena';
     const extraFor = (p) => {
-      if (r.mode === 'kart' && r.map === 'arena') return `${p.kills} kills · ${p.deaths} deaths`;
+      if (arena) return `${p.kills} KO${p.kills === 1 ? '' : 's'} · ${p.deaths} death${p.deaths === 1 ? '' : 's'}`;
       if (r.mode === 'kart') return `${p.finished ? `${p.time.toFixed(1)}s` : 'DNF'}${p.hits ? ` · ${p.hits} hits` : ''}`;
       return '';
     };
-    const top = r.players.slice(0, 3);
-    const order = [top[1], top[0], top[2]];
-    $('podium').innerHTML = order.map((p, i) => {
+    // Players with the same score (and, in the arena, the same deaths) share a rank: "=1".
+    const ranks = [];
+    r.players.forEach((p, i) => {
+      const q = r.players[i - 1];
+      ranks.push(q && q.score === p.score && (!arena || q.deaths === p.deaths) ? ranks[i - 1] : i + 1);
+    });
+    const rankLabel = (i) => (ranks.filter((x) => x === ranks[i]).length > 1 ? `=${ranks[i]}` : `${ranks[i]}`);
+    const podiumText = (p) => {
+      if (arena) return extraFor(p);
+      if (r.mode === 'kart') return p.finished ? `${p.time.toFixed(1)}s` : 'DNF';
+      return `${p.score} pts`;
+    };
+    const order = [1, 0, 2];
+    $('podium').innerHTML = order.map((i, slot) => {
+      const p = r.players[i];
       if (!p) return '';
-      const cls = ['second', 'first', 'third'][i];
-      const rank = { first: 1, second: 2, third: 3 }[cls];
+      const cls = ['second', 'first', 'third'][slot];
       return `<div class="step ${cls}">${avatarHtml(p.avatar, '', r.teamMode ? teamById(p.team)?.color : null)}
-        <span class="nm">${escapeHtml(p.name)}</span><span class="pts">${p.score} pts</span><div class="block">${rank}</div></div>`;
+        <span class="nm">${escapeHtml(p.name)}</span><span class="pts">${podiumText(p)}</span><div class="block">${rankLabel(i)}</div></div>`;
     }).join('');
-    $('results-players').innerHTML = r.players.slice(3).map((p, i) => `<li><span class="rank">${i + 4}</span>${avatarHtml(p.avatar)}
+    $('results-players').innerHTML = r.players.slice(3).map((p, i) => `<li><span class="rank">${rankLabel(i + 3)}</span>${avatarHtml(p.avatar)}
       <span class="nm">${escapeHtml(p.name)}</span><span class="extra">${extraFor(p)}</span><span class="pts">${p.score}</span></li>`).join('');
-    if (r.mode === 'kart') {
-      // Kart details for the podium too.
-      $('podium').querySelectorAll('.step').forEach((el, i) => {
-        const p = order.filter(Boolean)[i];
-        if (p) el.querySelector('.pts').textContent = `${p.score} pts · ${extraFor(p)}`;
-      });
-    }
   }
   $('btn-again').onclick = () => emit('game:stop');
 
@@ -677,6 +692,37 @@
   const syncMute = () => { muteBtn.textContent = window.Sfx.muted ? '🔇' : '🔊'; };
   muteBtn.onclick = () => { window.Sfx.setMuted(!window.Sfx.muted); syncMute(); };
   syncMute();
+
+  // ---------- Chat sheet and game menu (kart on phones) ----------
+  function toggleChat(open = !document.body.classList.contains('chat-open')) {
+    document.body.classList.toggle('chat-open', open);
+    if (open) { closeMenu(); setTimeout(() => $('chat-log').scrollTo(0, $('chat-log').scrollHeight), 0); }
+  }
+  $('btn-chat').onclick = () => toggleChat();
+  $('chat-backdrop').onclick = () => toggleChat(false);
+  function closeMenu() { $('game-menu').classList.add('hidden'); }
+  function openMenu(anchor) {
+    const menu = $('game-menu');
+    if (!menu.classList.contains('hidden')) { closeMenu(); return; }
+    const r = anchor.getBoundingClientRect();
+    menu.querySelector('[data-act="sound"] span').textContent = window.Sfx.muted ? 'Sound off' : 'Sound on';
+    menu.querySelector('[data-act="stop"]').classList.toggle('hidden', !(isHost() && state.room?.state === 'playing'));
+    menu.style.top = `${r.bottom + 6}px`;
+    menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
+    menu.classList.remove('hidden');
+  }
+  $('game-menu').addEventListener('click', (e) => {
+    const act = e.target.closest('[data-act]')?.dataset.act;
+    if (!act) return;
+    closeMenu();
+    if (act === 'chat') toggleChat(true);
+    else if (act === 'sound') muteBtn.click();
+    else if (act === 'stop') $('btn-stop').click();
+    else if (act === 'leave') $('btn-leave').click();
+  });
+  document.addEventListener('pointerdown', (e) => {
+    if (!e.target.closest('#game-menu, [data-menu]')) closeMenu();
+  });
 
   // ---------- Chat ----------
   $('chat-form').onsubmit = (e) => {

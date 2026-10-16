@@ -67,6 +67,7 @@
       </button>
       <div class="topbar-right">
         <span id="player-count" class="pill"></span>
+        <button id="btn-chat" class="icon-btn chat-toggle" title="Chat" aria-label="Chat"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg></button>
         <button id="btn-mute" class="icon-btn" title="Sound on/off">🔊</button>
         <button id="btn-stop" class="btn small danger hidden">End game</button>
         <button id="btn-leave" class="btn small ghost">Leave</button>
@@ -78,7 +79,7 @@
         <!-- Lobby -->
         <div id="view-lobby" class="view">
           <div class="lobby">
-            <section class="panel glass lobby-games">
+            <section class="panel glass lobby-games"><div class="panel-scroll">
               <div class="panel-head"><h2>Choose a game</h2><span id="host-note" class="muted small"></span></div>
               <div id="game-cards" class="game-cards">
                 <button class="game-card" data-mode="pictionary">
@@ -101,13 +102,13 @@
                 <div class="seg team-only" id="team-count"></div>
                 <button id="btn-shuffle" class="btn small team-only">🔀 Shuffle</button>
               </div>
-            </section>
+            </div></section>
 
-            <section class="panel glass lobby-people">
+            <section class="panel glass lobby-people"><div class="panel-scroll">
               <div class="me-card" id="me-card"></div>
               <div class="panel-head"><h2 id="people-title">Players</h2><span id="people-count" class="pill"></span></div>
               <div id="teams" class="people"></div>
-            </section>
+            </div></section>
           </div>
           <div class="start-bar">
             <p id="lobby-error" class="error" role="alert"></p>
@@ -156,6 +157,14 @@
     </div>
   </div>
 
+  <div id="chat-backdrop" class="chat-backdrop"></div>
+  <div id="game-menu" class="game-menu glass hidden" role="menu">
+    <button data-act="chat" role="menuitem"><span>Chat</span></button>
+    <button data-act="sound" role="menuitem"><span>Sound on</span></button>
+    <button data-act="stop" role="menuitem" class="danger"><span>End game</span></button>
+    <button data-act="leave" role="menuitem"><span>Leave room</span></button>
+  </div>
+
   <div id="toast" class="toast"></div>
 
   <script type="importmap">
@@ -169,6 +178,8 @@
   <script src="/js/sfx.js"></script>
   <script src="/js/draw-board.js"></script>
   <script src="/js/games/pictionary.js"></script>
+  <script src="/js/games/kart-minimap.js"></script>
+  <script src="/js/games/kart-hud.js"></script>
   <script src="/js/games/kart.js"></script>
   <script src="/js/games/telephone.js"></script>
   <script src="/js/app.js"></script>

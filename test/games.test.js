@@ -721,6 +721,7 @@ test('arena health and respawn options', async () => {
   const [a, b] = high.players.map((p) => high.game.karts.get(p.id));
   assert.strictEqual(b.hp, 150);
   assert.strictEqual(high.init.hpMax, 150);
+  assert.strictEqual(high.init.respawn, 4, 'the init payload tells clients how long a respawn takes');
   Object.assign(b, { shield: 0, invuln: 0 });
   high.game.damage(b, 70, a, 'rocket');
   assert.strictEqual(b.hp, 80, 'a rocket no longer takes half your health');
@@ -742,6 +743,7 @@ test('arena health and respawn options', async () => {
   low.game.damage(d, 70, c, 'rocket');
   assert.ok(d.dead > 0, 'one rocket destroys a low-health kart');
   assert.strictEqual(d.dead, 1.5);
+  assert.strictEqual(low.init.respawn, 1.5);
   low.room.destroy();
 });
 

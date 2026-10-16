@@ -1,6 +1,7 @@
 // Scenery for Kart Battle: per-map themes, track/arena geometry, trees, grass, clouds and props.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 export const MOBILE = matchMedia('(pointer: coarse)').matches;
 export const UNITS_PER_METRE = 20; // a kart is ~1.8 m long and 36 units
@@ -113,63 +114,58 @@ export const tex = {
     }
     noise(c, w, h, 400, ['rgba(0,0,0,0.12)', 'rgba(255,255,255,0.08)'], 2);
   })),
+  // Colosseum sand: raked rings, painted centre and outer rings, team-colour corner pads.
   arenaFloor: () => once('arenaFloor', () => canvasTexture(1024, 1024, (c, w, h) => {
-    c.fillStyle = '#2f3a52'; c.fillRect(0, 0, w, h);
-    noise(c, w, h, 6000, ['#2c364d', '#334057', '#2a3349'], 2);
-    c.strokeStyle = 'rgba(255,255,255,0.06)'; c.lineWidth = 2;
-    for (let i = 0; i <= w; i += 32) {
-      c.beginPath(); c.moveTo(i, 0); c.lineTo(i, h); c.stroke();
-      c.beginPath(); c.moveTo(0, i); c.lineTo(w, i); c.stroke();
+    c.fillStyle = '#d8b47c'; c.fillRect(0, 0, w, h);
+    const r = rng(17);
+    for (let i = 0; i < 40; i++) {
+      const x = r() * w; const y = r() * h; const rad = 40 + r() * 120;
+      const g = c.createRadialGradient(x, y, 0, x, y, rad);
+      g.addColorStop(0, r() > 0.5 ? 'rgba(150,105,55,0.08)' : 'rgba(255,236,200,0.08)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = g; c.fillRect(x - rad, y - rad, rad * 2, rad * 2);
     }
+    noise(c, w, h, 8000, ['#cfa96f', '#e0bf8a', '#c89d63'], 2);
     const cx = w / 2;
-    c.lineWidth = 14;
-    c.strokeStyle = 'rgba(255,79,139,0.75)';
-    c.beginPath(); c.arc(cx, cx, 210, 0, Math.PI * 2); c.stroke();
-    c.strokeStyle = 'rgba(255,255,255,0.35)'; c.lineWidth = 6;
-    c.beginPath(); c.arc(cx, cx, 360, 0, Math.PI * 2); c.stroke();
-    c.beginPath(); c.moveTo(cx, 0); c.lineTo(cx, h); c.moveTo(0, cx); c.lineTo(w, cx); c.stroke();
+    c.strokeStyle = 'rgba(120,80,40,0.16)'; c.lineWidth = 2;
+    for (let rad = 64; rad < w * 0.72; rad += 64) { c.beginPath(); c.arc(cx, cx, rad, 0, Math.PI * 2); c.stroke(); }
     const corner = ['#ef4444', '#3b82f6', '#22c55e', '#eab308'];
     [[0, 0], [w, 0], [0, h], [w, h]].forEach(([x, y], i) => {
-      c.fillStyle = `${corner[i]}55`;
+      c.fillStyle = `${corner[i]}4d`;
       c.beginPath(); c.arc(x, y, 190, 0, Math.PI * 2); c.fill();
     });
-    c.strokeStyle = '#facc15'; c.lineWidth = 10;
-    c.strokeRect(20, 20, w - 40, h - 40);
+    c.strokeStyle = 'rgba(255,255,255,0.35)'; c.lineWidth = 6;
+    c.beginPath(); c.arc(cx, cx, 360, 0, Math.PI * 2); c.stroke();
+    c.strokeStyle = 'rgba(255,79,139,0.55)'; c.lineWidth = 14;
+    c.beginPath(); c.arc(cx, cx, 210, 0, Math.PI * 2); c.stroke();
   }, false)),
   basalt: () => once('basalt', () => {
-    const t = canvasTexture(512, 512, (c, w, h) => {
-      c.fillStyle = '#2a2523'; c.fillRect(0, 0, w, h);
-      noise(c, w, h, 6000, ['#241f1d', '#332d2a', '#1d1917', '#3a3330'], 3, 9);
-      const r = rng(41);
-      c.strokeStyle = 'rgba(255,110,30,0.85)';
-      for (let i = 0; i < 26; i++) {
-        let x = r() * w; let y = r() * h;
-        c.lineWidth = 1 + r() * 2.5;
-        c.beginPath(); c.moveTo(x, y);
-        for (let k = 0; k < 6; k++) { x += (r() - 0.5) * 70; y += (r() - 0.5) * 70; c.lineTo(x, y); }
-        c.stroke();
-      }
+    const t = canvasTexture(1024, 1024, (c, w, h) => {
+      c.fillStyle = '#3a312d'; c.fillRect(0, 0, w, h);
+      noise(c, w, h, 14000, ['#332b28', '#433934', '#2c2522', '#4a3f39'], 3, 9);
+      cracks(c, w, h, 'rgba(255,110,30,0.8)');
     });
-    t.repeat.set(5, 5);
+    t.repeat.set(2.5, 2.5);
     return t;
   }),
   basaltGlow: () => once('basaltGlow', () => {
     // Emissive map: only the cracks glow.
-    const t = canvasTexture(512, 512, (c, w, h) => {
+    const t = canvasTexture(1024, 1024, (c, w, h) => {
       c.fillStyle = '#000'; c.fillRect(0, 0, w, h);
-      const r = rng(41);
-      c.strokeStyle = '#ff6a1a';
-      for (let i = 0; i < 26; i++) {
-        let x = r() * w; let y = r() * h;
-        c.lineWidth = 1 + r() * 2.5;
-        c.beginPath(); c.moveTo(x, y);
-        for (let k = 0; k < 6; k++) { x += (r() - 0.5) * 70; y += (r() - 0.5) * 70; c.lineTo(x, y); }
-        c.stroke();
-      }
+      cracks(c, w, h, '#ff6a1a');
     });
-    t.repeat.set(5, 5);
+    t.repeat.set(2.5, 2.5);
     return t;
   }),
+  // Cloth banner with a swallowtail cut and a white diamond.
+  banner: (color) => once(`banner${color}`, () => canvasTexture(64, 144, (c, w, h) => {
+    c.fillStyle = color;
+    c.beginPath(); c.moveTo(0, 0); c.lineTo(w, 0); c.lineTo(w, h); c.lineTo(w / 2, h - 22); c.lineTo(0, h); c.closePath(); c.fill();
+    c.fillStyle = 'rgba(0,0,0,0.18)'; c.fillRect(0, 0, w, 12);
+    c.fillStyle = 'rgba(255,255,255,0.9)';
+    c.beginPath(); c.moveTo(w / 2, 40); c.lineTo(w / 2 + 14, 62); c.lineTo(w / 2, 84); c.lineTo(w / 2 - 14, 62); c.closePath(); c.fill();
+    c.strokeStyle = 'rgba(255,255,255,0.55)'; c.lineWidth = 3;
+    c.beginPath(); c.moveTo(6, 22); c.lineTo(w - 6, 22); c.stroke();
+  }, false)),
   lava: () => once('lava', () => canvasTexture(256, 256, (c, w, h) => {
     const g = c.createLinearGradient(0, 0, w, h);
     g.addColorStop(0, '#ff3d00'); g.addColorStop(0.5, '#ff9100'); g.addColorStop(1, '#ff3d00');
@@ -254,6 +250,40 @@ export const tex = {
   }, false)),
 };
 
+// Glowing basalt cracks: wandering, tapering lines with a few side branches (same seed for the
+// colour and emissive maps so they line up). Drawn 3x3 times shifted so the texture tiles seamlessly.
+function cracks(c, w, h, color) {
+  for (const ox of [-w, 0, w]) {
+    for (const oy of [-h, 0, h]) {
+      c.save();
+      c.translate(ox, oy);
+      crackPass(c, w, h, color);
+      c.restore();
+    }
+  }
+}
+function crackPass(c, w, h, color) {
+  const r = rng(41);
+  c.strokeStyle = color;
+  c.shadowColor = '#ff6a1a';
+  c.shadowBlur = 6;
+  c.lineCap = 'round';
+  const crack = (x, y, a, steps, width) => {
+    for (let k = 0; k < steps; k++) {
+      a += (r() - 0.5) * 0.9;
+      const len = 8 + r() * 18;
+      const nx = x + Math.cos(a) * len;
+      const ny = y + Math.sin(a) * len;
+      c.lineWidth = Math.max(0.6, width * (1 - k / steps));
+      c.beginPath(); c.moveTo(x, y); c.lineTo(nx, ny); c.stroke();
+      if (r() < 0.12 && steps > 6) crack(nx, ny, a + (r() < 0.5 ? 1 : -1) * (0.6 + r() * 0.6), Math.floor(steps / 2), width * 0.6);
+      x = nx; y = ny;
+    }
+  };
+  for (let i = 0; i < 60; i++) crack(r() * w, r() * h, r() * Math.PI * 2, 8 + Math.floor(r() * 10), 0.8 + r() * 1.4);
+  c.shadowBlur = 0;
+}
+
 // ---------- themes ----------
 export const THEMES = {
   meadow: {
@@ -288,7 +318,7 @@ export const THEMES = {
     trees: ['almond', 'casuarina', 'hibiscus'], bushes: ['grape'], grass: true, clouds: 22, hills: 0x5d9b62,
   },
   volcano: {
-    sky: [0x40161a, 0xff8a52], fog: [0x6a2f22, 1300, 5000], hemi: [0xffb38a, 0x2a1410, 0.95], sun: [0xffc28a, 2.0],
+    sky: [0x40161a, 0xff8a52], fog: [0x7a3626, 1900, 6200], hemi: [0xffc29a, 0x5a2a1c, 1.3], sun: [0xffc28a, 2.4],
     ground: () => tex.ground('#2f2826', ['#29221f', '#382f2b', '#221c1a', '#433834']),
     deadTrees: ['almond', 'casuarina'], embers: true, volcanoCone: true, hills: 0x3a2722,
   },
@@ -792,36 +822,43 @@ export function buildArena(scene, map, theme, ctx) {
   const S = map.size;
   const volcano = map.theme === 'volcano';
   const floorMat = volcano
-    ? new THREE.MeshStandardMaterial({ map: tex.basalt(), emissive: 0xffffff, emissiveMap: tex.basaltGlow(), emissiveIntensity: 0.9, roughness: 0.9 })
-    : new THREE.MeshStandardMaterial({ map: tex.arenaFloor(), roughness: 0.75 });
+    ? new THREE.MeshStandardMaterial({ map: tex.basalt(), emissive: 0xffffff, emissiveMap: tex.basaltGlow(), emissiveIntensity: 0.6, roughness: 0.9 })
+    : new THREE.MeshStandardMaterial({ map: tex.arenaFloor(), roughness: 0.95 });
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(S, S), floorMat);
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(S / 2, 0.5, S / 2);
   floor.receiveShadow = true;
   scene.add(floor);
 
-  // Perimeter walls (physics wall is 40 units in from each edge).
-  const wallTex = volcano ? tex.stone(S / 128, 1, '#3a302c', '#241e1b') : tex.hazard().clone();
-  wallTex.needsUpdate = true;
-  wallTex.repeat.set(S / 128, 1);
-  const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.6 });
-  const wallSide = new THREE.MeshStandardMaterial({ color: volcano ? 0x241e1b : 0x374151, roughness: 0.8 });
+  // Perimeter walls (physics wall is 40 units in from each edge): stone, with a padded pink
+  // rail along the top of the Colosseum's.
+  const wallTex = volcano ? tex.stone(S / 128, 1, '#3a302c', '#241e1b') : tex.stone(S / 128, 1, '#a8a29a', '#857e75');
+  const wallMat = new THREE.MeshStandardMaterial({ map: wallTex, roughness: 0.8 });
+  const wallSide = new THREE.MeshStandardMaterial({ color: volcano ? 0x241e1b : 0x8a8379, roughness: 0.85 });
+  const railMat = new THREE.MeshStandardMaterial({ color: 0xff4fa3, roughness: 0.55 });
   for (const [x, z, w, d] of [[S / 2, 20, S, 40], [S / 2, S - 20, S, 40], [20, S / 2, 40, S], [S - 20, S / 2, 40, S]]) {
-    const geo = w < d ? new THREE.BoxGeometry(d, 34, w) : new THREE.BoxGeometry(w, 34, d);
+    const geo = w < d ? new THREE.BoxGeometry(d, 40, w) : new THREE.BoxGeometry(w, 40, d);
     const wall = new THREE.Mesh(geo, [wallSide, wallSide, wallSide, wallSide, wallMat, wallMat]);
     if (w < d) wall.rotation.y = Math.PI / 2;
-    wall.position.set(x, 17, z);
+    wall.position.set(x, 20, z);
     wall.castShadow = true;
     wall.receiveShadow = true;
     scene.add(wall);
+    if (!volcano) {
+      const rail = new THREE.Mesh(new RoundedBoxGeometry(Math.max(w, d) + 4, 6, 44, 2, 2.5), railMat);
+      rail.rotation.y = wall.rotation.y;
+      rail.position.set(x, 43, z);
+      rail.castShadow = true;
+      scene.add(rail);
+    }
   }
 
   const towerMat = new THREE.MeshStandardMaterial({ map: tex.stone(10, 1.4), roughness: 0.85 });
   const towerTopMat = new THREE.MeshStandardMaterial({ map: tex.stone(6, 1), roughness: 0.85 });
   const pillarMat = new THREE.MeshStandardMaterial({ map: tex.stone(4, 1.8), roughness: 0.85 });
   const crateMat = new THREE.MeshStandardMaterial({ map: tex.crate(), roughness: 0.8 });
-  const rockMat = new THREE.MeshStandardMaterial({ color: 0x3b3230, roughness: 1, flatShading: true });
-  const glowMat = new THREE.MeshStandardMaterial({ color: 0xff4f8b, emissive: 0xff4f8b, emissiveIntensity: 0.9 });
+  const rockMat = new THREE.MeshStandardMaterial({ color: 0x3b3230, emissive: 0x2a0d05, roughness: 1, flatShading: true });
+  const glowMat = new THREE.MeshStandardMaterial({ color: 0xff4f8b, emissive: 0xff4f8b, emissiveIntensity: 1.4 });
   const r = rng(13);
   for (const o of map.obstacles) {
     let mesh;
@@ -829,20 +866,43 @@ export function buildArena(scene, map, theme, ctx) {
       mesh = new THREE.Group();
       const base = new THREE.Mesh(new THREE.CylinderGeometry(o.r, o.r + 10, 90, 32), towerMat);
       base.position.y = 45;
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(o.r - 4, 6, 8, 40), glowMat);
-      ring.rotation.x = Math.PI / 2;
-      ring.position.y = 92;
+      const cornice = new THREE.Mesh(new THREE.TorusGeometry(o.r - 2, 8, 8, 40), towerTopMat);
+      cornice.rotation.x = Math.PI / 2;
+      cornice.position.y = 92;
       const top = new THREE.Mesh(new THREE.CylinderGeometry(o.r * 0.55, o.r * 0.75, 70, 24), towerTopMat);
       top.position.y = 125;
-      const orb = new THREE.Mesh(new THREE.IcosahedronGeometry(30, 1), glowMat);
+      const orb = new THREE.Mesh(new THREE.IcosahedronGeometry(20, 1), glowMat);
       orb.position.y = 190;
       ctx.spinners.push(orb);
-      [base, ring, top, orb].forEach((p) => { p.castShadow = true; p.receiveShadow = true; mesh.add(p); });
+      [base, cornice, top, orb].forEach((p) => { p.castShadow = true; p.receiveShadow = true; mesh.add(p); });
+      // Four cloth banners hanging from the top tier, leaning with its slope.
+      const slope = Math.atan2(o.r * 0.2, 70);
+      ['#ff4fa3', '#7c5cff', '#ffb547', '#22d3ee'].forEach((col, i) => {
+        const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+        const banner = new THREE.Mesh(new THREE.PlaneGeometry(36, 80),
+          new THREE.MeshStandardMaterial({ map: tex.banner(col), side: THREE.DoubleSide, alphaTest: 0.5, roughness: 0.8 }));
+        const rad = o.r * 0.65 + 4;
+        banner.position.set(Math.cos(a) * rad, 120, Math.sin(a) * rad);
+        banner.rotation.set(-slope, Math.PI / 2 - a, 0, 'YXZ');
+        banner.castShadow = true;
+        mesh.add(banner);
+      });
     } else if (o.kind === 'pillar') {
       mesh = new THREE.Mesh(new THREE.CylinderGeometry(o.r, o.r, 110, 24), pillarMat);
       mesh.position.y = 55;
     } else if (o.kind === 'rock') {
-      mesh = new THREE.Mesh(new THREE.IcosahedronGeometry(o.r * 1.12, 1), rockMat);
+      // Lumpy low-poly boulder: shared corners move together so the faces stay closed.
+      const geo = new THREE.IcosahedronGeometry(o.r * 1.12, 2);
+      const pos = geo.attributes.position;
+      const seed = r() * 1000;
+      for (let i = 0; i < pos.count; i++) {
+        const x = pos.getX(i); const y = pos.getY(i); const z = pos.getZ(i);
+        const h = Math.sin(Math.round(x) * 12.99 + Math.round(y) * 78.23 + Math.round(z) * 37.72 + seed) * 43758.55;
+        const k = 1 + ((h - Math.floor(h)) - 0.5) * 0.22;
+        pos.setXYZ(i, x * k, y * k, z * k);
+      }
+      geo.computeVertexNormals();
+      mesh = new THREE.Mesh(geo, rockMat);
       mesh.scale.set(1, 0.75 + r() * 0.4, 1);
       mesh.rotation.y = r() * 6;
       mesh.position.y = o.r * 0.3;
