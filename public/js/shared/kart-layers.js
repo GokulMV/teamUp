@@ -39,6 +39,7 @@
   const CELL = 128; // collision lookup grid
   const REACH = KART_R + 34; // solids are listed in every cell within this distance of their footprint
   const NAV = 48; // navigation grid (CPU drivers, the map validator)
+  const NAV_SLOPE = 0.8; // ground steeper than this is no place to drive (you slide off it): not on the grid
   const EDGE = 40; // edge walls stand this far in from the side of the arena (like the flat arenas)
 
   const BOX = 0;
@@ -92,8 +93,8 @@
   // so lookups are cheap and every machine gets the very same numbers.
   //   bowl {x, y, r, height, width, max, jag}: beyond r from (x, y) the ground climbs into cliffs,
   //        height * ((d - r) / width) ^ 2.2 (up to max), made jagged by noise (jag: how much)
-  //   craters [{x, y, r, z, lip}]: inside r the ground dips (a cosine bowl) to z in the middle, with
-  //        a raised lip round the edge
+  //   craters [{x, y, r, z, lip, floor}]: inside r the ground dips to z: flat across the middle
+  //        (`floor` of the radius; 0 for a plain cosine bowl), then steep walls up to a raised lip
   // Between grid points the ground is two flat triangles per cell, split the way the renderer's
   // mesh is, so the wheels sit on exactly the faces you see.
   const TCELL = 32;
@@ -127,8 +128,9 @@
         }
         for (const c of t.craters || []) {
           const d = Math.hypot(x - c.x, y - c.y);
-          if (d < c.r) z += (c.z - z) * (0.5 + 0.5 * Math.cos((Math.PI * d) / c.r));
-          const u = (d - c.r) / (c.r * 0.3);
+          const f = (c.floor || 0) * c.r;
+          if (d < c.r) z += (c.z - z) * (d <= f ? 1 : 0.5 + 0.5 * Math.cos((Math.PI * (d - f)) / (c.r - f)));
+          const u = (d - c.r) / (c.r * 0.22);
           if (c.lip && u > -1 && u < 1) z += c.lip * (0.5 + 0.5 * Math.cos(Math.PI * u));
         }
         h[j * n + i] = z;
@@ -352,6 +354,7 @@
         if (o.s < nextAt) continue;
         const g = land ? land.at(o.x, o.y) : 0;
         if (o.z - thick - g < (pil.min || 60)) continue;
+        if ((pil.avoid || []).some((a) => Math.hypot(o.x - a.x, o.y - a.y) < a.r)) continue; // (a lava pool)
         cyls.push({ x: o.x, y: o.y, r: pil.r || 24, z0: g - 30, z1: o.z - thick + 1, kind: pil.kind || 'pillar' });
         nextAt = o.s + pil.every;
       }
@@ -901,6 +904,8 @@
           if (k + 1 < tops.length && tops[k + 1][0] - z < 1) continue; // the same floor twice (seams)
           if (map.ceilingAt(x, y, z + 0.5) - z < KART_H) continue; // no headroom
           if (map.hazardAt(x, y, z)) continue;
+          const f = map.floorInfo(x, y, z + 0.5, 0, {});
+          if (Math.hypot(f.gx, f.gy) > NAV_SLOPE) continue; // a crater wall, a cliff
           if (map.walls(x, y, z, KART_R - 2, null) > 0) continue;
           const id = xs.length;
           xs.push(x); ys.push(y); zs.push(z); bridgeOf.push(b);
@@ -925,6 +930,10 @@
       const rim = map.edge === 'wall' && (x < lo || y < lo || x > hi || y > hi);
       if (map.walls(x, y, zs[id], KART_R + 10, null) > 0) cost[id] = 1.35;
       else if (rim || map.walls(x, y, zs[id], KART_R + 22, null) > 0) cost[id] = 1.12;
+      // Steep ground pulls a kart sideways: keep to the gentle slopes unless it's the way.
+      const f = map.floorInfo(x, y, zs[id] + 0.5, 0, {});
+      const steep = Math.hypot(f.gx, f.gy);
+      if (steep > 0.45) cost[id] *= 1 + (steep - 0.45) * 6;
       for (const p of map.pads) {
         if (Math.abs(zs[id] - p.z) <= 8 && (xs[id] - p.x) ** 2 + (ys[id] - p.y) ** 2 < (p.r + KART_R) ** 2) { cost[id] = 4; padOf[id] = p.i; }
       }
@@ -1362,12 +1371,12 @@
       terrain: {
         seed: 29, amp: 50, scale: 620, base: 0, kind: 'grass', style: 'lowpoly', flats: plateaus,
         bowl: { x: C, y: C, r: 1170, height: 150, width: 300, max: 760, jag: 0.35 },
-        craters: [{ x: C, y: C, r: 400, z: -100, lip: 20 }],
+        craters: [{ x: C, y: C, r: 440, z: -120, lip: 26, floor: 0.55 }],
       },
       roads: [{
         // An S over the crater: up from the hills in the south-west, over the lava, down to the north-east.
         points: [[C - 1010, C + 400, null], [C - 760, C + 140, 76], [C - 420, C - 110, 182], [C, C, CREST], [C + 420, C + 110, 182], [C + 760, C - 140, 76], [C + 1010, C - 400, null]],
-        w: 190, thick: 18, bank: 70, curb: { w: 10, h: 13 }, pillars: { every: 300, r: 26, min: 60 }, kind: 'viaduct',
+        w: 190, thick: 18, bank: 70, curb: { w: 10, h: 13 }, pillars: { every: 300, r: 26, min: 60, avoid: [{ x: C, y: C, r: 440 }] }, kind: 'viaduct',
       }],
       blocks: [], ramps: [], cyls: [], pads: [], bumpers: [], boosts: [], hazards: [], boxes: [], spawns: [], movers: [], deco: [],
     };

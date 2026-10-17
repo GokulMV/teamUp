@@ -471,7 +471,7 @@ export const THEMES = {
   },
   // The Cinder Bowl: high summer in a volcano's bowl; sky-blue haze far off (exponential fog).
   cinder: {
-    sky: [0x3f93ef, 0xd6ecff], fog: [0xd0e8ff, 2200, 9000], fogExp: 0.00016, hemi: [0x87ceeb, 0x3a5f0b, 1.7], sun: [0xfff0d4, 3.1],
+    sky: [0x3f93ef, 0xd6ecff], fog: [0xd0e8ff, 2200, 9000], fogExp: 0.00016, hemi: [0xd2e8ff, 0x7d8c5a, 1.3], sun: [0xfff0d4, 3.4],
     ground: () => tex.ground('#5ec962', ['#55bd59', '#68d06c']),
     clouds: 22,
   },

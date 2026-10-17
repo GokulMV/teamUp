@@ -37,15 +37,23 @@ const lowpolyMat = () => new THREE.MeshLambertMaterial({ vertexColors: true, fla
 
 // ---------- the ground ----------
 const BANDS = {
-  rock: col('#2b2d2f'), ember: col('#4a2c22'), ash: col('#5a4a40'),
+  rock: col('#2b2d2f'), ember: col('#6a3326'), ash: col('#5a4a40'), basalt: col('#5c4d49'), basaltDark: col('#4a3d3a'), lip: col('#8d847d'),
   grass: col('#5ec962'), grassDark: col('#48b052'), grassLight: col('#7fd86f'),
   dirt: col('#a87b4f'), cliff: col('#8c6239'), cliffDark: col('#6f4a2b'), stone: col('#8f8274'), snow: col('#e6f2ff'),
 };
-// The colour of one face: by height, steepness (up: the y of its normal) and how near the crater.
-function groundColour(h, up, crater, n) {
+// The colour of one face: by height, steepness (up: the y of its normal) and how near the crater
+// (its distance from the middle over the crater's radius). The crater is black basalt down to the
+// lava, a ring of grey rock round its lip, then straight onto grass: crisp edges, no smudges.
+function groundColour(h, up, crater, n, inBowl) {
   const b = BANDS;
-  if (h < -40) return lerpCol(b.rock, b.ember, (h + 100) / 60);
-  if (crater < 1.15) return lerpCol(b.ash, b.grassDark, (crater - 0.95) / 0.2);
+  const edge = 1.04 + (n - 0.5) * 0.06; // a ragged line between rock and grass
+  if (crater < edge - 0.1) return (n > 0.5 ? b.basalt : b.basaltDark).clone().lerp(b.ember, h < -30 ? 0.5 : 0);
+  if (crater < edge) return b.lip.clone().offsetHSL(0, 0, (n - 0.5) * 0.06);
+  if (inBowl) {
+    // Inside the bowl it's all grass: steeper faces just a shade darker.
+    const g = lerpCol(b.grassDark, b.grassLight, 0.35 + h / 140 - (1 - up) * 1.5);
+    return g.offsetHSL(0, 0, (n - 0.5) * 0.05);
+  }
   if (up < 0.72) {
     // Cliffs: earth low down, grey stone higher up, snow on the tops.
     if (h > 520) return lerpCol(b.stone, b.snow, (h - 520) / 140);
@@ -53,7 +61,7 @@ function groundColour(h, up, crater, n) {
   }
   if (h > 560) return b.snow;
   if (h > 150) return lerpCol(b.dirt, b.stone, (h - 150) / 300);
-  if (up < 0.86) return lerpCol(b.dirt, b.grassDark, (up - 0.72) / 0.14);
+  if (up < 0.8) return lerpCol(b.dirt, b.grassDark, (up - 0.72) / 0.08);
   const g = lerpCol(b.grassDark, b.grassLight, 0.35 + h / 140);
   return g.offsetHSL(0, 0, (n - 0.5) * 0.05);
 }
@@ -62,6 +70,7 @@ export function buildLowPolyLand(scene, map) {
   const land = map.land;
   const { n, cell: c, h } = land;
   const crater = (map.terrain.craters || [])[0];
+  const bowl = map.terrain.bowl;
   const quads = (n - 1) * (n - 1);
   const pos = new Float32Array(quads * 18);
   const colour = new Float32Array(quads * 18);
@@ -79,7 +88,8 @@ export function buildLowPolyLand(scene, map) {
     const cx = (a[0] + b[0] + d[0]) / 3;
     const cz = (a[2] + b[2] + d[2]) / 3;
     const cr = crater ? Math.hypot(cx - crater.x, cz - crater.y) / crater.r : 9;
-    const cc = groundColour(mh, up, cr, hash(i, j, t));
+    const inBowl = !!bowl && Math.hypot(cx - bowl.x, cz - bowl.y) < bowl.r + 40;
+    const cc = groundColour(mh, up, cr, hash(i, j, t), inBowl);
     for (const p of v) {
       pos[o] = p.x; pos[o + 1] = p.y; pos[o + 2] = p.z;
       colour[o] = cc.r; colour[o + 1] = cc.g; colour[o + 2] = cc.b;
@@ -136,42 +146,79 @@ export function buildLowPolyLand(scene, map) {
 export function buildLavaPool(scene, map, ctx) {
   const lz = map.liquid.z;
   for (const c of map.terrain.craters || []) {
-    let pool = 0;
-    for (let r = 0; r < c.r; r += 6) if (map.land.at(c.x + r, c.y) < lz && map.land.at(c.x - r, c.y) < lz) pool = r;
+    // The shoreline: at each angle, how far out the ground stays under the lava.
+    const N = 96;
+    const shoreR = [];
+    for (let k = 0; k < N; k++) {
+      const a = (k / N) * TAU;
+      let r = 0;
+      while (r < c.r * 1.2 && map.land.at(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r) < lz) r += 4;
+      shoreR.push(r);
+    }
+    const pool = Math.max(...shoreR);
     if (!pool) continue;
+    // Cracked magma: plates of black crust (Voronoi cells, slowly drifting) split by glowing seams,
+    // with open pools of molten rock between; the seams pulse.
     const mat = new THREE.ShaderMaterial({
-      uniforms: { uTime: ctx.uniforms.uTime, uR: { value: pool + 60 } },
+      uniforms: { uTime: ctx.uniforms.uTime },
       vertexShader: 'varying vec2 vP; void main(){ vP = position.xz; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
       fragmentShader: `
-        uniform float uTime; uniform float uR; varying vec2 vP;
-        float h(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-        float n(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
-          return mix(mix(h(i), h(i + vec2(1.0, 0.0)), f.x), mix(h(i + vec2(0.0, 1.0)), h(i + vec2(1.0, 1.0)), f.x), f.y); }
-        float fbm(vec2 p){ float s = 0.0; float a = 0.5; for (int k = 0; k < 4; k++) { s += n(p) * a; p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; } return s; }
+        uniform float uTime; varying vec2 vP;
+        vec2 h2(vec2 p){ p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3))); return fract(sin(p) * 43758.5453); }
+        float h1(vec2 p){ return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
+        float vn(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+          return mix(mix(h1(i), h1(i + vec2(1.0, 0.0)), f.x), mix(h1(i + vec2(0.0, 1.0)), h1(i + vec2(1.0, 1.0)), f.x), f.y); }
+        // Distance to the nearest cell centre, and how far from a seam (second nearest minus nearest).
+        vec2 cells(vec2 x, float t){
+          vec2 n = floor(x); vec2 f = fract(x);
+          float f1 = 9.0; float f2 = 9.0;
+          for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+            vec2 g = vec2(float(i), float(j));
+            vec2 o = h2(n + g);
+            o = 0.5 + 0.4 * sin(t + 6.2831 * o);
+            vec2 r = g + o - f;
+            float d = dot(r, r);
+            if (d < f1) { f2 = f1; f1 = d; } else if (d < f2) { f2 = d; }
+          }
+          return vec2(sqrt(f1), sqrt(f2) - sqrt(f1));
+        }
         void main() {
-          vec2 p = vP / 70.0;
-          float t = uTime * 0.12;
-          float w = fbm(p + vec2(t, -t * 0.7));
-          float crust = fbm(p * 1.7 - vec2(t * 0.6, t * 0.4) + w * 1.6);
-          float shore = smoothstep(uR * 0.62, uR * 0.98, length(vP));
-          float heat = clamp(1.0 - smoothstep(0.4, 0.58, crust) + shore * 0.45, 0.0, 1.0);
-          vec3 cold = vec3(0.13, 0.03, 0.02);
-          vec3 red = vec3(0.62, 0.1, 0.03);
-          vec3 orange = vec3(1.05, 0.34, 0.05);
-          vec3 yellow = vec3(1.35, 0.9, 0.22);
-          vec3 col = heat < 0.5 ? mix(cold, red, heat * 2.0) : heat < 0.8 ? mix(red, orange, (heat - 0.5) / 0.3) : mix(orange, yellow, (heat - 0.8) / 0.2);
-          col *= 0.85 + 0.15 * sin(uTime * 1.7 + w * 9.0);
+          vec2 p = vP / 46.0;
+          float t = uTime * 0.25;
+          vec2 c = cells(p + vec2(t * 0.15, -t * 0.1), t);
+          float seam = 1.0 - smoothstep(0.0, 0.16, c.y);
+          float pool = smoothstep(0.55, 0.75, vn(p * 0.45 + vec2(-t * 0.2, t * 0.13)));
+          float pulse = 0.8 + 0.2 * sin(uTime * 2.3 + vn(p * 2.0) * 6.0);
+          vec3 crust = mix(vec3(0.05, 0.022, 0.02), vec3(0.13, 0.04, 0.025), vn(p * 3.0)) * (0.75 + 0.5 * c.x);
+          vec3 molten = mix(vec3(0.85, 0.12, 0.01), vec3(1.6, 0.55, 0.05), vn(p * 1.3 + t));
+          vec3 col = mix(crust, molten, max(pool, 0.0));
+          vec3 glow = mix(vec3(0.9, 0.16, 0.01), vec3(2.1, 0.95, 0.15), seam * seam);
+          col = mix(col, glow * pulse, seam * (1.0 - pool * 0.6));
           gl_FragColor = vec4(col, 1.0);
         }`,
     });
-    // The disc is centred on the crater; vP is measured from its middle.
-    const disc = new THREE.Mesh(new THREE.CircleGeometry(pool + 60, 72).rotateX(-Math.PI / 2), mat);
+    // One disc over the whole crater (the walls hide what's above the shore); vP from its middle.
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(pool + 40, 96).rotateX(-Math.PI / 2), mat);
     disc.position.set(c.x, lz, c.y);
     scene.add(disc);
     // Its glow on everything round it.
     const light = new THREE.PointLight(0xff7a2a, 3, pool * 4, 1.4);
     light.position.set(c.x, lz + 60, c.y);
     scene.add(light);
+    // Dark rocks all along the shore, half sunk in the lava.
+    const rocks = [];
+    for (let k = 0; k < N; k++) {
+      if (k % 2 && hash(k, 6, 9) < 0.5) continue;
+      const a = (k / N) * TAU + (hash(k, 3, 9) - 0.5) * 0.05;
+      const rr = shoreR[k] + (hash(k, 4, 9) - 0.5) * 14;
+      const x = c.x + Math.cos(a) * rr;
+      const y = c.y + Math.sin(a) * rr;
+      rocks.push(rock({ x, y, z: lz - 8, s: 20 + hash(k, 5, 9) * 22, seed: 500 + k }, col('#4a3e3b')));
+    }
+    const shore = new THREE.Mesh(faceted(rocks), lowpolyMat());
+    shore.castShadow = true;
+    shore.receiveShadow = true;
+    scene.add(shore);
   }
 }
 
@@ -186,7 +233,7 @@ export function buildRoad(scene, map, road) {
   const th = road.thick;
   const C = {
     asphalt: col('#3a3e4a'), asphaltB: col('#353845'), line: col('#f4f1e8'), red: col('#e5383b'), white: col('#f7f5ef'),
-    fascia: col('#ff8a1f'), concrete: col('#cfc7bb'), under: col('#8d877e'),
+    fascia: col('#ff8a1f'), concrete: col('#ece2d2'), under: col('#a39b8f'),
   };
   const pos = [];
   const cols = [];
