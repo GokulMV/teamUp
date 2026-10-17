@@ -16,7 +16,7 @@ const app = express();
 // can then be cached for a year; anything else must be revalidated on every load.
 app.use((req, res, next) => {
   if (req.query.v) res.set('Cache-Control', 'public, max-age=31536000, immutable');
-  else if (/^\/vendor\/(three|nipplejs|confetti)\//.test(req.path)) res.set('Cache-Control', 'public, max-age=86400');
+  else if (/^\/vendor\/(three|nipplejs|confetti|ios-haptics)\//.test(req.path)) res.set('Cache-Control', 'public, max-age=86400');
   else res.set('Cache-Control', 'no-cache');
   next();
 });
@@ -26,6 +26,8 @@ app.get(['/', '/index.html'], (_req, res) => {
 app.use(express.static(PUBLIC, { index: false, cacheControl: false }));
 // Three.js (3D kart rendering) served straight from node_modules.
 app.use('/vendor/three', express.static(path.join(__dirname, '..', 'node_modules', 'three'), { cacheControl: false }));
+// ios-haptics (Control Room): native haptic ticks in iOS Safari, which has no navigator.vibrate.
+app.use('/vendor/ios-haptics', express.static(path.join(__dirname, '..', 'node_modules', 'ios-haptics'), { cacheControl: false }));
 // Ball & Chain: touch joystick (nipplejs, MIT) and finish-line confetti (canvas-confetti, ISC).
 app.use('/vendor/nipplejs', express.static(path.join(__dirname, '..', 'node_modules', 'nipplejs', 'dist'), { cacheControl: false }));
 app.use('/vendor/confetti', express.static(path.join(__dirname, '..', 'node_modules', 'canvas-confetti', 'dist'), { cacheControl: false }));

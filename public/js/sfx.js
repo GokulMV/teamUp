@@ -375,6 +375,17 @@
       tone(1250, { type: 'triangle', dur: 0.18, vol: 0.16, slide: 0.55 });
       noise({ dur: 0.15, vol: 0.2, filter: 'highpass', from: 3000, to: 1200 });
     },
+    // Control Room: a different click per control type, chimes, buzzers, klaxon and warp.
+    crPress(type) {
+      if (type === 'button') { tone(1180, { type: 'square', dur: 0.05, vol: 0.1 }); tone(590, { type: 'triangle', dur: 0.1, vol: 0.16, delay: 0.012 }); } else if (type === 'toggle') { noise({ dur: 0.05, vol: 0.4, filter: 'highpass', from: 2600, to: 1800 }); tone(240, { type: 'square', dur: 0.05, vol: 0.07 }); } else if (type === 'lever') { noise({ dur: 0.25, vol: 0.35, filter: 'lowpass', from: 900, to: 120 }); tone(140, { type: 'sawtooth', dur: 0.22, vol: 0.12, slide: 0.5 }); } else if (type === 'multi') { tone(780, { type: 'square', dur: 0.045, vol: 0.09 }); noise({ dur: 0.03, vol: 0.2, filter: 'highpass', from: 4200, to: 3000 }); } else tone(type === 'dial' ? 2300 : 1600, { type: 'square', dur: 0.022, vol: 0.05 }); // slider / dial detents
+    },
+    crGood() { [880, 1175, 1568].forEach((f, i) => tone(f, { type: 'sine', dur: 0.2, vol: 0.18, delay: i * 0.06 })); tone(2350, { type: 'triangle', dur: 0.28, vol: 0.05, delay: 0.18 }); },
+    crFail() { tone(110, { type: 'sawtooth', dur: 0.42, vol: 0.2 }); tone(117, { type: 'square', dur: 0.42, vol: 0.1 }); noise({ dur: 0.3, vol: 0.25, filter: 'lowpass', from: 700, to: 80 }); },
+    crAlarm() { [0, 0.44].forEach((d) => { tone(620, { type: 'sawtooth', dur: 0.2, vol: 0.11, delay: d }); tone(880, { type: 'sawtooth', dur: 0.2, vol: 0.11, delay: d + 0.22 }); }); },
+    crEvent() { [0, 0.15, 0.3].forEach((d) => tone(1046, { type: 'square', dur: 0.09, vol: 0.11, delay: d })); },
+    crWarp() { noise({ dur: 2.8, vol: 0.32, filter: 'bandpass', from: 180, to: 5200, q: 0.9 }); tone(70, { type: 'sawtooth', dur: 2.6, vol: 0.12, slide: 9, attack: 0.7 }); },
+    crRelay() { tone(1400, { type: 'sine', dur: 0.08, vol: 0.12, slide: 1.5 }); tone(1900, { type: 'sine', dur: 0.1, vol: 0.1, delay: 0.09, slide: 0.8 }); },
+    crPowerDown() { tone(620, { type: 'sawtooth', dur: 0.9, vol: 0.12, slide: 0.08 }); noise({ dur: 0.5, vol: 0.2, filter: 'lowpass', from: 1200, to: 60 }); },
 
     // ---------- Ball & Chain ----------
     bcPreload() { if (ctx) Object.values(BC_SAMPLES).forEach(loadSample); },

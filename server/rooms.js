@@ -4,6 +4,7 @@ const { Pictionary } = require('./games/pictionary');
 const { KartBattle } = require('./games/kart');
 const { Telephone } = require('./games/telephone');
 const { BallChain } = require('./games/ballchain');
+const { ControlRoom } = require('./games/controlroom');
 
 const MAX_PLAYERS = 30;
 const AVATAR_COUNT = 24; // public/js/avatars.js
@@ -27,6 +28,7 @@ const GAMES = {
   kart: KartBattle,
   telephone: Telephone,
   ballchain: BallChain,
+  controlroom: ControlRoom,
 };
 
 const DEFAULT_SETTINGS = {
@@ -69,6 +71,10 @@ const DEFAULT_SETTINGS = {
   bcLength: 'normal', // short | normal | long (4 / 6 / 8 obstacle sections)
   bcRope: 'normal', // short | normal | long
   bcSabotage: true, // first team to a checkpoint drops a trap on the teams behind
+  // Control Room (Spaceteam-style)
+  crDifficulty: 'pilot', // cadet | pilot | ace
+  crSectors: 5, // 5 | 10 | 0 (endless until destroyed)
+  crComms: 'voice', // voice | relay (tap your order to flash it on your crew's screens)
 };
 
 const WORD_MODES = ['normal', 'hidden', 'combo'];
@@ -84,6 +90,9 @@ const ARENA_HEALTHS = ['low', 'normal', 'high'];
 const MAX_KART_BOTS = 15;
 const BC_COURSES = [1, 3, 5];
 const BC_SIZES = ['short', 'normal', 'long'];
+const CR_DIFFICULTIES = ['cadet', 'pilot', 'ace'];
+const CR_SECTORS = [5, 10, 0];
+const CR_COMMS = ['voice', 'relay'];
 
 function makeCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -275,8 +284,10 @@ class Room {
     if (this.connectedPlayers.length < min) {
       return { ok: false, error: `Need at least ${min} players for this mode` };
     }
-    const why = GameClass.canStart?.(this);
-    if (why) return { ok: false, error: why };
+    // Games may refuse to start with an error string or an { ok: false, error } result.
+    const check = GameClass.canStart?.(this);
+    if (typeof check === 'string') return { ok: false, error: check };
+    if (check && check.ok === false) return check;
     this.game?.stop();
     this.state = 'playing';
     this.lastResults = null;
@@ -420,6 +431,13 @@ class Room {
         if (BC_SIZES.includes(data?.bcLength)) s.bcLength = data.bcLength;
         if (BC_SIZES.includes(data?.bcRope)) s.bcRope = data.bcRope;
         if (typeof data?.bcSabotage === 'boolean') s.bcSabotage = data.bcSabotage;
+        // Control Room options: invalid values are ignored.
+        if (CR_DIFFICULTIES.includes(data?.crDifficulty)) s.crDifficulty = data.crDifficulty;
+        if (data?.crSectors !== undefined) {
+          const n = strictInt(data.crSectors, 0, 10);
+          if (n !== null && CR_SECTORS.includes(n)) s.crSectors = n;
+        }
+        if (CR_COMMS.includes(data?.crComms)) s.crComms = data.crComms;
         this.broadcastState();
         return reply({ ok: true });
       }

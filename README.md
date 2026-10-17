@@ -1,6 +1,6 @@
 # TeamUp 🎮
 
-Browser party games for **up to 30 players** in one room, playable solo or in **teams** (2–4).
+Browser party games for **up to 30 players** in one room, playable solo or in **teams** (2–5).
 No installs for players: share a 4-letter room code or invite link and everyone joins from a phone or laptop.
 
 | Mode | Inspired by | How it plays |
@@ -9,6 +9,7 @@ No installs for players: share a 4-letter room code or invite link and everyone 
 | 📞 **Telephone** | Gartic Phone | Books pass round the group. Modes: **Normal** (write → draw → describe…), **Speedrun**, **Secret** (draw blind), **Knock-off** (memorise a drawing, redraw it), **Complement** (add to the last drawing). Pace and auto/host reveal options, emoji reactions, save albums as images. |
 | 🏎️ **Kart Battle** | Mario Kart / Smash Karts | **3D** karts (Three.js) with drifting + mini-turbos. **Race** on 6 big tracks with climbs, crests, bridges and jumps (Grand Prix, Desert Canyon, Snowy Peaks, Neon City, Coral Coast, Lava Peak; ~50 s laps, tricks off ramps, fall into the sea or lava and get fished back out) or fight in 2 **arenas** (Colosseum, Volcano Crater) with health bars and respawns. 15 power-ups from a slot-machine item roulette: boost, homing rocket, triple rockets, bouncer shell, banana, shield, mine, minigun, bomb, shock wave, ghost, star power, ink splat, comet (hunts the leader) and thunder. |
 | ⛓️ **Ball & Chain** | Fall Guys | Teams of 2-6 stick figures, each tied to their team's giant beach ball by a stretchy rope, drag it through a candy-coloured **3D** obstacle course floating in the sky. **Heave** together for a sync bonus (and to launch the ball off ramps), **brace** to anchor it on slopes, belts and in gusts. 13 obstacle types (pillar slalom, airlock plates, twin keys, wobbly bridges, tilted slide, big slide, conveyors, wind tunnel, sweeper, hammers, bumpers, mud & ice, sync jump), side-by-side lanes, sabotage traps, 1/3/5 courses. |
+| 🎛️ **Control Room** | Spaceteam | Crews of 2-6 each fly a ship. Every phone is a control panel of silly technobabble controls (buttons, switches, faders, dials, selectors, levers) and shows one order, usually for a crewmate's control, so you shout. Done orders fill the sector, missed ones dent the hull. Harder sectors bring asteroid fields (everyone mashes together), blackouts, panel shuffles, wormholes and ion storms. All crews fly at once; furthest sector wins. Cadet / Pilot / Ace, 5 / 10 / endless sectors, Voice or Relay comms (tap your order to flash it on your crew's screens). |
 
 Everyone picks one of 24 avatars, shown in the lobby, chat, player list and on the podium.
 
@@ -31,6 +32,7 @@ npm run dev        # auto-restart on server changes
 - **Kart Battle:** Arrow keys / WASD to drive, Space (or E / Shift) to use an item. On phones, on-screen buttons appear automatically.
 - **Ball & Chain:** WASD / arrows to run, Space to **heave**, hold Shift to **brace**. On phones: a thumb-stick on the left, HEAVE and BRACE buttons on the right. Teams of 2-6: with teams on, the room's teams play as they are (up to 5); with teams off, everyone is split into balanced teams automatically (2-3 players race as one team against the clock).
 - **Pictionary / Telephone:** draw with mouse, finger or stylus. Pick colours, brush sizes, eraser, undo and clear.
+- **Control Room:** tap buttons, switches and selectors; drag faders, dials and levers (mouse wheel and arrow keys work on desktop). Phones buzz on every press.
 
 ## How it works
 
@@ -45,6 +47,8 @@ public/                     browser client (plain HTML/CSS/JS, no build step)
   js/games/kart3d/track.js  race tracks: terrain, road, bridges, rails, ramps, water, lava, landmarks
   js/games/ballchain*.js    Ball & Chain: shared physics + course layouts (-core), client/HUD, 3D view
   js/games/ballchain3d/     course scenery (candy islands, obstacles, arches, sky) and the stick figures
+  js/games/controlroom*.js  Control Room: game client, control widgets, starfield viewport, icons
+  css/controlroom.css       Control Room's console styles
   js/avatars.js             the 24 SVG avatars
   js/sfx.js                 Web Audio sound effects and the generated kart engine
   js/item-icons.js          SVG power-up icons (HUD slot, roulette, lobby picker, kill feed)
@@ -57,6 +61,7 @@ server/
   games/kart.js             authoritative 30 Hz simulation: race laps or arena deathmatch, items
   games/telephone.js        chained write/draw/describe steps + reveal
   games/ballchain.js        teams, courses, ropes/heave/brace physics at 30 Hz, checkpoints, sabotage, scoring
+  games/controlroom.js      crews, panels, orders, hull/sectors, team events, relay comms
 ```
 
 - **Server-authoritative**: the server owns all game state; clients send inputs and guesses. The Pictionary word is only ever sent to the drawer and players who've guessed it.

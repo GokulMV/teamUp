@@ -140,6 +140,15 @@ textarea { resize: vertical; min-height: 70px; }
 .t-tel { background: linear-gradient(160deg, rgba(34, 211, 238, 0.4), rgba(124, 92, 255, 0.25)); }
 .t-kart { background: linear-gradient(160deg, rgba(255, 181, 71, 0.45), rgba(255, 79, 163, 0.25)); }
 @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+/* 4+ games: three per row, and a short last row stretches to fill it */
+@media (min-width: 561px) {
+  .game-tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); max-width: 640px; }
+  .game-tile { grid-column: span 2; }
+  .game-tile:last-child:nth-child(3n + 2), .game-tile:nth-last-child(2):nth-child(3n + 1) { grid-column: span 3; min-height: 112px; }
+  .game-tile:last-child:nth-child(3n + 1) { grid-column: span 6; min-height: 100px; }
+  .game-tile:nth-child(4) { animation-delay: 0.24s; }
+  .game-tile:nth-child(5) { animation-delay: 0.32s; }
+}
 
 .join-card { padding: 26px; display: flex; flex-direction: column; gap: 14px; max-width: 420px; width: 100%; justify-self: end; animation: rise 0.6s 0.1s both; }
 .avatar-picker { display: flex; align-items: center; justify-content: center; gap: 14px; }
@@ -794,8 +803,16 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
 .chat-ticker div.out { opacity: 0; }
 
 /* ---------- Responsive ---------- */
+@media (min-width: 1101px) {
+  .game-cards { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .game-card { grid-column: span 2; }
+  .game-card:last-child:nth-child(3n + 2), .game-card:nth-last-child(2):nth-child(3n + 1) { grid-column: span 3; min-height: 0; flex-direction: row; align-items: center; gap: 14px; }
+  .game-card:last-child:nth-child(3n + 1) { grid-column: span 6; min-height: 0; flex-direction: row; align-items: center; gap: 14px; }
+}
 @media (max-width: 1100px) {
-  .game-card { min-height: 0; }
+  .game-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .game-card { min-height: 0; flex-direction: row; align-items: center; gap: 12px; }
+  .game-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
 }
 @media (max-width: 980px) {
   body { overflow: auto; }
@@ -841,13 +858,16 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
   body.kart-playing .kart-tool.tool-menu, body.kart-playing .kart-tool.tool-chat { display: grid; }
 }
 @media (max-width: 560px) {
-  .game-tiles { grid-template-columns: 1fr; }
+  .game-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .game-tiles .game-tile { min-height: 96px; padding: 12px; }
+  .game-tiles .game-tile .tile-art { top: 8px; right: 10px; font-size: 1.9rem; }
+  .game-tiles .game-tile:last-child:nth-child(odd) { grid-column: 1 / -1; min-height: 76px; }
   .game-cards { gap: 8px; }
-  .game-card { padding: 10px 30px 10px 10px; gap: 8px; min-height: 58px; }
-  .game-card .gc-art { font-size: 1.6rem; }
-  .game-card b { font-size: 0.98rem; }
-  .game-card small { display: none; }
-  .game-tile { min-height: 0; padding: 14px 70px 14px 14px; }
+  .game-card { flex-direction: column; align-items: flex-start; gap: 4px; padding: 11px 12px; }
+  .game-card .gc-art { font-size: 1.7rem; }
+  .game-card b { font-size: 1rem; }
+  .game-card small { font-size: 0.76rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .game-card:last-child:nth-child(odd) { flex-direction: row; align-items: center; gap: 12px; }
   .word-tiles i { width: 22px; height: 32px; font-size: 1rem; }
   .game-bar .info { display: none; }
 }

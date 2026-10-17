@@ -14,8 +14,8 @@
 
   const socket = io({ transports: ['websocket', 'polling'] });
 
-  const MODE_NAMES = { pictionary: 'Pictionary', kart: 'Kart Battle', telephone: 'Telephone', ballchain: 'Ball & Chain' };
-  const MODE_ICONS = { pictionary: '🎨', kart: '🏎️', telephone: '📞', ballchain: '⛓️' };
+  const MODE_NAMES = { pictionary: 'Pictionary', kart: 'Kart Battle', telephone: 'Telephone', ballchain: 'Ball & Chain', controlroom: 'Control Room' };
+  const MODE_ICONS = { pictionary: '🎨', kart: '🏎️', telephone: '📞', ballchain: '⛓️', controlroom: '🎛️' };
 
   // Settings shown in the lobby for each game, rendered by renderSettings().
   //   type: toggle | stepper | seg | slider | cards | maps | items | text
@@ -82,6 +82,17 @@
       { key: 'bcCourses', type: 'seg', label: 'Courses', hint: 'Per match', def: 3, options: [[1, '1'], [3, '3'], [5, '5']] },
       { key: 'bcRope', type: 'seg', label: 'Rope length', def: 'normal', options: [['short', 'Short'], ['normal', 'Normal'], ['long', 'Long']] },
       { key: 'bcSabotage', type: 'toggle', label: 'Sabotage', hint: 'First team to a checkpoint drops a trap on the teams behind', def: true },
+    ],
+    controlroom: [
+      {
+        key: 'crDifficulty', type: 'cards', label: 'Difficulty', block: true, def: 'pilot', options: [
+          ['cadet', '🛰️', 'Cadet', 'Long timers, gentle events'],
+          ['pilot', '🚀', 'Pilot', 'The classic shouting match'],
+          ['ace', '☄️', 'Ace', 'Short fuses, chaos from sector 1'],
+        ],
+      },
+      { key: 'crSectors', type: 'seg', label: 'Sectors', hint: 'Endless: fly until your ship breaks', def: 5, options: [[5, '5'], [10, '10'], [0, 'Endless']] },
+      { key: 'crComms', type: 'seg', label: 'Comms', block: true, hint: 'Voice: shout across the room or call. Relay: tap your order to flash it on your crew’s screens.', def: 'voice', options: [['voice', '🗣️ Voice'], ['relay', '📡 Relay']] },
     ],
   };
 
@@ -675,6 +686,13 @@
     $('results-wait').classList.toggle('hidden', host);
     const key = JSON.stringify(r).length + r.mode;
     if (key !== state.lastResultsKey) { state.lastResultsKey = key; confetti(); window.Sfx?.finish?.(); }
+
+    // Games can draw their own results (e.g. Control Room's mission report).
+    const custom = window.Games?.[r.mode]?.renderResults;
+    if (custom) {
+      custom(r, { title: $('results-title'), teams: $('results-teams'), podium: $('podium'), list: $('results-players') }, api);
+      return;
+    }
 
     if (r.mode === 'telephone') {
       $('results-title').textContent = `📞 That's a wrap! ${r.albums} albums`;
