@@ -8,57 +8,13 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { brightMaterial, flatGeo, styleOf } from './bright3d.js';
+import { brightMaterial, flatGeo, styleOf, box, post, strut, merged, darker, glow } from './bright3d.js';
 
 const TAU = Math.PI * 2;
 const DARK = '#2b2d33';
 const STEEL = '#3a3f48';
 const YELLOW = '#ffcf33';
 const WHITE = '#f4f6fb';
-
-// ---------- geometry helpers (physics space: x, y on the ground, z up) ----------
-function box(ax, ay, az, bx, by, bz, colour, r = 0, pattern = null) {
-  const [x0, x1] = [Math.min(ax, bx), Math.max(ax, bx)];
-  const [y0, y1] = [Math.min(ay, by), Math.max(ay, by)];
-  const [z0, z1] = [Math.min(az, bz), Math.max(az, bz)];
-  const w = x1 - x0;
-  const d = y1 - y0;
-  const h = z1 - z0;
-  const rr = Math.min(r, w / 2 - 0.1, d / 2 - 0.1, h / 2 - 0.1);
-  const g = rr > 0.5 ? new RoundedBoxGeometry(w, h, d, 1, rr) : new THREE.BoxGeometry(w, h, d);
-  g.translate((x0 + x1) / 2, (z0 + z1) / 2, (y0 + y1) / 2);
-  return flatGeo(g, colour, 1, pattern);
-}
-function post(x, y, z0, z1, r, colour, n = 10, r1 = r) {
-  return flatGeo(new THREE.CylinderGeometry(r1, r, z1 - z0, n).translate(x, (z0 + z1) / 2, y), colour);
-}
-function ball(x, y, z, r, colour, n = 10) {
-  return flatGeo(new THREE.SphereGeometry(r, n, Math.max(6, n - 2)).translate(x, z, y), colour);
-}
-const _up = new THREE.Vector3(0, 1, 0);
-function strut(a, b, r, colour) {
-  const A = new THREE.Vector3(a[0], a[2], a[1]);
-  const B = new THREE.Vector3(b[0], b[2], b[1]);
-  const d = B.clone().sub(A);
-  const g = new THREE.CylinderGeometry(r, r, d.length(), 6);
-  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(_up, d.clone().normalize()));
-  g.translate((A.x + B.x) / 2, (A.y + B.y) / 2, (A.z + B.z) / 2);
-  return flatGeo(g, colour);
-}
-function merged(parts, cast = true) {
-  const m = new THREE.Mesh(mergeGeometries(parts), brightMaterial());
-  m.castShadow = cast;
-  m.receiveShadow = true;
-  return m;
-}
-const darker = (hex, k) => `#${new THREE.Color(hex).multiplyScalar(k).getHexString()}`;
-// Something that glows (lamps, beacons): unlit, so it reads at dusk; `on` dims it.
-function glow(geo, hex) {
-  const mat = new THREE.MeshBasicMaterial({ color: hex, toneMapped: false });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.userData.base = new THREE.Color(hex);
-  return mesh;
-}
 
 // ---------- containers ----------
 // Doors on both ends (a frame, two leaves, four locking bars), corner castings on top, a white

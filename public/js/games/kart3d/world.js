@@ -483,6 +483,14 @@ export const THEMES = {
     ground: () => tex.ground('#d9ccb4', ['#d0c3ab', '#e2d6c0']),
     clouds: 18, cloudTint: 0xffd9c6,
   },
+  // Sky Gardens: a bright morning above the clouds. A high sun, the cloud sea below fading into a pale
+  // haze at the horizon.
+  skygarden: {
+    sky: [0x2d7fea, 0xb9dcff], fog: [0xbfdcff, 3000, 12000], fogExp: 0.00006, hemi: [0xfff8ee, 0x88a6d4, 1.25], sun: [0xfff2dc, 3.0],
+    sunOffset: [620, 980, -380],
+    ground: () => tex.ground('#86d46e', ['#7fd06a', '#8edb74']),
+    clouds: 20,
+  },
   // The weekly arena's other looks (with keep and graveyard above).
   ruins: {
     sky: [0x3f8fde, 0xf8e3bf], fog: [0xf3dcb4, 2200, 7800], hemi: [0xffe9c8, 0xa06a3a, 1.2], sun: [0xffe2b0, 2.9],

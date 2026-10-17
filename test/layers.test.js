@@ -408,8 +408,8 @@ test('layers: CPU drivers on The Cinder Bowl collect boxes, drive the viaduct an
   assert.ok(burnt <= 3, `${burnt} karts drove into the lava by themselves`);
 });
 
-test('layers: The Keep, The Graveyard, The Cinder Bowl and Harbour Havoc: every spawn and box stands on its floor, and each is reachable from every other', () => {
-  for (const id of ['keep', 'graveyard', 'cinder', 'harbour']) checkArena(K.getMap(id, 'arena'));
+test('layers: The Keep, The Graveyard, The Cinder Bowl, Harbour Havoc and Sky Gardens: every spawn and box stands on its floor, and each is reachable from every other', () => {
+  for (const id of ['keep', 'graveyard', 'cinder', 'harbour', 'skygardens']) checkArena(K.getMap(id, 'arena'));
 });
 
 test('layers: CPU drivers on Harbour Havoc work the yard, climb the pyramid, use the pads and mostly stay dry', () => {
@@ -458,6 +458,84 @@ test('layers: Harbour Havoc: the bascule bridges lift in turn, and the crane\'s 
   assert.strictEqual(crane.length, 3);
   const low = Math.min(...crane.map((m) => map.pendulumAt(m, 0).z - m.r));
   assert.ok(low < L.KART_H && low > 0, `the load comes down to ${low.toFixed(0)} (karts are ${L.KART_H} tall)`);
+});
+
+test('layers: CPU drivers on Sky Gardens ride the ring, take the pads up to the high islands and seldom fall off', () => {
+  const Bots = require('../server/games/kart-bots');
+  const events = [];
+  const room = {
+    settings: { kartMode: 'arena', kartMap: 'skygardens', arenaTime: 600, kartItems: 'none', kartBots: 6, kartBotSkill: 'normal' },
+    players: new Map(), connectedPlayers: [], emit: (e, d) => events.push([e, d]), emitTo() {}, teamList: () => [], systemMessage() {},
+    buildResults: () => ({ players: [] }), finishGame() {},
+  };
+  const game = new KartBattle(room);
+  assert.strictEqual(game.map.id, 'skygardens');
+  Bots.makeBots(6, { skill: 'normal' }).forEach((b, i) => game.addKart(b, i));
+  game.items = ['rocket']; // boxes to chase, nothing that knocks anyone off
+  game.boxes = game.map.itemBoxes.map(() => 0);
+  game.rollItem = () => null;
+  game.phase = 'racing';
+  game.raceStart = 0;
+  let boxes = 0;
+  let high = 0;
+  for (let i = 0; i < 60 * 30; i++) {
+    game.time += 1 / 30;
+    const before = game.boxes.filter((b) => b > 0).length;
+    game.simulate(1 / 30);
+    boxes += Math.max(0, game.boxes.filter((b) => b > 0).length - before);
+    for (const k of game.karts.values()) if (k.dead <= 0 && k.z >= 85) high += 1 / 30;
+  }
+  assert.strictEqual(game.botError, false);
+  const fell = events.filter(([e, d]) => e === 'game:kart:hit' && d.kill && d.by < 0).length;
+  assert.ok(boxes >= 20, `${boxes} boxes picked up`);
+  assert.ok(high > 3, `${high.toFixed(0)} kart-seconds up on the high islands`);
+  assert.ok(events.some(([e]) => e === 'game:kart:pad'), 'somebody took a jump pad');
+  assert.ok(fell <= 5, `${fell} karts drove off the edge by themselves`);
+});
+
+test('layers: Sky Gardens: the boardwalks climb between the low and high islands, railed on the outside only; the towers drive through; the sprinkler sweeps the dais', () => {
+  const map = K.getMap('skygardens', 'arena');
+  const C = map.size / 2;
+  // The four boardwalks: from a low island (z 0) to a high one (z 90) or back, a rail along one side.
+  const walks = map.roads.filter((r) => r.kind === 'boardwalk');
+  assert.strictEqual(walks.length, 4);
+  for (const w of walks) {
+    const ends = [w.samples[0].z, w.samples[w.samples.length - 1].z].sort((a, b) => a - b);
+    assert.deepStrictEqual(ends.map(Math.round), [0, 90], 'low island to high island');
+    assert.strictEqual(w.curb.side, -1);
+  }
+  const kerbs = map.solids.filter((sd) => sd.kind === 'kerb');
+  // Halfway along the north-east boardwalk (clear of the islet's plank walk): out towards the rail
+  // the kart stays on; in towards the middle it drops off.
+  const at = (deg, r) => [C + Math.cos((deg * Math.PI) / 180) * r, C + Math.sin((deg * Math.PI) / 180) * r];
+  const [ox, oy] = at(300, 1020);
+  const out = kartAt(ox, oy, map.floorAt(ox, oy, 1000), (300 * Math.PI) / 180);
+  drive(map, out, UP, 1.5);
+  assert.ok(Math.hypot(out.x - C, out.y - C) < 1085 && out.z > 0, `held by the rail (r ${Math.hypot(out.x - C, out.y - C).toFixed(0)}, z ${out.z.toFixed(0)})`);
+  const inward = kartAt(ox, oy, map.floorAt(ox, oy, 1000), (120 * Math.PI) / 180);
+  drive(map, inward, UP, 1.5);
+  assert.ok(inward.z < -50, `no rail on the inside (z ${inward.z.toFixed(0)})`);
+  // No rail runs on into an island, where it would box a kart in against the island's edge.
+  const isles = map.solids.filter((sd) => sd.type === 2 && sd.kind === 'lawn');
+  assert.ok(kerbs.length > 20);
+  for (const kb of kerbs) {
+    const mid = (kb.u0 + kb.u1) / 2;
+    const mx = kb.ax + kb.ux * mid;
+    const my = kb.ay + kb.uy * mid;
+    for (const is of isles) assert.ok(Math.hypot(mx - is.x, my - is.y) > is.r - 25, `a rail runs into the island at (${is.x}, ${is.y})`);
+  }
+  // Through the bell tower's arch, east to west, under its roof.
+  const north = { x: C, y: C - 1020 };
+  const k = kartAt(north.x + 200, north.y, 0, Math.PI);
+  let under = false;
+  drive(map, k, UP, 1.3, 0, (kk) => { if (Math.abs(kk.x - north.x) < 40 && Number.isFinite(map.ceilingAt(kk.x, kk.y, 10))) under = true; });
+  assert.ok(under && k.x < north.x - 150 && Math.abs(k.z) < 1, `drove through the arch (x ${k.x.toFixed(0)}, z ${k.z.toFixed(1)})`);
+  // The sprinkler: its arms turn round the fountain on the dais, and shove a kart parked up there.
+  const spr = map.movers.find((m) => m.type === 'sweeper');
+  assert.ok(spr && spr.z === map.floorAt(C + 100, C, 1000), 'on top of the dais');
+  const parked = kartAt(C + 100, C + 20, spr.z, 0);
+  drive(map, parked, {}, (2 * Math.PI) / spr.speed);
+  assert.ok(Math.hypot(parked.x - (C + 100), parked.y - (C + 20)) > 20, 'pushed by an arm coming round');
 });
 
 // A raised road over flat ground: up from the west, a crest 120 high in the middle, down to the east.

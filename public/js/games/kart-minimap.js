@@ -389,7 +389,7 @@
       c.save();
       c.shadowColor = 'rgba(0,0,0,0.5)'; c.shadowBlur = 10 * dpr * k; c.shadowOffsetY = 3 * dpr * k;
       const pal = map.palette || null; // bright arenas paint their own colours
-      c.fillStyle = map.liquid ? (pal && pal.water && pal.water.deep) || LAYER_LIQUID[map.liquid.kind] || LAYER_LIQUID.water : '#0d0b1a';
+      c.fillStyle = map.liquid ? (pal && pal.water && pal.water.deep) || LAYER_LIQUID[map.liquid.kind] || LAYER_LIQUID.water : (pal && pal.void) || '#0d0b1a';
       roundRectPath(c, fx, fy, fw, fw, 7 * k); c.fill();
       c.restore();
       c.save();

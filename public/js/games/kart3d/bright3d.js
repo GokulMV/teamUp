@@ -17,7 +17,7 @@ const L = K.Layers;
 const TAU = Math.PI * 2;
 
 // Pattern ids (the shader's switch).
-export const PAT = { none: 0, checker: 1, slabs: 2, planks: 3, grate: 4, hazard: 5, ribs: 6, chevrons: 7, bands: 8, tiles: 9 };
+export const PAT = { none: 0, checker: 1, slabs: 2, planks: 3, grate: 4, hazard: 5, ribs: 6, chevrons: 7, bands: 8, tiles: 9, boards: 10 };
 
 // ---------- the material ----------
 // Toon shading (kart3d/toon.js's light ramp) with vertex colours, and a pattern painted in world
@@ -112,12 +112,18 @@ export function makeMaterial() {
             float alt = mod(c.x + c.y, 2.0) * 0.35;
             return max(joint, alt);
           }
+          if (id == 10) {
+            // Boards laid across a bridge or walk (vLoc: along it, across it): a seam between each
+            // and the next, every other one a shade darker.
+            float b = vLoc.x / cell;
+            return max(lineAt(b, 0.9 / cell), mod(floor(b), 2.0) * 0.22);
+          }
           return 0.0;
         }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         diffuseColor.rgb = mix(diffuseColor.rgb, vCol2, patternMask(vPat)) * vPat.w;`);
   };
-  m.customProgramCacheKey = () => 'bright-v2';
+  m.customProgramCacheKey = () => 'bright-v3';
   return m;
 }
 
@@ -210,6 +216,50 @@ export function flatGeo(geo, hex, shade = 1, pattern = null) {
   return g;
 }
 
+// ---------- geometry helpers for an arena's own pieces (physics space: x, y on the ground, z up) ----------
+export function box(ax, ay, az, bx, by, bz, colour, r = 0, pattern = null) {
+  const [x0, x1] = [Math.min(ax, bx), Math.max(ax, bx)];
+  const [y0, y1] = [Math.min(ay, by), Math.max(ay, by)];
+  const [z0, z1] = [Math.min(az, bz), Math.max(az, bz)];
+  const w = x1 - x0;
+  const d = y1 - y0;
+  const h = z1 - z0;
+  const rr = Math.min(r, w / 2 - 0.1, d / 2 - 0.1, h / 2 - 0.1);
+  const g = rr > 0.5 ? new RoundedBoxGeometry(w, h, d, 1, rr) : new THREE.BoxGeometry(w, h, d);
+  g.translate((x0 + x1) / 2, (z0 + z1) / 2, (y0 + y1) / 2);
+  return flatGeo(g, colour, 1, pattern);
+}
+export function post(x, y, z0, z1, r, colour, n = 10, r1 = r) {
+  return flatGeo(new THREE.CylinderGeometry(r1, r, z1 - z0, n).translate(x, (z0 + z1) / 2, y), colour);
+}
+export function ball(x, y, z, r, colour, n = 10) {
+  return flatGeo(new THREE.SphereGeometry(r, n, Math.max(6, n - 2)).translate(x, z, y), colour);
+}
+const _up = new THREE.Vector3(0, 1, 0);
+export function strut(a, b, r, colour) {
+  const A = new THREE.Vector3(a[0], a[2], a[1]);
+  const B = new THREE.Vector3(b[0], b[2], b[1]);
+  const d = B.clone().sub(A);
+  const g = new THREE.CylinderGeometry(r, r, d.length(), 6);
+  g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(_up, d.clone().normalize()));
+  g.translate((A.x + B.x) / 2, (A.y + B.y) / 2, (A.z + B.z) / 2);
+  return flatGeo(g, colour);
+}
+export function merged(parts, cast = true) {
+  const m = new THREE.Mesh(mergeGeometries(parts), brightMaterial());
+  m.castShadow = cast;
+  m.receiveShadow = true;
+  return m;
+}
+export const darker = (hex, k) => `#${new THREE.Color(hex).multiplyScalar(k).getHexString()}`;
+// Something that glows (lamps, beacons): unlit, so it reads at dusk; `on` dims it.
+export function glow(geo, hex) {
+  const mat = new THREE.MeshBasicMaterial({ color: hex, toneMapped: false });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.userData.base = new THREE.Color(hex);
+  return mesh;
+}
+
 // ---------- solids ----------
 function boxGeometry(s, st, waterZ) {
   const w = s.x1 - s.x0;
@@ -289,7 +339,8 @@ const uphill = (s) => (s.axis ? (s.sign > 0 ? Math.PI / 2 : -Math.PI / 2) : s.si
 // ---------- rims: where you can drive off ----------
 // Walks every edge of every floor top and asks the map what lies just beyond it: more floor at the
 // same height (nothing to paint), something taller (a wall: nothing to paint), or a drop (paint a
-// rim). Returns runs: { a: [x, y, z], b: [x, y, z], out: [nx, ny], drop } in physics space.
+// rim). Returns runs: { pts: [[x, y, z], ...], outs: [[nx, ny], ...], drop } in physics space (a
+// straight edge's run has two points, a round one's follows the curve).
 export function dropEdges(map, opts = {}) {
   const STEP = 20;
   const runs = [];
@@ -335,7 +386,7 @@ export function dropEdges(map, opts = {}) {
         const pa = [ax + (bx - ax) * t0, ay + (by - ay) * t0];
         const pb = [ax + (bx - ax) * t1, ay + (by - ay) * t1];
         if (Math.hypot(pb[0] - pa[0], pb[1] - pa[1]) >= 30) {
-          runs.push({ a: [pa[0], pa[1], topAt(pa[0], pa[1])], b: [pb[0], pb[1], topAt(pb[0], pb[1])], out: [nx, ny], drop: deepest, kind: s.kind, ramp });
+          runs.push({ pts: [[pa[0], pa[1], topAt(pa[0], pa[1])], [pb[0], pb[1], topAt(pb[0], pb[1])]], outs: [[nx, ny], [nx, ny]], drop: deepest, kind: s.kind, ramp });
         }
         start = null;
         deepest = 0;
@@ -353,33 +404,78 @@ export function dropEdges(map, opts = {}) {
       flush(n);
     }
   }
+  // Round tops big enough to drive about on (an island, a dais): round the edge the same way.
+  for (const s of map.solids) {
+    if (s.type !== 2 || s.r < 100 || s.kind === 'bumper' || s.kind === 'hub') continue;
+    const n = Math.max(16, Math.round((TAU * s.r) / STEP));
+    const dir = (i) => [Math.cos((i / n) * TAU), Math.sin((i / n) * TAU)];
+    const drops = [];
+    for (let i = 0; i < n; i++) {
+      const [ux, uy] = dir(i + 0.5);
+      drops.push(probe(s, s.x + ux * s.r, s.y + uy * s.r, ux, uy, s.z1));
+    }
+    const isDrop = (i) => typeof drops[(i + n) % n] === 'number';
+    const point = (i) => { const [ux, uy] = dir(i); return [s.x + ux * s.r, s.y + uy * s.r, s.z1]; };
+    // Start just after something that isn't a drop, so no run is cut in two at the seam (or, with
+    // nothing but drops all round, one run the whole way).
+    let first = 0;
+    for (let i = 0; i < n; i++) if (!isDrop(i)) { first = i + 1; break; }
+    let run = null;
+    for (let k = 0; k <= n; k++) {
+      const i = first + k;
+      if (k < n && isDrop(i)) {
+        if (!run) run = { pts: [point(i)], outs: [dir(i)], drop: 0, kind: s.kind };
+        run.pts.push(point(i + 1));
+        run.outs.push(dir(i + 1));
+        run.drop = Math.max(run.drop, drops[(i + n) % n]);
+      } else if (run) {
+        runs.push(run);
+        run = null;
+      }
+    }
+  }
   return runs;
 }
 
-// A striped band along each run, on the top just inside the edge, and a bright lip down the side.
+// A striped band along each run, on the top just inside the edge (W wide), dashes alternating
+// between the two colours (a drop deeper than 200 gets the hazard pair).
 function rimGeometry(runs, colours) {
   const parts = [];
   const W = 11; // band width
   const DASH = 34;
   for (const r of runs) {
-    const [ax, ay, az] = r.a;
-    const [bx, by, bz] = r.b;
-    const len = Math.hypot(bx - ax, by - ay);
-    const ux = (bx - ax) / len;
-    const uy = (by - ay) / len;
-    const [nx, ny] = r.out;
+    const pts = r.pts;
+    const cum = [0];
+    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+    const len = cum[cum.length - 1];
+    if (len < 1) continue;
+    // Where along the run a distance d falls: position and outward normal, in between the points.
+    let seg = 0;
+    const along = (d) => {
+      while (seg < pts.length - 2 && cum[seg + 1] < d) seg++;
+      const u = Math.min(1, Math.max(0, (d - cum[seg]) / (cum[seg + 1] - cum[seg] || 1)));
+      const a = pts[seg];
+      const b = pts[seg + 1];
+      const na = r.outs[seg];
+      const nb = r.outs[seg + 1];
+      let nx = na[0] + (nb[0] - na[0]) * u;
+      let ny = na[1] + (nb[1] - na[1]) * u;
+      const nl = Math.hypot(nx, ny) || 1;
+      nx /= nl; ny /= nl;
+      return [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u, nx, ny];
+    };
     const n = Math.max(1, Math.round(len / DASH));
     const [ca, cb] = r.drop > 200 ? colours.hazard : colours.edge;
     for (let i = 0; i < n; i++) {
-      const t0 = (i / n) * len;
-      const t1 = ((i + 1) / n) * len;
-      const za = az + (bz - az) * (i / n) + 0.7;
-      const zb = az + (bz - az) * ((i + 1) / n) + 0.7;
+      const p0 = along((i / n) * len);
+      const p1 = along(((i + 1) / n) * len);
+      const za = p0[2] + 0.7;
+      const zb = p1[2] + 0.7;
       // Outer and inner corners of this dash (inside the edge by up to W).
-      const o0 = [ax + ux * t0 - nx * 1, ay + uy * t0 - ny * 1];
-      const o1 = [ax + ux * t1 - nx * 1, ay + uy * t1 - ny * 1];
-      const i1 = [o1[0] - nx * W, o1[1] - ny * W];
-      const i0 = [o0[0] - nx * W, o0[1] - ny * W];
+      const o0 = [p0[0] - p0[3], p0[1] - p0[4]];
+      const o1 = [p1[0] - p1[3], p1[1] - p1[4]];
+      const i0 = [o0[0] - p0[3] * W, o0[1] - p0[4] * W];
+      const i1 = [o1[0] - p1[3] * W, o1[1] - p1[4] * W];
       const pos = [
         o0[0], za, o0[1], i0[0], za, i0[1], i1[0], zb, i1[1],
         o0[0], za, o0[1], i1[0], zb, i1[1], o1[0], zb, o1[1],
@@ -397,6 +493,127 @@ function rimGeometry(runs, colours) {
     }
   }
   return parts.length ? mergeGeometries(parts) : null;
+}
+
+// ---------- roads: bridges, boardwalks, plank walks ----------
+// A road's deck (its pattern laid out along and across it, so boards run across a walk), its sides
+// down to its underside, striped rails along its kerbs, and a rim along any side with no rail where
+// there's a drop beyond it. One geometry per road, in the arena's palette (road.kind, 'kerb').
+function roadGeometry(map, road) {
+  const S = road.samples;
+  const st = styleOf(map, road.kind);
+  const ks = styleOf(map, 'kerb');
+  const pal = map.palette || {};
+  const [rimA, rimB] = pal.rim || ['#ffffff', '#ef4444'];
+  const hw = road.w / 2;
+  const curb = road.curb;
+  const cw = curb ? curb.w : 0;
+  const ch = curb ? curb.h : 0;
+  const railed = (side) => !!curb && (!curb.side || curb.side === side);
+  const pos = [];
+  const col = [];
+  const col2 = [];
+  const pat = [];
+  const loc = [];
+  // A point across the road at sample i: v across (left +), dz up from the deck there; three's x, y, z.
+  const P = (i, v, dz) => {
+    const o = S[i];
+    return [o.x - o.uy * v, o.z + o.bank * v + dz, o.y + o.ux * v];
+  };
+  const top = rgbOf(st.top);
+  const top2 = st.top2 ? rgbOf(st.top2) : shadeOf(top, 0.8);
+  const side = rgbOf(st.side || st.top);
+  const side2 = st.side2 ? rgbOf(st.side2) : side;
+  // One quad (a, b, c, d round its edge), facing `up` (three's y) or outwards from the road's middle.
+  const quad = (a, b, c, d, rgb, rgb2, id, cell, shade, uv, face) => {
+    for (const [p, q, r] of [[a, b, c], [a, c, d]]) {
+      // Wind it to face the way it should: up for tops, away from the road's centre line for sides.
+      const ux = q[0] - p[0]; const uy = q[1] - p[1]; const uz = q[2] - p[2];
+      const vx = r[0] - p[0]; const vy = r[1] - p[1]; const vz = r[2] - p[2];
+      const n = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+      const flip = n[0] * face[0] + n[1] * face[1] + n[2] * face[2] < 0;
+      const tri = flip ? [p, r, q] : [p, q, r];
+      for (const v of tri) {
+        pos.push(...v);
+        col.push(...rgb);
+        col2.push(...rgb2);
+        pat.push(id, cell, 0, shade);
+        loc.push(...(uv ? uv(v) : [0, 0]));
+      }
+    }
+  };
+  const UP = [0, 1, 0];
+  const DOWN = [0, -1, 0];
+  const outwards = (i, v) => { const o = S[i]; return [-o.uy * Math.sign(v), 0, o.ux * Math.sign(v)]; };
+  const deckId = PAT[st.pattern] || 0;
+  // Deck pattern coordinates: distance along the road and across it, from the samples.
+  const along = (i) => S[i].s;
+  for (let i = 0; i < S.length - 1; i++) {
+    const j = i + 1;
+    const inner0 = railed(1) ? hw - cw : hw;
+    const inner1 = railed(-1) ? -(hw - cw) : -hw;
+    const local = (i0, v0) => () => [along(i0), v0];
+    // The deck, between the rails (or edge to edge), a hair above anything it overlaps.
+    const a = P(i, inner1, 0.4); const b = P(j, inner1, 0.4); const c = P(j, inner0, 0.4); const d = P(i, inner0, 0.4);
+    const uvs = new Map([[a, [along(i), inner1]], [b, [along(j), inner1]], [c, [along(j), inner0]], [d, [along(i), inner0]]]);
+    quad(a, b, c, d, top, top2, deckId, st.cell || 30, 1, (v) => uvs.get(v) || [0, 0], UP);
+    for (const sd of [1, -1]) {
+      const edge = sd * hw;
+      const face = outwards(i, sd);
+      if (railed(sd)) {
+        // A rail along the kerb: top, inner face and outer face, white and coral in turn.
+        const stripe = Math.floor(S[i].s / 40) % 2 ? rgbOf(ks.top2 || '#ff7d8c') : rgbOf(ks.top || '#ffffff');
+        const vIn = sd * (hw - cw);
+        quad(P(i, vIn, ch), P(j, vIn, ch), P(j, edge, ch), P(i, edge, ch), stripe, stripe, 0, 1, 1, null, UP);
+        quad(P(i, vIn, 0), P(j, vIn, 0), P(j, vIn, ch), P(i, vIn, ch), stripe, stripe, 0, 1, 0.9, null, [-face[0], 0, -face[2]]);
+        quad(P(i, edge, ch), P(j, edge, ch), P(j, edge, -4), P(i, edge, -4), stripe, stripe, 0, 1, 0.92, null, face);
+      } else {
+        // The deck's own edge: a lip of its accent colour.
+        quad(P(i, edge, 0.4), P(j, edge, 0.4), P(j, edge, -4), P(i, edge, -4), side2, side2, 0, 1, 1, null, face);
+      }
+      // The side, down to the underside, shaded towards the bottom.
+      const th = road.thick;
+      quad(P(i, edge, -4), P(j, edge, -4), P(j, edge, -th), P(i, edge, -th), side, side, 0, 1, 0.82, null, face);
+    }
+    quad(P(i, -hw, -road.thick), P(j, -hw, -road.thick), P(j, hw, -road.thick), P(i, hw, -road.thick), side, side, 0, 1, 0.55, null, DOWN);
+  }
+  // The two ends.
+  for (const [i, sgn] of [[0, -1], [S.length - 1, 1]]) {
+    const o = S[i];
+    quad(P(i, -hw, 0.4), P(i, hw, 0.4), P(i, hw, -road.thick), P(i, -hw, -road.thick), side, side, 0, 1, 0.8, null, [o.ux * sgn, 0, o.uy * sgn]);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.setAttribute('aCol2', new THREE.Float32BufferAttribute(col2, 3));
+  geo.setAttribute('aPat', new THREE.Float32BufferAttribute(pat, 4));
+  geo.setAttribute('aLoc', new THREE.Float32BufferAttribute(loc, 2));
+  geo.computeVertexNormals();
+  // Rims along unrailed sides, wherever the deck's edge is over a drop.
+  const runs = [];
+  for (const sd of [1, -1]) {
+    if (railed(sd)) continue;
+    let run = null;
+    const flush = () => { if (run && run.pts.length > 1) runs.push(run); run = null; };
+    for (let i = 0; i < S.length; i++) {
+      const o = S[i];
+      const v = sd * hw;
+      const ex = o.x - o.uy * v;
+      const ey = o.y + o.ux * v;
+      const z = o.z + o.bank * v;
+      const nx = -o.uy * sd;
+      const ny = o.ux * sd;
+      const f = map.floorAt(ex + nx * 12, ey + ny * 12, z + 6, null);
+      if (f < z - 14) {
+        if (!run) run = { pts: [], outs: [], drop: 9999 };
+        run.pts.push([ex, ey, z]);
+        run.outs.push([nx, ny]);
+      } else flush();
+    }
+    flush();
+  }
+  const rims = rimGeometry(runs, { edge: [rimA, rimB], hazard: pal.hazardRim || [rimA, rimB] });
+  return rims ? mergeGeometries([geo, rims]) : geo;
 }
 
 // ---------- lane paint ----------
@@ -671,6 +888,8 @@ export function buildBrightSolids(scene, map, ctx, skip = new Set()) {
     }
     parts.push(geo);
   }
+  // Roads (bridges, boardwalks, walks): one geometry each, merged with the rest.
+  for (const road of map.roads || []) parts.push(roadGeometry(map, road));
   const mesh = new THREE.Mesh(mergeGeometries(parts), brightMaterial());
   mesh.castShadow = true;
   mesh.receiveShadow = true;

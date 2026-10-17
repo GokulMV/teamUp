@@ -9,9 +9,10 @@ import { tex, canvasTexture, rng, MOBILE, boostPad, decorate, addHills, addMoonl
 import { buildSculpted, buildTyres, SCULPTED_KINDS } from './sculpt3d.js';
 import { buildBrightSolids } from './bright3d.js';
 import { buildHarbour } from './harbour3d.js';
+import { buildSkyGardens } from './skygarden3d.js';
 
 // Bright arenas' own set dressing (and models for their moving obstacles), by theme.
-const DRESSINGS = { harbour: buildHarbour };
+const DRESSINGS = { harbour: buildHarbour, skygarden: buildSkyGardens };
 
 const K = window.KartCore;
 const L = K.Layers;
@@ -548,7 +549,7 @@ export function buildLayered(scene, map, theme, ctx) {
   // Bright arenas (clean colour blocks, painted rims): kart3d/bright3d.js draws their solids and water.
   const bright = map.look === 'bright';
   const dress = bright && DRESSINGS[map.theme] ? DRESSINGS[map.theme](scene, map, ctx) : null;
-  if (bright) roofs.push(...buildBrightSolids(scene, map, ctx).roofs);
+  if (bright) roofs.push(...buildBrightSolids(scene, map, ctx, dress?.skip).roofs);
   for (const s of bright ? [] : map.solids) {
     if (s.kind === 'bumper' || s.kind === 'hub') continue; // drawn with their bumper / sweeper
     if (s.type === 3) continue; // road pieces: drawn as whole roads (sculpt3d.js)

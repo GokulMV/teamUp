@@ -316,8 +316,11 @@
     }
     return out;
   }
-  // The solids of a road: deck pieces, a kerb along each side, pillars under it where it's high.
-  function roadSolids(road, land) {
+  // The solids of a road: deck pieces, a kerb along each side (or one side: curb.side 1 is the left,
+  // -1 the right, going along the points; none for curb.inset at each end, where the road runs on
+  // into a floor), pillars under it where it's high. base: the ground's height where there are no
+  // rolling hills (-Infinity: nothing under it but sky).
+  function roadSolids(road, land, base = 0) {
     const samples = roadSamples(road, land);
     const w = road.w || 180;
     const thick = road.thick || 18;
@@ -328,7 +331,7 @@
     // than a kart): there it is solid down to the ground, an embankment, so nothing gets wedged
     // underneath. o.fill: how deep the deck goes there (0: its usual thickness).
     const across = [-w / 2, 0, w / 2];
-    const groundAt = (o, v) => (land ? land.at(o.x - o.uy * v, o.y + o.ux * v) : 0);
+    const groundAt = (o, v) => (land ? land.at(o.x - o.uy * v, o.y + o.ux * v) : base);
     for (const o of samples) {
       const gap = Math.min(...across.map((v) => o.z + o.bank * v - thick - groundAt(o, v)));
       o.fill = gap < KART_H + 12 ? Math.max(...across.map((v) => o.z + o.bank * v - groundAt(o, v))) + 10 : 0;
@@ -342,8 +345,9 @@
       const ext = 2 + (w / 2) * Math.abs(dh); // enough overlap to close the outside of a bend
       const deep = Math.max(thick, a.fill, b.fill);
       segs.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, za: a.z, zb: b.z, w, bank, thick: deep, ext, kind: road.kind || 'road' });
-      if (curb) {
-        for (const side of [1, -1]) {
+      const total = samples[samples.length - 1].s;
+      if (curb && a.s >= (curb.inset || 0) - 1 && b.s <= total - (curb.inset || 0) + 1) {
+        for (const side of curb.side ? [curb.side] : [1, -1]) {
           const v = side * (w / 2 - curb.w / 2);
           const ox = -a.uy * v;
           const oy = a.ux * v;
@@ -358,11 +362,11 @@
     }
     // Pillars down to the ground wherever there's room for a kart underneath.
     const pil = road.pillars;
-    if (pil) {
+    if (pil && (land || Number.isFinite(base))) {
       let nextAt = pil.every / 2;
       for (const o of samples) {
         if (o.s < nextAt) continue;
-        const g = land ? land.at(o.x, o.y) : 0;
+        const g = land ? land.at(o.x, o.y) : base;
         if (o.z - thick - g < (pil.min || 60)) continue;
         if ((pil.avoid || []).some((a) => Math.hypot(o.x - a.x, o.y - a.y) < a.r)) continue; // (a lava pool)
         cyls.push({ x: o.x, y: o.y, r: pil.r || 24, z0: g - 30, z1: o.z - thick + 1, kind: pil.kind || 'pillar' });
@@ -488,7 +492,7 @@
     for (const b of def.blocks || []) solids.push(box(b));
     for (const r of def.ramps || []) solids.push(ramp(r));
     for (const c of def.cyls || []) solids.push(cyl(c));
-    const roads = (def.roads || []).map((r) => roadSolids(r, land));
+    const roads = (def.roads || []).map((r) => roadSolids(r, land, def.ground ? def.ground.z || 0 : -Infinity));
     for (const r of roads) {
       for (const g of r.segs) solids.push(seg(g));
       for (const c of r.cyls) solids.push(cyl(c));
@@ -1648,7 +1652,183 @@
     return def;
   }
 
-  const ARENAS = [theHarbour(), theCinderBowl(), theKeep(), theGraveyard()]; // in the lobby's order
+  // Sky Gardens: garden islands floating over a sea of cloud on a bright morning. In the middle a
+  // round lawn with a fountain on a raised dais (ramps up from the east and the west, and a
+  // sprinkler whose arms sweep its top). Round it four islands: two low ones with a tower you drive
+  // through (a bell tower north, a clock tower south) and two high ones (a windmill east, an
+  // observatory west) with a jump pad back onto the dais. Hump bridges run out to all four, curved
+  // boardwalks join them in a ring that climbs to the high islands and dips to the low ones (a rail
+  // along its outside only), and between the boardwalks sit four islets with item boxes on them:
+  // reach one by jump pad from the middle or along a plank walk off the boardwalk, and leave by
+  // jump pad for the next island round.
+  function theSkyGardens() {
+    const S = 3000;
+    const C = S / 2;
+    const R = 1020; // the ring of islands round the middle one
+    const RI = 330; // their radius
+    const RC = 460; // the middle island's
+    const DAIS = 56;
+    const HIGH = 90; // the east and west islands float this much higher than the rest
+    const ISLET = HIGH / 2; // islets are as high as the boardwalks where their plank walks meet them
+    const RIS = 120; // an islet's radius
+    const TOWER = 300;
+    const deg = Math.PI / 180;
+    const at = (a, r) => [Math.round(C + Math.cos(a * deg) * r), Math.round(C + Math.sin(a * deg) * r)];
+    const def = {
+      id: 'skygardens', name: 'Sky Gardens', emoji: '🌤️', theme: 'skygarden', size: S, look: 'bright',
+      blurb: 'Garden islands over the clouds: hump bridges, a ring of boardwalks, jump pads and a long way down.',
+      edge: 'void', deathZ: -420,
+      blocks: [], ramps: [], cyls: [], roads: [], pads: [], bumpers: [], boosts: [], hazards: [], boxes: [], spawns: [], movers: [], deco: [],
+    };
+    // The islands round the middle, by their angle (east 0, south 90, ...) and height.
+    const ISLES = [{ a: 0, z: HIGH, kind: 'windmill' }, { a: 90, z: 0, kind: 'clocktower' }, { a: 180, z: HIGH, kind: 'observatory' }, { a: 270, z: 0, kind: 'belltower' }];
+    def.cyls.push({ x: C, y: C, r: RC, z0: -80, z1: 0, kind: 'lawn' });
+    for (const o of ISLES) {
+      [o.x, o.y] = at(o.a, R);
+      def.cyls.push({ x: o.x, y: o.y, r: RI, z0: o.z - 70, z1: o.z, kind: 'lawn' });
+    }
+
+    // The middle: the fountain's dais, ramps up from the east and west, the sprinkler on top, and
+    // four planters round it to dodge behind.
+    def.cyls.push({ x: C, y: C, r: 150, z0: -10, z1: DAIS, kind: 'dais' });
+    def.ramps.push(
+      { x0: C - 320, y0: C - 65, x1: C - 120, y1: C + 65, z0: 0, z1: DAIS, dir: 'x+', base: -10, kind: 'steps' },
+      { x0: C + 120, y0: C - 65, x1: C + 320, y1: C + 65, z0: 0, z1: DAIS, dir: 'x-', base: -10, kind: 'steps' },
+    );
+    def.movers.push({ type: 'sweeper', x: C, y: C, z: DAIS, len: 148, w: 9, lo: 6, hi: 22, arms: 2, speed: 0.8, phase: 0, hub: 42, kind: 'sprinkler' });
+    for (const a of [45, 135, 225, 315]) {
+      const [x, y] = at(a, 295);
+      def.cyls.push({ x, y, r: 40, z0: -10, z1: 26, kind: 'planter' });
+    }
+
+    // Hump bridges out to the four islands (rails both sides), climbing to the high ones.
+    for (const o of ISLES) {
+      const p = (r, z) => [...at(o.a, r), z];
+      const r0 = RC - 20;
+      const r1 = R - RI + 20;
+      const points = o.z ? [p(r0, 0), p(r0 + 60, 4), p((r0 + r1) / 2, HIGH / 2), p(r1 - 60, HIGH - 4), p(r1, HIGH)]
+        : [p(r0, 0), p((r0 + r1) / 2, 24), p(r1, 0)];
+      def.roads.push({ points, w: 150, thick: 22, curb: { w: 12, h: 14, inset: 20 }, kind: 'bridge' });
+    }
+    // Boardwalks round the ring between neighbouring islands, climbing or dipping between them,
+    // with a rail along the outside (the right, going round the ring this way) only.
+    const walks = [];
+    for (let i = 0; i < 4; i++) {
+      const A = ISLES[i];
+      const B = ISLES[(i + 1) % 4];
+      const points = [];
+      for (let k = 0; k <= 10; k++) {
+        const u = k / 10;
+        points.push([...at(A.a + 16 + 58 * u, R), A.z + (B.z - A.z) * u * u * (3 - 2 * u)]);
+      }
+      const road = { points, w: 130, thick: 18, curb: { w: 12, h: 14, side: -1, inset: 48 }, kind: 'boardwalk' };
+      def.roads.push(road);
+      walks.push(roadSolids(road, null, -Infinity));
+    }
+    // The decks' height at (x, y) (bridges and boardwalks alike): the highest piece there.
+    const decks = def.roads.map((r) => roadSolids(r, null, -Infinity)).flatMap((r) => r.segs.filter((g) => g.kind !== 'kerb').map(seg));
+    const deckZ = (x, y) => Math.max(...decks.filter((g) => contains(g, x, y)).map((g) => topAt(g, x, y)));
+
+    // The islets: a jump pad out to each from the middle, a plank walk from each to its boardwalk,
+    // and a jump pad on to the next island round (clockwise), landing well clear of its edge.
+    for (let i = 0; i < 4; i++) {
+      const a = 45 + 90 * i;
+      const [x, y] = at(a, 700);
+      def.cyls.push({ x, y, r: RIS, z0: ISLET - 40, z1: ISLET, kind: 'lawn' });
+      def.roads.push({ points: [[...at(a, 700 + RIS - 20), ISLET], [...at(a, R - 45), ISLET]], w: 104, thick: 14, curb: false, kind: 'plank' });
+      const [px, py] = at(a, 400);
+      def.pads.push({ x: px, y: py, z: 0, r: 40, to: [x, y, ISLET], t: 0.9 });
+      const next = ISLES[(i + 1) % 4];
+      const toward = Math.atan2(next.y - y, next.x - x);
+      const ox = Math.round(x + Math.cos(toward) * 62);
+      const oy = Math.round(y + Math.sin(toward) * 62);
+      const back = Math.atan2(y - next.y, x - next.x);
+      def.pads.push({ x: ox, y: oy, z: ISLET, r: 36, to: [Math.round(next.x + Math.cos(back) * 170), Math.round(next.y + Math.sin(back) * 170), next.z], t: 1.1 });
+      def.boxes.push({ x, y, z: ISLET });
+    }
+
+    // The low islands: a tower over the middle of each with an arch through it along the ring (its
+    // roof is the tower).
+    for (const o of ISLES.filter((q) => !q.z)) {
+      const n = o.y < C ? -1 : 1; // north or south: which way is out
+      const wall = (y0, y1) => def.blocks.push({ x0: o.x - 75, y0: Math.min(y0, y1), x1: o.x + 75, y1: Math.max(y0, y1), z0: -10, z1: TOWER, kind: 'tower' });
+      wall(o.y - 75, o.y - 60);
+      wall(o.y + 60, o.y + 75);
+      def.blocks.push({ x0: o.x - 75, y0: o.y - 60, x1: o.x + 75, y1: o.y + 60, z0: 70, z1: TOWER, kind: 'tower' });
+      def.deco.push({ kind: o.kind, x: o.x, y: o.y, z: 0, top: TOWER, w: 150 });
+      def.boxes.push({ x: o.x, y: o.y, z: 0 }, { x: o.x, y: o.y + n * 175, z: 0 });
+    }
+    // The high islands: a windmill (east) or an observatory (west) out on the far side, and a jump
+    // pad that flies you back over the bridge onto the dais (south of the bridge on one, north on
+    // the other, so they mirror each other through the middle; the islets' pads land on the other side).
+    for (const o of ISLES.filter((q) => q.z)) {
+      const out = o.x > C ? 1 : -1;
+      // Right at the edge (no way round behind it), the windmill's sails turning out over the drop.
+      const bx = o.x + out * (out > 0 ? 237 : 222);
+      def.cyls.push({ x: bx, y: o.y, r: out > 0 ? 64 : 80, z0: HIGH - 10, z1: HIGH + 220, kind: o.kind });
+      def.deco.push({ kind: o.kind, x: bx, y: o.y, z: HIGH, out });
+      const px = o.x - out * 135;
+      const py = o.y + out * 165;
+      def.pads.push({ x: px, y: py, z: HIGH, r: 40, to: [C + out * 70, C + out * 70, DAIS], t: 1.4 });
+      def.boxes.push({ x: o.x + out * 60, y: o.y - 175, z: HIGH }, { x: o.x + out * 60, y: o.y + 175, z: HIGH });
+    }
+
+    // Item boxes in the middle (on the dais and round it) and along the boardwalks.
+    def.boxes.push({ x: C, y: C - 100, z: DAIS }, { x: C, y: C + 100, z: DAIS });
+    for (const [x, y] of [at(270, 330), at(90, 330), at(0, 395), at(180, 395)]) def.boxes.push({ x, y, z: 0 });
+    for (let i = 0; i < 4; i++) {
+      for (const u of [0.3, 0.7]) {
+        const [x, y] = at(ISLES[i].a + 16 + 58 * u, R);
+        def.boxes.push({ x, y, z: deckZ(x, y) });
+      }
+    }
+    // Boost chevrons at the middle of every boardwalk and on the low islands' bridges.
+    for (let i = 0; i < 4; i++) {
+      const a = ISLES[i].a + 45;
+      const [x, y] = at(a, R);
+      def.boosts.push({ x, y, z: deckZ(x, y), angle: (a + 90) * deg });
+    }
+    // Spawns: round the middle island between everything on it, and four on each island round it.
+    for (let k = 0; k < 8; k++) {
+      const a = 22.5 + 45 * k;
+      const [x, y] = at(a, 345);
+      def.spawns.push({ x, y, z: 0, angle: (a + 90) * deg });
+    }
+    // On the islands round it: two facing the boardwalks either way round the ring, two side by
+    // side facing the bridge back to the middle (written for the east island, turned for the rest).
+    for (const o of ISLES) {
+      const turn = (x, y) => {
+        const c = Math.cos(o.a * deg);
+        const sn = Math.sin(o.a * deg);
+        return [Math.round(o.x + x * c - y * sn), Math.round(o.y + x * sn + y * c)];
+      };
+      for (const [x, y, a] of [[-20, -160, -90], [-20, 160, 90], [-190, -40, 180], [-190, 40, 180]]) {
+        const [sx, sy] = turn(x, y);
+        def.spawns.push({ x: sx, y: sy, z: o.z, angle: (a + o.a) * deg });
+      }
+    }
+    // Scenery: waterfalls spilling off the islands' sides, the fountain, lamps along the bridges.
+    for (const a of [112, 292]) def.deco.push({ kind: 'waterfall', x: at(a, RC)[0], y: at(a, RC)[1], z: -14, angle: a * deg, w: 60 });
+    for (const o of ISLES) def.deco.push({ kind: 'waterfall', x: Math.round(o.x + Math.cos((o.a + 40) * deg) * RI), y: Math.round(o.y + Math.sin((o.a + 40) * deg) * RI), z: o.z - 14, angle: (o.a + 40) * deg, w: 46 });
+    def.palette = {
+      lawn: { top: '#6dc95a', side: '#e2a066', top2: '#5cb84c', side2: '#c9844c', pattern: 'checker', cell: 110, sidePattern: 'bands', sideCell: 22, round: 0, foot: 0.8 },
+      dais: { top: '#f7eedc', side: '#f4e4c6', top2: '#e8d7b6', side2: '#e2cca4', pattern: 'tiles', cell: 48, sidePattern: 'slabs', sideCell: 28, round: 0, foot: 0.9 },
+      steps: { top: '#ff7d8c', side: '#efe2c8', top2: '#ffffff', pattern: 'chevrons', cell: 42, round: 0 },
+      planter: { top: '#7a4f36', side: '#de7b45', side2: '#c4653a', sidePattern: 'bands', sideCell: 9, round: 0, foot: 0.85 },
+      tower: { top: '#f8e6c8', side: '#f8e6c8', top2: '#ecd4ac', side2: '#efd9b4', pattern: 'slabs', cell: 30, sidePattern: 'slabs', sideCell: 44, round: 3, foot: 0.93, roof: true },
+      bridge: { top: '#f3e5cb', side: '#f1e1c2', top2: '#e2cda6', side2: '#ff7d8c', pattern: 'slabs', cell: 34 },
+      boardwalk: { top: '#d79a5d', side: '#b5743d', top2: '#b97b44', pattern: 'planks', cell: 18 },
+      plank: { top: '#c98c50', side: '#9c6334', top2: '#a8703e', pattern: 'planks', cell: 15 },
+      kerb: { top: '#ffffff', side: '#ffffff', top2: '#ff7d8c' },
+      windmill: { top: '#ff6b78', side: '#fbf8f2' },
+      observatory: { top: '#d6e6f4', side: '#fbf8f2' },
+      rim: ['#ffffff', '#ff7d8c'], hazardRim: ['#ffffff', '#ff7d8c'],
+      void: '#bfe2ff',
+    };
+    return def;
+  }
+
+  const ARENAS = [theHarbour(), theSkyGardens(), theCinderBowl(), theKeep(), theGraveyard()]; // in the lobby's order
 
   return {
     KART_R, KART_H, STEP, NAV, NAV_SLOPE, EDGE, ARENAS, makeLayeredArena, makeTerrain, groundBlocks, turn, symmetric, roadSolids, SEG,
