@@ -54,7 +54,7 @@ window.Games.kart = {
           <div class="kart-hit" data-hit><svg viewBox="0 0 28 28"><path d="M4 4l7 7M24 4l-7 7M4 24l7-7M24 24l-7-7"/></svg></div>
           <div class="kart-dead kart-panel" data-dead></div>
           <canvas class="kart-minimap" data-minimap></canvas>
-          <div class="kart-help kart-panel" data-help>${touch ? '<b>Tap any button to start</b>Your kart accelerates by itself' : '<kbd>WASD</kbd> drive <kbd>Shift</kbd> drift <span class="kh-item"><kbd>Space</kbd> use item <kbd>Q</kbd> swap <kbd>S</kbd>+<kbd>Space</kbd> throw back</span>'}</div>
+          <div class="kart-help kart-panel" data-help>${touch ? '<b>Tap any button to start</b>Your kart accelerates by itself' : '<kbd>WASD</kbd> drive <kbd>Shift</kbd> hop/drift <span class="kh-item"><kbd>Space</kbd> use item <kbd>Q</kbd> swap <kbd>S</kbd>+<kbd>Space</kbd> throw back</span>'}</div>
           <div class="kart-rotate kart-panel hidden" data-rotate>${svg('<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M21 14a8 8 0 0 1-6 6.5M3 10a8 8 0 0 1 6-6.5"/>')}Turn your phone for a wider view</div>
           <div class="kart-tools">
             <button class="kart-tool" data-fullscreen title="Full screen" aria-label="Full screen">${svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>')}</button>
@@ -651,7 +651,9 @@ window.Games.kart = {
           predPrev = { x: local.x, y: local.y, angle: local.angle, air: local.air || 0 };
           const fl = local.flags || 0;
           K.stepKart(local, input, STEP, map, { speed: (info.speedMul || 1) * K.itemSpeed(fl & F.star, fl & F.shrunk), noFall: true });
-          // Tricks and landings feel instant for your own kart.
+          // Hops, tricks and landings feel instant for your own kart.
+          if (local.hopping && !prev.hopping) Sfx.hop?.();
+          prev.hopping = !!local.hopping;
           if (local.trick > 0 && !prev.trick) Sfx.trick?.();
           prev.trick = local.trick > 0;
           if (prev.air > 12 && !(local.air > 0)) {
@@ -749,7 +751,7 @@ window.Games.kart = {
     raf = requestAnimationFrame(frame);
 
     const ITEM_SOUND = { rocket: 'rocket', triple: 'rocket', bomb: 'rocket', banana: 'banana', mine: 'banana', shield: 'shield', ghost: 'shield', bouncer: 'bouncer', ink: 'ink' };
-    const QUIET_HITS = ['mine', 'bomb', 'shock', 'lava', 'comet', 'thunder']; // their own blast effect covers it
+    const QUIET_HITS = ['mine', 'bomb', 'shock', 'lava', 'comet', 'thunder', 'ram']; // their own effect covers it
     const nameOf = (idx) => api.escapeHtml(kartsByIdx.get(idx)?.name || 'Someone');
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -758,7 +760,18 @@ window.Games.kart = {
       onEvent(event, data) {
         if (event === 'game:kart:init') onInit(data);
         else if (event === 'game:kart:state') onState(data);
-        else if (event === 'game:kart:swap') {
+        else if (event === 'game:kart:bump') {
+          // The server's shove lands on my predicted kart too, so it slides now, not a round trip later.
+          const mine = data.s.find((r) => r[0] === myIdx);
+          if (mine && local && !local.dead && !local.falling) {
+            local.speed += mine[1];
+            local.kx = (local.kx || 0) + mine[2];
+            local.ky = (local.ky || 0) + mine[3];
+          }
+          Sfx.bump(Math.min(1, 0.2 + data.p) * (mine ? 1 : volumeAt(data.x, data.y)));
+          view3d?.bumpFx?.(data.x, data.y, data.p, data.ram >= 0);
+          if (mine && data.ram >= 0) hud.callout(data.ram === myIdx ? 'RAM!' : 'RAMMED!', { kind: 'small', hold: 650 });
+        } else if (event === 'game:kart:swap') {
           if (data.idx === myIdx) Sfx.swap?.();
         } else if (event === 'game:kart:use') {
           if (data.idx === myIdx && ITEM_SOUND[data.item]) Sfx[ITEM_SOUND[data.item]]?.();
@@ -797,7 +810,7 @@ window.Games.kart = {
           const kind = data.kill ? 'kill' : data.kind === 'bullet' ? 'bullet' : 'hit';
           const victim = kartsByIdx.get(data.target);
           if (!QUIET_HITS.includes(data.kind) || data.kill) view3d?.explode(data.x, data.y, kind, data.kill ? 90 : 50, colorOf(victim));
-          if (data.kind !== 'bullet' && data.kind !== 'thunder') Sfx.explosion(volumeAt(data.x, data.y) * (data.kill ? 1 : 0.4));
+          if ((data.kind !== 'bullet' && data.kind !== 'thunder' && data.kind !== 'ram') || data.kill) Sfx.explosion(volumeAt(data.x, data.y) * (data.kill ? 1 : 0.4));
           if (data.kill || (map?.type === 'race' && data.kind !== 'bullet' && data.by >= 0)) hud.smash(data);
           if (data.kill) deathMarks.push({ x: data.x, y: data.y, color: colorOf(victim), t: performance.now() });
           if (data.target === myIdx) {

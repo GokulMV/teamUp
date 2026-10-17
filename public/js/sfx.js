@@ -328,6 +328,11 @@
       tone(1350 + (i % 3) * 170, { type: 'square', dur: 0.03, vol: 0.05 });
       noise({ dur: 0.03, vol: 0.06, filter: 'highpass', from: 5000, to: 3000 });
     },
+    // Hop: a springy little boing.
+    hop() {
+      tone(260, { type: 'sine', dur: 0.13, vol: 0.13, slide: 2.1 });
+      noise({ dur: 0.05, vol: 0.05, filter: 'highpass', from: 2500, to: 4000 });
+    },
     // Swapping to the reserve item: a quick two-note flick.
     swap() {
       tone(660, { type: 'triangle', dur: 0.07, vol: 0.14, slide: 1.5 });

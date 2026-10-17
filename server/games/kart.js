@@ -27,6 +27,9 @@ const BOUNCER = { speed: 880, life: 6, bounces: 5, radius: 8 };
 const COMET = { speed: 1900, altitude: 110, climb: 0.45, dive: 0.5, divePoint: 380, radius: 190, life: 15 };
 const INK_RADIUS = 900; // arena: how far ink reaches
 const STAR_RAM_GAP = 0.8; // seconds before the same star kart can ram the same victim again
+// Kart-kart bumps trade momentum. Boosting karts are heavier, shrunk ones lighter. A hit closing
+// faster than ramSpeed is a ram: the victim gets shoved harder (and in the arena takes a little damage).
+const BUMP = { restitution: 0.35, boostMass: 1.5, shrunkMass: 0.55, ramSpeed: 260, ramShove: 1.35, ramGap: 0.5, eventSpeed: 90 };
 const SHOCK_RADIUS = 360;
 const GUN_TIME = 2;
 const BANANA_LIFE = 40;
@@ -40,7 +43,7 @@ const BOX_CLEAR = 40;
 // Damage in the arena (karts have 100 hp). In a race every hit except bullets spins you out.
 const DAMAGE = {
   rocket: 70, triple: 45, bullet: 6, banana: 35, mine: 100, bomb: 100, shock: 45, lava: 1000, // lava is instant death
-  bouncer: 50, comet: 90, star: 40, thunder: 35,
+  bouncer: 50, comet: 90, star: 40, thunder: 35, ram: 6, // ram: 6 at ramSpeed, up to 16 for a full-speed T-bone
 };
 
 const SHOT_CODE = { rocket: 1, bullet: 2, bomb: 3, bouncer: 4, comet: 5 };
@@ -584,7 +587,7 @@ class KartBattle {
     }
     Object.assign(kart, {
       x: best.x, y: best.y, angle: best.angle, heading: best.angle, speed: 0, spin: 0, dead: 0,
-      shield: SPAWN_SHIELD, invuln: 0, hp: this.hpMax, lastAttacker: null,
+      shield: SPAWN_SHIELD, invuln: 0, hp: this.hpMax, lastAttacker: null, kx: 0, ky: 0, air: 0, vz: 0, hopping: false,
     });
   }
 
@@ -671,8 +674,8 @@ class KartBattle {
     const alive = karts.filter((k) => k.dead <= 0 && !(k.fall > 0));
     const solid = alive.filter((k) => k.ghost <= 0 && !k.finished);
 
-    // Kart-kart collisions: simple circle separation (ghosts pass through).
-    const r2 = (K.KART_RADIUS * 2) ** 2;
+    // Kart-kart collisions: they push apart and trade momentum (ghosts pass through).
+    const R = K.KART_RADIUS * 2;
     for (let i = 0; i < solid.length; i++) {
       for (let j = i + 1; j < solid.length; j++) {
         const a = solid[i];
@@ -680,19 +683,18 @@ class KartBattle {
         const dx = b.x - a.x;
         const dy = b.y - a.y;
         const d2 = dx * dx + dy * dy;
-        if (d2 < r2 && d2 > 0.0001 && Math.abs((a.air || 0) - (b.air || 0)) < 30) {
-          const d = Math.sqrt(d2);
-          const push = (K.KART_RADIUS * 2 - d) / 2;
-          const nx = dx / d;
-          const ny = dy / d;
+        if (d2 >= R * R || d2 < 0.0001 || Math.abs((a.air || 0) - (b.air || 0)) >= 30) continue;
+        const d = Math.sqrt(d2);
+        const nx = dx / d;
+        const ny = dy / d;
+        if ((a.star > 0) !== (b.star > 0)) {
+          const push = (R - d) / 2;
           a.x -= nx * push; a.y -= ny * push;
           b.x += nx * push; b.y += ny * push;
-          if ((a.star > 0) !== (b.star > 0)) {
-            if (a.star > 0) this.starRam(a, b, nx, ny);
-            else this.starRam(b, a, -nx, -ny);
-          } else {
-            a.speed *= 0.97; b.speed *= 0.97;
-          }
+          if (a.star > 0) this.starRam(a, b, nx, ny);
+          else this.starRam(b, a, -nx, -ny);
+        } else {
+          this.bumpKarts(a, b, nx, ny, R - d);
         }
       }
     }
@@ -745,6 +747,61 @@ class KartBattle {
       }
     }
     this.bananas = this.bananas.filter((b) => b.life > 0);
+  }
+
+  // Two karts touch: separate them (the lighter one gives way more) and, if they were closing,
+  // trade momentum like billiard balls. The part of the change along a kart's travel direction
+  // goes into its speed; the sideways part becomes a shove (kx, ky) that fades over ~0.2 s.
+  bumpKarts(a, b, nx, ny, overlap) {
+    const mass = (k) => (k.boost > 0 ? BUMP.boostMass : 1) * (k.shrink > 0 ? BUMP.shrunkMass : 1);
+    const ma = mass(a);
+    const mb = mass(b);
+    a.x -= nx * overlap * (mb / (ma + mb)); a.y -= ny * overlap * (mb / (ma + mb));
+    b.x += nx * overlap * (ma / (ma + mb)); b.y += ny * overlap * (ma / (ma + mb));
+    const vel = (k) => {
+      const h = k.heading === undefined ? k.angle : k.heading;
+      return [Math.cos(h) * k.speed + (k.kx || 0), Math.sin(h) * k.speed + (k.ky || 0)];
+    };
+    const va = vel(a);
+    const vb = vel(b);
+    const rel = (vb[0] - va[0]) * nx + (vb[1] - va[1]) * ny;
+    if (rel >= 0) return; // already moving apart
+    const closing = -rel;
+    const j = ((1 + BUMP.restitution) * closing) / (1 / ma + 1 / mb);
+    // Who drove into whom: the kart moving faster along the line between them.
+    const aIn = va[0] * nx + va[1] * ny;
+    const bIn = -(vb[0] * nx + vb[1] * ny);
+    const rammer = closing > BUMP.ramSpeed ? (aIn >= bIn ? a : b) : null;
+    const victim = rammer === a ? b : rammer === b ? a : null;
+    const shove = (k, dvx, dvy) => {
+      const h = k.heading === undefined ? k.angle : k.heading;
+      const hx = Math.cos(h);
+      const hy = Math.sin(h);
+      const along = dvx * hx + dvy * hy;
+      const sx = dvx - along * hx;
+      const sy = dvy - along * hy;
+      k.speed += along;
+      k.kx = (k.kx || 0) + sx;
+      k.ky = (k.ky || 0) + sy;
+      return [k.idx, Math.round(along), Math.round(sx), Math.round(sy)];
+    };
+    const ja = (j / ma) * (victim === a ? BUMP.ramShove : 1);
+    const jb = (j / mb) * (victim === b ? BUMP.ramShove : 1);
+    const shoves = [shove(a, -nx * ja, -ny * ja), shove(b, nx * jb, ny * jb)];
+    if (closing > BUMP.eventSpeed) {
+      this.room.emit('game:kart:bump', {
+        x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2), p: Math.round(Math.min(1, closing / 600) * 100) / 100,
+        ram: rammer ? rammer.idx : -1, s: shoves,
+      });
+    }
+    // Arena: a proper ram costs the victim a little health (once per ram, teammates excepted).
+    if (rammer && this.arena && !this.isFriendly(rammer.id, victim.id)
+      && !(victim.bumpBy === rammer.id && this.time - victim.bumpAt < BUMP.ramGap)) {
+      victim.bumpBy = rammer.id;
+      victim.bumpAt = this.time;
+      const hard = Math.min(1, (closing - BUMP.ramSpeed) / 300);
+      this.damage(victim, DAMAGE.ram + Math.round(10 * hard), rammer, 'ram');
+    }
   }
 
   // A star kart rams a rival: race, they spin out; arena, they take damage and get knocked away.

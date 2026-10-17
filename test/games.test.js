@@ -1010,6 +1010,49 @@ function driveTo(K, map, i0, opts = {}) {
   return { kart, log };
 }
 
+test('hop: a tap of drift hops the kart; holding it does not hop again; it keeps the grip of the ground', () => {
+  const K = require('../public/js/shared/kart-core');
+  const map = K.MAPS.grandprix;
+  const ramp = map.ramps.find((r) => r.dir === 1);
+  const i0 = (ramp.i + Math.floor(map.n / 2)) % map.n; // far from any ramp
+  let pressed = 0;
+  const hop = driveTo(K, map, i0, { steps: 40, from: 30, input: (k) => ({ drift: pressed++ < 30 && pressed > 3 }) });
+  const airs = hop.log.map((l) => l.air);
+  const apex = Math.max(...airs);
+  const airtime = airs.filter((a) => a > 0).length / 30;
+  assert.ok(apex > 22 && apex < 36, `apex ${apex.toFixed(1)}`);
+  assert.ok(airtime > 0.3 && airtime < 0.5, `in the air ${airtime.toFixed(2)} s`);
+  assert.strictEqual(airs.filter((a, i) => a > 0 && !(airs[i - 1] > 0)).length, 1, 'holding drift does not hop again');
+  // Two taps a cooldown apart: two hops; taps closer than that: still one.
+  const taps = (gap) => {
+    const presses = new Set([3, 3 + gap]);
+    let i = 0;
+    const r = driveTo(K, map, i0, { steps: 60, from: 40, input: () => ({ drift: presses.has(i++) }) });
+    return r.log.filter((l, j) => l.air > 0 && !(r.log[j - 1]?.air > 0)).length;
+  };
+  assert.strictEqual(taps(14), 2);
+  assert.strictEqual(taps(6), 1, 'no double hop mid-air');
+  // Hopping across the grass doesn't dodge it: the kart slows down just as much as without hops.
+  let n = 0;
+  const grass = driveTo(K, map, i0, { steps: 75, from: 30, lateral: 1.9, input: () => ({ drift: n++ % 14 === 0 }) });
+  const rolled = driveTo(K, map, i0, { steps: 75, from: 30, lateral: 1.9 });
+  assert.ok(grass.kart.speed < K.PHYS.offTrackMax * 1.15, `on the grass (${Math.round(grass.kart.speed)})`);
+  assert.ok(grass.kart.speed <= rolled.kart.speed + 5, `hops ${Math.round(grass.kart.speed)} vs no hops ${Math.round(rolled.kart.speed)}`);
+  // Hopping over a ramp's lip still launches you off it.
+  const plain = driveTo(K, map, ramp.i, { steps: 40, from: 9 });
+  const lipStep = plain.log.findIndex((l) => l.air > 0);
+  let m = 0;
+  const lip = driveTo(K, map, ramp.i, { steps: 40, from: 9, input: () => ({ drift: m++ === lipStep - 3 }) });
+  assert.ok(lip.log[lipStep - 1].air > 0, 'mid-hop at the lip');
+  assert.ok(Math.max(...lip.log.map((l) => l.air)) > 100, 'the ramp still launches a hopping kart');
+  // Arena: a flat hop that lands again.
+  const arena = K.MAPS.colosseum;
+  const ak = { x: 1300, y: 1300, angle: 0, speed: 0, boost: 0, spin: 0 };
+  const hs = [];
+  for (let s = 0; s < 20; s++) { K.stepKart(ak, { drift: s === 1 }, 1 / 30, arena); hs.push(ak.air || 0); }
+  assert.ok(Math.max(...hs) > 22 && hs[hs.length - 1] === 0, `arena hop ${Math.max(...hs).toFixed(1)}`);
+});
+
 test('ramps launch karts; a trick in the air pays out a mini boost; reversed they are just bumps', () => {
   const K = require('../public/js/shared/kart-core');
   const map = K.MAPS.grandprix;
@@ -1655,6 +1698,103 @@ test('comet: flies over the track to the race leader and blasts them and anyone 
   assert.strictEqual(mate.hp, 100);
   assert.strictEqual(o.hp, 100);
   ar.room.destroy();
+});
+
+test('karts trade momentum when they bump; a hard hit is a ram that shoves (and in the arena hurts)', async () => {
+  const c = await kartGame(2, { kartMap: 'grandprix' });
+  const [a, b] = c.players.map((p) => c.game.karts.get(p.id));
+  // Nudging a stopped kart from behind: speed passes forward and the momentum is kept.
+  const rearEnd = async (speed) => {
+    onTrack(c.game, a, 60); onTrack(c.game, b, 60);
+    const t = c.game.map.tangents[60];
+    Object.assign(b, { x: a.x + t[0] * 26, y: a.y + t[1] * 26 });
+    a.speed = speed;
+    const bump = once(c.host, 'game:kart:bump');
+    c.game.simulate(1 / 30);
+    return bump;
+  };
+  let e = await rearEnd(220);
+  assert.ok(b.speed > 100, `the nudged kart rolls on (${Math.round(b.speed)})`);
+  assert.ok(a.speed < 140, `the nudger slows down (${Math.round(a.speed)})`);
+  assert.ok(Math.abs(a.speed + b.speed - 220) < 15, `momentum kept (${Math.round(a.speed + b.speed)})`);
+  assert.strictEqual(e.ram, -1, 'a nudge is no ram');
+  // At 400 u/s it's a ram: the victim is shoved off harder than a plain bump would.
+  e = await rearEnd(400);
+  assert.strictEqual(e.ram, a.idx);
+  assert.ok(b.speed > 330, `rammed (${Math.round(b.speed)})`);
+  assert.deepStrictEqual(e.s.map((r) => r[0]).sort(), [a.idx, b.idx].sort(), 'shoves for both karts are sent');
+  // A T-bone: the victim slides sideways, away from the hit.
+  onTrack(c.game, a, 120); onTrack(c.game, b, 120);
+  const n = c.game.map.tangents[120];
+  const side = [-n[1], n[0]];
+  Object.assign(a, { x: b.x - side[0] * 27, y: b.y - side[1] * 27, angle: Math.atan2(side[1], side[0]), heading: Math.atan2(side[1], side[0]), speed: 380 });
+  const b0 = [b.x, b.y];
+  c.game.simulate(1 / 30);
+  assert.ok(Math.hypot(b.kx, b.ky) > 150, `sideways shove (${Math.round(Math.hypot(b.kx, b.ky))})`);
+  for (let i = 0; i < 18; i++) c.game.simulate(1 / 30);
+  const slid = (b.x - b0[0]) * side[0] + (b.y - b0[1]) * side[1];
+  assert.ok(slid > 25, `the victim slid sideways ${Math.round(slid)} units`);
+  assert.ok(Math.hypot(b.kx, b.ky) < 30, 'the shove has died away');
+  // Race rams never spin anyone out.
+  assert.strictEqual(b.spin, 0);
+  // A boosting kart is heavier: it barely slows when it rear-ends someone.
+  onTrack(c.game, a, 200); onTrack(c.game, b, 200);
+  const t2 = c.game.map.tangents[200];
+  Object.assign(b, { x: a.x + t2[0] * 26, y: a.y + t2[1] * 26 });
+  Object.assign(a, { speed: 400, boost: 0.5 });
+  c.game.simulate(1 / 30);
+  assert.ok(b.speed > 250, `boosted ram pushes harder (${Math.round(b.speed)})`);
+  c.room.destroy();
+
+  // Arena: a ram costs the victim a little health, once per ram; teammates are safe.
+  const ar = await arenaGame(3, { teamMode: true, teamCount: 2 });
+  setTeams(ar, [0, 1, 0]);
+  const [x, y, mate] = [ar.kart(0), ar.kart(1), ar.kart(2)];
+  ar.place(0, 1000, 400); ar.place(1, 1027, 400); ar.place(2, 2300, 2300);
+  Object.assign(x, { speed: 420 });
+  const hit = once(ar.host, 'game:kart:hit', (h) => h.kind === 'ram');
+  step(ar.game, 1);
+  const h = await hit;
+  assert.strictEqual(h.by, x.idx);
+  assert.ok(y.hp < 100 && y.hp >= 84, `ram damage ${100 - y.hp}`);
+  const hp1 = y.hp;
+  ar.place(1, x.x + 27, x.y);
+  Object.assign(x, { speed: 420 });
+  step(ar.game, 1);
+  assert.strictEqual(y.hp, hp1, 'no second helping within half a second');
+  ar.place(2, x.x + 27, x.y); ar.place(1, 2300, 300);
+  Object.assign(x, { speed: 420 });
+  step(ar.game, 1);
+  assert.strictEqual(mate.hp, 100, 'teammates are bumped, never hurt');
+  ar.room.destroy();
+});
+
+test('a timed hop clears a banana; driving straight on hits it', async () => {
+  const run = async (hopAt) => {
+    const c = await kartGame(2, { kartMap: 'grandprix' });
+    const [a, owner] = c.players.map((p) => c.game.karts.get(p.id));
+    onTrack(c.game, owner, 300);
+    onTrack(c.game, a, 40);
+    a.speed = 420;
+    const t = c.game.map.tangents[40];
+    // A banana 90 units dead ahead.
+    c.game.bananas.push({ id: 999, x: a.x + t[0] * 90, y: a.y + t[1] * 90, owner: owner.id, life: 30, safe: 0 });
+    let i = 0;
+    a.input = { up: true, down: false, left: false, right: false, drift: false };
+    for (; i < 20; i++) {
+      a.input = { ...a.input, drift: i === hopAt };
+      c.game.simulate(1 / 30);
+      if (!c.game.bananas.length) break;
+    }
+    const spun = a.spin > 0;
+    c.room.destroy();
+    return spun;
+  };
+  assert.strictEqual(await run(-1), true, 'no hop: spun out');
+  const timings = [];
+  for (let at = 0; at <= 4; at++) timings.push(await run(at));
+  assert.ok(timings.includes(false), `some hop timing clears it (spun: ${timings})`);
+  assert.ok(timings.includes(true), 'but not any timing');
 });
 
 test('star: invincible and faster; ramming spins rivals out (race) or damages them (arena)', async () => {

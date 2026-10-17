@@ -17,9 +17,9 @@ const MAX_BOTS = 15;
 // cuts to the inside; itemChance: odds of acting on a good item opportunity;
 // holdMax: seconds before it just uses whatever it holds; trick: odds of a trick off a ramp.
 const SKILLS = {
-  easy: { speed: 0.9, react: 0.45, aim: 0.5, noise: 0.2, look: 0.9, corner: 0.8, line: 0.1, drift: false, itemChance: 0.15, holdMax: 16, lead: 0, trick: 0 },
-  normal: { speed: 1, react: 0.2, aim: 0.3, noise: 0.06, look: 1, corner: 0.95, line: 0.3, drift: false, itemChance: 0.65, holdMax: 9, lead: 0.5, trick: 0.5 },
-  hard: { speed: 1, react: 0.08, aim: 0.18, noise: 0, look: 1.05, corner: 1.05, line: 0.45, drift: true, itemChance: 1, holdMax: 5, lead: 1, trick: 1 },
+  easy: { speed: 0.9, react: 0.45, aim: 0.5, noise: 0.2, look: 0.9, corner: 0.8, line: 0.1, drift: false, itemChance: 0.15, holdMax: 16, lead: 0, trick: 0, hop: 0 },
+  normal: { speed: 1, react: 0.2, aim: 0.3, noise: 0.06, look: 1, corner: 0.95, line: 0.3, drift: false, itemChance: 0.65, holdMax: 9, lead: 0.5, trick: 0.5, hop: 0.25 },
+  hard: { speed: 1, react: 0.08, aim: 0.18, noise: 0, look: 1.05, corner: 1.05, line: 0.45, drift: true, itemChance: 1, holdMax: 5, lead: 1, trick: 1, hop: 0.6 },
 };
 const SKILL_NAMES = Object.keys(SKILLS);
 
@@ -190,6 +190,8 @@ function raceDrive(game, k, ai, sk, input) {
     if (fwd < 0 || fwd > 260) return;
     const side = -dx * sinA + dy * cosA; // + = to the right of the kart
     if (Math.abs(side) < 45) lateral = clamp(lateral + (side > 0 ? -0.45 : 0.45), -0.75, 0.75);
+    // Dead ahead and too close to steer round: hop it (the hop clears it ~0.1-0.3 s after take-off).
+    if (Math.abs(side) < 26 && fwd > v * 0.08 + 20 && fwd < v * 0.14 + 40 && Math.random() < sk.hop) ai.hopNow = true;
   };
   if (k.ghost <= 0) {
     for (const b of game.bananas) if (b.owner !== k.id || b.safe <= 0) dodge(b.x, b.y);
@@ -522,6 +524,7 @@ function think(game, k, dt) {
     Object.assign(input, { up: false, down: true, drift: false, left: ai.reverseSteer < 0, right: ai.reverseSteer > 0 });
     return;
   }
+  ai.hopNow = false;
   if (game.arena) arenaDrive(game, k, ai, sk, input);
   else {
     raceDrive(game, k, ai, sk, input);
@@ -529,6 +532,8 @@ function think(game, k, dt) {
     if (k.air > 0 && !ai.inAir) { ai.inAir = true; ai.wantTrick = Math.random() < sk.trick; }
     else if (!(k.air > 0)) ai.inAir = false;
     if (ai.inAir && ai.wantTrick && k.trickable && !k.tricked) input.drift = true;
+    // A tap of drift is a hop (it only counts on the press, so not while holding a drift).
+    if (ai.hopNow && !k.hopHeld && !(k.air > 0)) input.drift = true;
   }
   if ((input.up || input.down) && Math.abs(k.speed) < 40 && k.spin <= 0 && !(k.air > 0)) {
     ai.stuck += dt;

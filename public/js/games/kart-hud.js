@@ -14,6 +14,7 @@
     boom: '<svg viewBox="0 0 24 24" class="hud-ic"><path d="M12 1.5l2.2 5.6 5.4-2.6-2.4 5.5 5.3 2.3-5.6 1.8 2 5.7-5.3-2.8L12 22.5l-1.6-5.5-5.3 2.8 2-5.7L1.5 12.3l5.3-2.3-2.4-5.5 5.4 2.6z" fill="#ffb547" stroke="#ff4f1f" stroke-width="1.2" stroke-linejoin="round"/></svg>',
   };
   ICONS.water = '<svg viewBox="0 0 24 24" class="hud-ic"><path d="M12 2.5c3 4.2 6 7.4 6 11a6 6 0 0 1-12 0c0-3.6 3-6.8 6-11z" fill="#38bdf8"/><path d="M9.2 14.5a3 3 0 0 0 2.6 3" stroke="#e0f2fe" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M2 21c1.7-1.3 3.3-1.3 5 0s3.3 1.3 5 0 3.3-1.3 5 0 3.3 1.3 5 0" stroke="#7dd3fc" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>';
+  ICONS.ram = '<svg viewBox="0 0 24 24" class="hud-ic" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h7M5.5 8.5 9 12l-3.5 3.5" stroke="#e5e7eb" stroke-width="2.4"/><path d="M22 12h-7M18.5 8.5 15 12l3.5 3.5" stroke="#e5e7eb" stroke-width="2.4"/><path d="M12 5v3M12 16v3M9.5 6.5l1 2M14.5 6.5l-1 2M9.5 17.5l1-2M14.5 17.5l-1-2" stroke="#ffb547" stroke-width="1.8"/></svg>';
   ICONS.drop = '<svg viewBox="0 0 24 24" class="hud-ic" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9h7M14 9h7" stroke="#e5e7eb" stroke-width="2.4"/><path d="M12 6v10M8 12.5l4 4 4-4" stroke="#ffb547" stroke-width="2.6"/><path d="M8 21h8" stroke="#ffb547" stroke-width="2" opacity="0.5"/></svg>';
   // Weapon that did it -> ItemIcons id (items not listed use their own id when an icon exists).
   const KIND_ICON = {
@@ -38,6 +39,7 @@
     if (kind === 'lava') return ICONS.lava;
     if (kind === 'water') return ICONS.water;
     if (kind === 'void' || kind === 'gap' || kind === 'fall') return ICONS.drop;
+    if (kind === 'ram') return ICONS.ram;
     const id = KIND_ICON[kind] || kind;
     return window.ItemIcons && ItemIcons.ids.includes(id) ? ItemIcons.svg(id, cls) : ICONS.boom;
   }

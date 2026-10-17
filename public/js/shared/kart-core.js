@@ -40,6 +40,9 @@
     trickWindow: 0.2, // seconds after take-off that a held drift still counts as a trick
     trickBoost: 0.7, // boost seconds for landing a trick
     fallTime: 1.5, // seconds in the water/lava before you are fished back out
+    hopVz: 290, // a tap of the drift button on the ground: ~0.39 s in the air, ~28 units up
+    hopCooldown: 0.4,
+    knockDecay: 5.5, // 1/s: how fast a shove from another kart dies away
   };
 
   // Item codes on the wire are index + 1. New items are only ever appended.
@@ -1027,7 +1030,7 @@
     Object.assign(kart, {
       x: p[0], y: p[1], angle: a, heading: a, speed: 0, trackIndex: i, safeIndex: i,
       air: 0, vz: 0, z: null, gz: null, airTime: 0, trick: 0, tricked: false, trickable: false,
-      drift: 0, driftTime: 0, boost: 0, spin: 0, fall: 0, fallKind: null,
+      drift: 0, driftTime: 0, boost: 0, spin: 0, fall: 0, fallKind: null, kx: 0, ky: 0, hopping: false,
     });
   }
 
@@ -1067,7 +1070,7 @@
         // Touchdown: carry on at the slope's speed (a descent is not a new crest). A trick in the
         // air pays out as a mini boost.
         kart.landed = -kart.vz;
-        kart.z = g; kart.air = 0; kart.vz = groundVz; kart.airTime = 0; kart.trickable = false;
+        kart.z = g; kart.air = 0; kart.vz = groundVz; kart.airTime = 0; kart.trickable = false; kart.hopping = false;
         if (kart.tricked) kart.boost = Math.max(kart.boost || 0, PHYS.trickBoost);
         kart.tricked = false;
       } else {
@@ -1094,7 +1097,7 @@
     kart.gz = g;
 
     const half = map.width / 2;
-    if ((grounded || kart.airTime < 0.1) && kart.speed > 60 && map.ramps.length && q.dist <= map.wallAt(q) + 2) {
+    if ((grounded || kart.airTime < 0.1 || kart.hopping) && kart.speed > 60 && map.ramps.length && q.dist <= map.wallAt(q) + 2) {
       for (const r of map.ramps) {
         if (r.dir !== 1) continue;
         // Kickers in front of a gap launch everyone between the rails; other ramps only the road.
@@ -1110,6 +1113,7 @@
           kart.z = g + kart.air;
           kart.airTime = 0;
           kart.trickable = true;
+          kart.hopping = false; // a real jump now
           break;
         }
       }
@@ -1144,6 +1148,18 @@
       return kart;
     }
     const mul = opts && Number.isFinite(opts.speed) && opts.speed > 0 ? opts.speed : 1;
+    // Hop: a tap of the drift button on the ground. Just high enough to clear a banana or a mine
+    // if you time it; tap it into a turn and the drift starts as you hop, the way it always did.
+    const hopPress = !!input.drift && !kart.hopHeld;
+    kart.hopHeld = !!input.drift;
+    if (kart.hopCd > 0) kart.hopCd = Math.max(0, kart.hopCd - dt);
+    if (hopPress && !(kart.spin > 0) && !(kart.air > 0) && !(kart.hopCd > 0)) {
+      kart.hopCd = PHYS.hopCooldown;
+      kart.hopping = true;
+      kart.vz = (arena ? 0 : kart.vz || 0) + PHYS.hopVz;
+      kart.air = 0.5;
+      if (!arena && Number.isFinite(kart.z)) kart.z += 0.5;
+    }
     const accel = PHYS.accel * mul;
     const maxSpeed = PHYS.maxSpeed * mul;
     const boostSpeed = PHYS.boostSpeed * mul;
@@ -1151,7 +1167,9 @@
     const grip = map.grip || 1;
     const spinning = kart.spin > 0;
     const air = !arena && kart.air > 0;
-    const steerMul = air ? PHYS.airSteer : 1;
+    // A hop keeps the grip of the ground: only a real jump (ramp, crest) loses it.
+    const flying = air && !kart.hopping;
+    const steerMul = flying ? PHYS.airSteer : 1;
     const steer = (input.left ? -1 : 0) + (input.right ? 1 : 0);
     const v0 = kart.speed;
     if (spinning) {
@@ -1160,14 +1178,14 @@
       kart.drift = 0;
       kart.driftTime = 0;
     } else {
-      if (air) kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), 15 * dt); // no grip, keep momentum
+      if (flying) kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), 15 * dt); // no grip, keep momentum
       else if (input.up) kart.speed += accel * dt * (0.6 + 0.4 * grip);
       else if (input.down) kart.speed -= (kart.speed > 0 ? PHYS.brake * grip : accel * 0.6) * dt;
       else kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), PHYS.drag * 100 * grip * dt);
 
       // Drifting: hold drift while steering at speed. The kart slides into the
       // turn; the longer you hold it, the bigger the mini-turbo on release.
-      if (!air && !kart.drift && input.drift && steer && kart.speed > PHYS.driftMinSpeed) {
+      if (!flying && !kart.drift && input.drift && steer && kart.speed > PHYS.driftMinSpeed) {
         kart.drift = steer;
         kart.driftTime = 0;
       }
@@ -1178,11 +1196,11 @@
           kart.drift = 0;
           kart.driftTime = 0;
         } else {
-          if (!air) kart.driftTime += dt;
+          if (!flying) kart.driftTime += dt;
           // Steering tightens or widens the drift but never reverses it.
           const tight = 1 + 0.55 * steer * kart.drift;
           kart.angle += kart.drift * PHYS.turnRate * 0.78 * tight * dt * steerMul;
-          if (!air) kart.speed -= 60 * dt;
+          if (!flying) kart.speed -= 60 * dt;
         }
       } else {
         const g = Math.min(1, Math.abs(kart.speed) / 140);
@@ -1209,8 +1227,8 @@
       near = map.nearestIndex(kart.x, kart.y, kart.trackIndex);
       kart.trackIndex = near.index;
       const edge = near.dist - map.width / 2;
-      surface = air || edge <= CURB + KART_RADIUS * 0.5 ? 0 : edge <= RUNOFF ? 1 : 2;
-      if (!air && map.grade) {
+      surface = flying || edge <= CURB + KART_RADIUS * 0.5 ? 0 : edge <= RUNOFF ? 1 : 2;
+      if (!flying && map.grade) {
         // Grade along the kart's heading: + uphill, - downhill.
         const t = map.tangents[near.index];
         const h = kart.heading === undefined ? kart.angle : kart.heading;
@@ -1219,7 +1237,7 @@
       }
     }
     kart.surface = surface;
-    if (!air) {
+    if (!flying) {
       for (const p of map.boostPads) {
         if ((kart.x - p.x) ** 2 + (kart.y - p.y) ** 2 < 34 * 34) kart.boost = Math.max(kart.boost || 0, PHYS.padBoost);
       }
@@ -1242,10 +1260,26 @@
     kart.heading += dh * Math.min(1, dt * 14 * grip * grip * (kart.drift ? 0.55 : 1));
     kart.x += Math.cos(kart.heading) * kart.speed * dt;
     kart.y += Math.sin(kart.heading) * kart.speed * dt;
+    // A shove from another kart: extra velocity the kart's own grip doesn't fight; it dies away.
+    if (kart.kx || kart.ky) {
+      kart.x += kart.kx * dt;
+      kart.y += kart.ky * dt;
+      const fade = Math.exp(-PHYS.knockDecay * dt);
+      kart.kx *= fade;
+      kart.ky *= fade;
+      if (Math.abs(kart.kx) + Math.abs(kart.ky) < 4) { kart.kx = 0; kart.ky = 0; }
+    }
 
     kart.bump = 0;
     if (arena) {
       kart.bump = collideArena(kart, map, dt);
+      if (kart.bump) { kart.kx = 0; kart.ky = 0; }
+      // Arena floors are flat: a hop is all the height there is.
+      if (kart.air > 0 || kart.vz > 0) {
+        kart.vz = (kart.vz || 0) - PHYS.gravity * dt;
+        kart.air = Math.max(0, (kart.air || 0) + kart.vz * dt);
+        if (kart.air <= 0) { kart.landed = -kart.vz; kart.vz = 0; kart.hopping = false; }
+      }
     } else {
       // Hard wall outside the track so nobody gets lost (on bridges: the guard rail). Karts slide along it.
       const after = map.nearestIndex(kart.x, kart.y, kart.trackIndex);
@@ -1258,6 +1292,8 @@
         kart.y = after.py + (kart.y - after.py) * k;
         after.dist = wall;
         kart.bump = slideOffWall(kart, nx, ny, dt);
+        const kn = (kart.kx || 0) * nx + (kart.ky || 0) * ny;
+        if (kn < 0) { kart.kx -= kn * nx; kart.ky -= kn * ny; }
       }
       kart.trackIndex = after.index;
       if (map.surfaceAt) vertical(kart, input, dt, map, after, near.u, opts);

@@ -687,6 +687,19 @@ export class Kart3D {
     this.ring(x, z, kind === 'trail' ? 0xffb347 : 0x93c5fd, 70, 0.3);
   }
 
+  // Two karts bumped: a burst of hot sparks where they touched (bigger and brighter for a ram).
+  bumpFx(x, z, power, ram) {
+    const gy = this.items.ground(x, z);
+    const n = Math.round((MOBILE ? 8 : 16) * (0.4 + power) * (ram ? 1.6 : 1));
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 120 + Math.random() * 220 * (0.5 + power);
+      this.fire.emit(x, gy + 10 + Math.random() * 10, z, Math.cos(a) * sp, 60 + Math.random() * 140, Math.sin(a) * sp, i % 3 ? this.colOrange : this.colSnow, 3 + Math.random() * 2, 0.35, { drag: 3, rise: -400 });
+    }
+    if (ram) this.ring(x, z, 0xffb347, 60, 0.25);
+    this.shake(x, z, ram ? 9 : 3 + 5 * power);
+  }
+
   sparkle(x, z, y) {
     const cols = [0xfacc15, 0xec4899, 0x3b82f6, 0x22c55e].map((c) => new THREE.Color(c));
     const gy = y === undefined ? this.groundAt(x, z) + 20 : y;
@@ -960,7 +973,8 @@ export class Kart3D {
       if (kart.lastY !== null && dt > 0) kart.vy += ((y - kart.lastY) / dt - kart.vy) * Math.min(1, dt * 10);
       kart.lastY = y;
       if (airborne) {
-        pitch = Math.max(-0.55, Math.min(0.5, Math.atan2(kart.vy, Math.max(200, Math.abs(k.speed))) * 0.9));
+        // Big jumps follow the flight path; a little hop stays nearly level.
+        pitch = Math.max(-0.55, Math.min(0.5, Math.atan2(kart.vy, Math.max(200, Math.abs(k.speed))) * 0.9)) * Math.min(1, air / 70 + 0.15);
         roll = 0;
       }
       kart.pitch += (pitch - kart.pitch) * Math.min(1, dt * (airborne ? 6 : 16));
