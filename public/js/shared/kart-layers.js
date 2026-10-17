@@ -1489,7 +1489,166 @@
     return def;
   }
 
-  const ARENAS = [theKeep(), theGraveyard(), theCinderBowl()];
+  // Harbour Havoc: a container port at sunset. To the south the yard, with a stepped pyramid of
+  // containers in the middle (ramps along its north and south faces up to the first tier, and up
+  // again from there to the summit), container rows either side with forklifts working the alleys
+  // between them, and a parapet along the sea. To the north three finger piers run out over two
+  // water slips: bollards along their edges (with gaps a kart fits through), double bascule bridges
+  // across both slips that lift in turn, a railless gangway joining the piers' far ends, jump pads
+  // that fly you from the outer piers' tips over the water onto the middle one, and a gantry crane
+  // over the middle pier swinging a container low enough to hit you.
+  function theHarbour() {
+    const S = 2800;
+    const C = S / 2;
+    const TIER = 80; // a container's height: the pyramid's first tier, the rows' tops
+    const SUMMIT = 2 * TIER;
+    const PIERS = 1500; // where the piers meet the yard
+    const def = {
+      id: 'harbour', name: 'Harbour Havoc', emoji: '⚓', theme: 'harbour', size: S, look: 'bright',
+      blurb: 'A container pyramid, lifting bridges, a swinging crane load and a lot of water.',
+      edge: 'wall', deathZ: -320, liquid: { kind: 'water', z: -40 },
+      ground: {
+        z: 0, depth: 90, kind: 'quay',
+        holes: [
+          { x0: 0, y0: 0, x1: 180, y1: S }, { x0: S - 180, y0: 0, x1: S, y1: S },
+          { x0: 180, y0: S - 180, x1: S - 180, y1: S }, { x0: 180, y0: 0, x1: S - 180, y1: PIERS },
+        ],
+      },
+      blocks: [
+        // The piers (timber decks over the water) and the gangway across their far ends.
+        { x0: 180, y0: 380, x1: 640, y1: PIERS, z0: -90, z1: 0, kind: 'wharf' },
+        { x0: 1120, y0: 260, x1: 1680, y1: PIERS, z0: -90, z1: 0, kind: 'wharf' },
+        { x0: 2160, y0: 380, x1: 2620, y1: PIERS, z0: -90, z1: 0, kind: 'wharf' },
+        { x0: 640, y0: 420, x1: 1120, y1: 500, z0: -12, z1: 0, kind: 'gangway' },
+        { x0: 1680, y0: 420, x1: 2160, y1: 500, z0: -12, z1: 0, kind: 'gangway' },
+        // The parapet along the yard's three sea sides.
+        { x0: 180, y0: PIERS, x1: 204, y1: S - 180, z0: -90, z1: 30, kind: 'parapet' },
+        { x0: S - 204, y0: PIERS, x1: S - 180, y1: S - 180, z0: -90, z1: 30, kind: 'parapet' },
+        { x0: 204, y0: S - 204, x1: S - 204, y1: S - 180, z0: -90, z1: 30, kind: 'parapet' },
+      ],
+      ramps: [], cyls: [], pads: [], bumpers: [], boosts: [], hazards: [], boxes: [], spawns: [], movers: [], deco: [],
+      // What everything looks like (kart3d/bright3d.js; the minimap uses the tops).
+      palette: {
+        quay: { top: '#c9cdd5', side: '#9399a5', top2: '#b9bec8', pattern: 'tiles', cell: 160, round: 0 },
+        wharf: { top: '#cf945c', side: '#7d593a', top2: '#9f6b3f', pattern: 'planks', cell: 26, angle: 1, round: 3 },
+        gangway: { top: '#6e778a', side: '#3d4352', top2: '#454c5c', pattern: 'grate', cell: 16, round: 2 },
+        parapet: { top: '#ffd23f', side: '#cbbca3', top2: '#2b2d33', pattern: 'hazard', cell: 46, round: 5 },
+        bollard: { top: '#ffd23f', side: '#30343f', round: 0 },
+        craneleg: { top: '#ffcf33', side: '#ffcf33', side2: '#2b2d33', sidePattern: 'bands', sideCell: 64, foot: 0.85 },
+        steel: { top: '#f5b43a', side: '#9a6c26', top2: '#d4861a', pattern: 'chevrons', cell: 44, round: 0 },
+        ctr: { pattern: 'planks', cell: 13, angle: 0, sidePattern: 'ribs', sideCell: 12, round: 3, foot: 0.6, roof: false },
+        ctrColours: { red: '#e5484d', blue: '#2f6fd6', teal: '#14a3a0', orange: '#f28a2e', purple: '#7a52d6', green: '#3fae5a', yellow: '#f2c230' },
+        rim: ['#ffffff', '#e5484d'],
+        hazardRim: ['#ffd23f', '#2b2d33'],
+        water: { shallow: '#2fc8d6', deep: '#0e5f8e', line: '#d2fbff' },
+      },
+      paint: [
+        // Dashed yellow centre lines down both roads and the piers; zebra crossings where the piers
+        // meet the yard; a ring and cross on the summit.
+        { type: 'line', from: [230, 1590], to: [S - 230, 1590], z: 0, w: 9, color: '#ffd23f', dash: 60, gap: 50 },
+        { type: 'line', from: [230, 2510], to: [S - 230, 2510], z: 0, w: 9, color: '#ffd23f', dash: 60, gap: 50 },
+        { type: 'line', from: [410, 520], to: [410, PIERS - 20], z: 0, w: 8, color: '#ffffff', dash: 50, gap: 50 },
+        { type: 'line', from: [S - 410, 520], to: [S - 410, PIERS - 20], z: 0, w: 8, color: '#ffffff', dash: 50, gap: 50 },
+        { type: 'line', from: [C, 300], to: [C, PIERS - 20], z: 0, w: 8, color: '#ffffff', dash: 50, gap: 50 },
+        { type: 'zebra', x0: 220, y0: PIERS + 12, x1: 620, y1: PIERS + 58, z: 0, color: '#ffffff', along: 'x' },
+        { type: 'zebra', x0: 1140, y0: PIERS + 12, x1: 1660, y1: PIERS + 58, z: 0, color: '#ffffff', along: 'x' },
+        { type: 'zebra', x0: S - 620, y0: PIERS + 12, x1: S - 220, y1: PIERS + 58, z: 0, color: '#ffffff', along: 'x' },
+        { type: 'circle', x: C, y: 2050, r: 74, z: 160, w: 9, color: '#ffffff' },
+        { type: 'line', from: [C - 40, 2010], to: [C + 40, 2090], z: 160, w: 10, color: '#ffffff' },
+        { type: 'line', from: [C - 40, 2090], to: [C + 40, 2010], z: 160, w: 10, color: '#ffffff' },
+      ],
+    };
+    const COLOURS = ['red', 'blue', 'teal', 'orange', 'purple', 'green', 'yellow'];
+    let paint = 0;
+    const container = (x0, y0, x1, y1, z0, z1) => def.blocks.push({ x0, y0, x1, y1, z0, z1, kind: `ctr-${COLOURS[paint++ % COLOURS.length]}` });
+    // The pyramid: a first tier of containers four long and five deep, two more on top.
+    for (let j = 0; j < 5; j++) for (let i = 0; i < 4; i++) container(900 + i * 250, 1800 + j * 100, 1150 + i * 250, 1900 + j * 100, -2, TIER);
+    container(1250, 1950, 1550, 2050, TIER - 2, SUMMIT);
+    container(1250, 2050, 1550, 2150, TIER - 2, SUMMIT);
+    // Ramps along its north and south faces (from either end towards the middle), and up from the
+    // first tier to the summit at its west and east ends.
+    def.ramps.push(
+      { x0: 1050, y0: 1700, x1: 1350, y1: 1800, z0: 0, z1: TIER, dir: 'x+', base: -2, kind: 'steel' },
+      { x0: 1450, y0: 1700, x1: 1750, y1: 1800, z0: 0, z1: TIER, dir: 'x-', base: -2, kind: 'steel' },
+      { x0: 1050, y0: 2300, x1: 1350, y1: 2400, z0: 0, z1: TIER, dir: 'x+', base: -2, kind: 'steel' },
+      { x0: 1450, y0: 2300, x1: 1750, y1: 2400, z0: 0, z1: TIER, dir: 'x-', base: -2, kind: 'steel' },
+      { x0: 990, y0: 2000, x1: 1250, y1: 2100, z0: TIER, z1: SUMMIT, dir: 'x+', base: TIER - 2, kind: 'steel' },
+      { x0: 1550, y0: 2000, x1: 1810, y1: 2100, z0: TIER, z1: SUMMIT, dir: 'x-', base: TIER - 2, kind: 'steel' },
+    );
+    // Container rows either side (mirrored), two lanes and an alley each side of the pyramid.
+    for (const flip of [false, true]) {
+      const X = (x) => (flip ? S - x : x);
+      const row = (x0, x1, y0, n) => { for (let k = 0; k < n; k++) container(X(x0), y0 + k * 240, X(x1), y0 + (k + 1) * 240, -2, TIER); };
+      row(420, 520, 1780, 2);
+      row(660, 760, 1860, 2);
+      // A forklift working the alley between the two rows.
+      def.movers.push({ type: 'slider', x0: X(545), y0: 1840, x1: X(635), y1: 1930, z0: 0, z1: 46, dx: 0, dy: 330, period: 9, phase: flip ? 0.5 : 0, kind: 'forklift' });
+    }
+    // Bascule bridges over both slips: two leaves each, hinged at the piers; the west pair lifts,
+    // then the east pair half a cycle later.
+    for (const [xa, xb, phase] of [[640, 1120, 0], [1680, 2160, 0.5]]) {
+      const mid = (xa + xb) / 2;
+      const leaf = { type: 'drawbridge', y0: 980, y1: 1140, z: 0, thick: 14, period: 34, at: 14, move: 2, hold: 7, max: 1.25, phase, kind: 'bascule' };
+      def.movers.push({ ...leaf, x0: xa, x1: mid, hinge: 'x0' }, { ...leaf, x0: mid, x1: xb, hinge: 'x1' });
+    }
+    // The gantry crane over the middle pier: four legs, and a container swinging north-south under
+    // it, its ends reaching down to kart height at the bottom of each swing (three swinging balls
+    // in a row make its hit box).
+    for (const x of [1152, 1648]) for (const y of [640, 920]) def.cyls.push({ x, y, r: 24, z0: -20, z1: 390, kind: 'craneleg' });
+    for (const dx of [-50, 0, 50]) def.movers.push({ type: 'pendulum', x: C + dx, y: 780, z: 292, len: 254, r: 34, axis: 'y', amp: 0.8, period: 4.4, phase: 0, group: 'crane', kind: 'cargo' });
+    def.deco.push({ kind: 'crane', x: C, y: 780, z: 0, x0: 1152, x1: 1648, y0: 640, y1: 920, top: 390, pivot: 292 });
+    // Bollards along the piers' edges and the yard's open edges by the slips, with gaps you can
+    // slip through (and into the water): every 120 along the outer edges, every 160 by the slips.
+    const bollard = (x, y) => def.cyls.push({ x: Math.round(x), y: Math.round(y), r: 12, z0: -10, z1: 26, kind: 'bollard' });
+    const clear = (y, gaps) => gaps.every(([a, b]) => y < a || y > b);
+    for (let y = 440; y <= 1460; y += 120) { bollard(196, y); bollard(S - 196, y); }
+    for (let y = 560; y <= 1460; y += 160) {
+      if (!clear(y, [[930, 1190]])) continue; // the bascule bridges land there
+      for (const x of [624, 1136, 1664, 2176]) if (x < 1100 || x > 1700 || clear(y, [[600, 960]])) bollard(x, y);
+    }
+    for (const x0 of [660, 1700]) for (let x = x0; x <= x0 + 440; x += 110) bollard(x, PIERS + 14);
+    for (let x = 240; x <= 600; x += 120) { bollard(x, 396); bollard(S - x, 396); }
+    for (let x = 1160; x <= 1640; x += 120) bollard(x, 276);
+    // Fender tyres (bouncy) at the piers' far ends.
+    for (const [x, y] of [[300, 430], [2500, 430], [1220, 300], [1580, 300]]) def.bumpers.push({ x, y, z: 0, r: 30, h: 34, kick: 380, style: 'tyres' });
+    // Jump pads: from the outer piers' tips over the slips onto the middle pier, and from the yard
+    // roads (north and south) up onto the summit.
+    def.pads.push(
+      { x: 410, y: 600, z: 0, r: 42, to: [1330, 420, 0], t: 1.35 },
+      { x: S - 410, y: 600, z: 0, r: 42, to: [S - 1330, 420, 0], t: 1.35 },
+      { x: 1240, y: 1600, z: 0, r: 42, to: [1330, 2000, SUMMIT], t: 1.25 },
+      { x: S - 1240, y: 2500, z: 0, r: 42, to: [S - 1330, 2100, SUMMIT], t: 1.25 },
+    );
+    def.boosts.push(
+      { x: 410, y: 1300, z: 0, angle: -Math.PI / 2 }, { x: S - 410, y: 1300, z: 0, angle: -Math.PI / 2 },
+      { x: C, y: 1260, z: 0, angle: -Math.PI / 2 },
+      { x: 860, y: 1600, z: 0, angle: 0 }, { x: S - 860, y: 1600, z: 0, angle: Math.PI },
+    );
+    def.boxes.push(
+      { x: 1340, y: 2050, z: SUMMIT }, { x: 1460, y: 2050, z: SUMMIT }, // the summit
+      { x: 1000, y: 1880, z: TIER }, { x: 1800, y: 1880, z: TIER }, { x: 1000, y: 2220, z: TIER }, { x: 1800, y: 2220, z: TIER },
+      { x: 880, y: 460, z: 0 }, { x: 1920, y: 460, z: 0 }, // out on the gangways
+      { x: 1310, y: 780, z: 0 }, { x: 1490, y: 780, z: 0 }, // under the crane
+      { x: 410, y: 760, z: 0 }, { x: 410, y: 1180, z: 0 }, { x: S - 410, y: 760, z: 0 }, { x: S - 410, y: 1180, z: 0 },
+      { x: C, y: 360, z: 0 },
+      { x: 590, y: 1790, z: 0 }, { x: S - 590, y: 1790, z: 0 }, { x: 830, y: 1980, z: 0 }, { x: S - 830, y: 1980, z: 0 },
+      { x: C, y: 1580, z: 0 }, { x: C, y: 2500, z: 0 },
+    );
+    const spawn = (x, y, z, angle) => def.spawns.push({ x, y, z, angle });
+    for (const x of [300, 820, 1980, 2500]) spawn(x, 1610, 0, Math.PI / 2);
+    for (const x of [300, 760, 1000, 1800, 2040, 2500]) spawn(x, 2500, 0, -Math.PI / 2);
+    for (const y of [1900, 2200]) { spawn(310, y, 0, 0); spawn(S - 310, y, 0, Math.PI); }
+    for (const y of [880, 1340]) { spawn(410, y, 0, Math.PI / 2); spawn(S - 410, y, 0, Math.PI / 2); }
+    spawn(1290, 1220, 0, Math.PI / 2); spawn(1510, 1220, 0, Math.PI / 2);
+    spawn(1250, 560, 0, Math.PI / 2); spawn(1550, 560, 0, Math.PI / 2);
+    spawn(1060, 1960, TIER, 0); spawn(1740, 2140, TIER, Math.PI);
+    // The world round it: a lighthouse on a rock, a cargo ship moored off the east side, lamps.
+    def.deco.push({ kind: 'lighthouse', x: 2520, y: 120, z: -40 }, { kind: 'ship', x: 3200, y: 900, z: -40, len: 1500, angle: Math.PI / 2 });
+    for (const [x, y] of [[300, 1520], [S - 300, 1520], [300, 2580], [S - 300, 2580], [C - 300, 2580], [C + 300, 2580], [300, 1200], [S - 300, 1200]]) def.deco.push({ kind: 'lamp', x, y, z: 0 });
+    return def;
+  }
+
+  const ARENAS = [theKeep(), theGraveyard(), theCinderBowl(), theHarbour()];
 
   return {
     KART_R, KART_H, STEP, NAV, NAV_SLOPE, EDGE, ARENAS, makeLayeredArena, makeTerrain, groundBlocks, turn, symmetric, roadSolids, SEG,

@@ -475,6 +475,14 @@ export const THEMES = {
     ground: () => tex.ground('#5ec962', ['#55bd59', '#68d06c']),
     clouds: 22,
   },
+  // Harbour Havoc: a container port at sunset. A low warm sun out of the west (long shadows), a
+  // peach horizon over the sea, the piers' lamps coming on.
+  harbour: {
+    sky: [0x3a5ec8, 0xffb48c], fog: [0xf7bc9a, 2600, 11000], fogExp: 0.00012, hemi: [0xffe2c8, 0x4c6a92, 1.35], sun: [0xffd0a0, 3.1],
+    sunOffset: [-980, 520, -460],
+    ground: () => tex.ground('#d9ccb4', ['#d0c3ab', '#e2d6c0']),
+    clouds: 18, cloudTint: 0xffd9c6,
+  },
   // The weekly arena's other looks (with keep and graveyard above).
   ruins: {
     sky: [0x3f8fde, 0xf8e3bf], fog: [0xf3dcb4, 2200, 7800], hemi: [0xffe9c8, 0xa06a3a, 1.2], sun: [0xffe2b0, 2.9],

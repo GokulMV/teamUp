@@ -388,7 +388,8 @@
       const fx = X(0); const fy = Y(0); const fw = S * s;
       c.save();
       c.shadowColor = 'rgba(0,0,0,0.5)'; c.shadowBlur = 10 * dpr * k; c.shadowOffsetY = 3 * dpr * k;
-      c.fillStyle = map.liquid ? LAYER_LIQUID[map.liquid.kind] || LAYER_LIQUID.water : '#0d0b1a';
+      const pal = map.palette || null; // bright arenas paint their own colours
+      c.fillStyle = map.liquid ? (pal && pal.water && pal.water.deep) || LAYER_LIQUID[map.liquid.kind] || LAYER_LIQUID.water : '#0d0b1a';
       roundRectPath(c, fx, fy, fw, fw, 7 * k); c.fill();
       c.restore();
       c.save();
@@ -420,9 +421,15 @@
         c.drawImage(img, fx, fy, (L.n - 1) * L.cell * s, (L.n - 1) * L.cell * s);
       }
       const palette = THEME_KINDS[map.theme] || {};
+      const own = (kind) => {
+        if (!pal || !kind) return null;
+        if (pal[kind] && pal[kind].top) return pal[kind].top;
+        if (kind.startsWith('ctr-') && pal.ctrColours) return pal.ctrColours[kind.slice(4)] || null;
+        return null;
+      };
       const colour = (kind, z) => {
         const u = (z - lo) / (hi - lo || 1);
-        const [r, gg, b] = rgb(palette[kind] || LAYER_KINDS[kind] || LAYER_KINDS.stone);
+        const [r, gg, b] = rgb(own(kind) || palette[kind] || LAYER_KINDS[kind] || LAYER_KINDS.stone);
         const f = 0.82 + 0.42 * u;
         return `rgb(${Math.min(255, r * f) | 0},${Math.min(255, gg * f) | 0},${Math.min(255, b * f) | 0})`;
       };
@@ -439,7 +446,7 @@
           c.closePath();
         } else c.rect(X(sd.x0), Y(sd.y0), (sd.x1 - sd.x0) * s, (sd.y1 - sd.y0) * s);
       };
-      const CLUTTER = new Set(['bumper', 'hub', 'trunk', 'boulder', 'deadtree', 'kerb']);
+      const CLUTTER = new Set(['bumper', 'hub', 'trunk', 'boulder', 'deadtree', 'kerb', 'bollard', 'craneleg']);
       const solids = map.solids.filter((sd) => !CLUTTER.has(sd.kind)).sort((a, b) => a.z1 - b.z1);
       for (const sd of solids) {
         if (sd.z1 > lo + 20) {

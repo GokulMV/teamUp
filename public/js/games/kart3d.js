@@ -388,6 +388,7 @@ export class Kart3D {
     sun.shadow.bias = -0.0006;
     sun.shadow.normalBias = 1.5;
     this.sun = sun;
+    this.sunOffset = theme.sunOffset || [450, 900, 300]; // from the target: the light's direction
     scene.add(sun, sun.target);
 
     if (this.arena && !this.layered) {
@@ -1417,7 +1418,7 @@ export class Kart3D {
       this.camera.lookAt(this.camLook);
       this.juice.applyShake(this.camera, dt);
       // The shadow camera follows the player.
-      this.sun.position.set(focus.x + 450, fy + 900, focus.y + 300);
+      this.sun.position.set(focus.x + this.sunOffset[0], fy + this.sunOffset[1], focus.y + this.sunOffset[2]);
       this.sun.target.position.set(focus.x, fy, focus.y);
     } else {
       const [cx, cz] = this.map.center;
@@ -1425,7 +1426,7 @@ export class Kart3D {
       this.camera.position.set(cx + Math.cos(t * 0.1) * 2600, this.topY + 1700, cz + Math.sin(t * 0.1) * 2600);
       this.camera.lookAt(cx, this.topY * 0.5, cz);
       this.camGround = this.topY;
-      this.sun.position.set(cx + 450, this.topY + 900, cz + 300);
+      this.sun.position.set(cx + this.sunOffset[0], this.topY + this.sunOffset[1], cz + this.sunOffset[2]);
       this.sun.target.position.set(cx, 0, cz);
     }
     this.sky.position.copy(this.camera.position);

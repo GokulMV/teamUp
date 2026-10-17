@@ -408,8 +408,56 @@ test('layers: CPU drivers on The Cinder Bowl collect boxes, drive the viaduct an
   assert.ok(burnt <= 3, `${burnt} karts drove into the lava by themselves`);
 });
 
-test('layers: The Keep, The Graveyard and The Cinder Bowl: every spawn and box stands on its floor, and each is reachable from every other', () => {
-  for (const id of ['keep', 'graveyard', 'cinder']) checkArena(K.getMap(id, 'arena'));
+test('layers: The Keep, The Graveyard, The Cinder Bowl and Harbour Havoc: every spawn and box stands on its floor, and each is reachable from every other', () => {
+  for (const id of ['keep', 'graveyard', 'cinder', 'harbour']) checkArena(K.getMap(id, 'arena'));
+});
+
+test('layers: CPU drivers on Harbour Havoc work the yard, climb the pyramid, use the pads and mostly stay dry', () => {
+  const Bots = require('../server/games/kart-bots');
+  const events = [];
+  const room = {
+    settings: { kartMode: 'arena', kartMap: 'harbour', arenaTime: 600, kartItems: 'none', kartBots: 6, kartBotSkill: 'normal' },
+    players: new Map(), connectedPlayers: [], emit: (e, d) => events.push([e, d]), emitTo() {}, teamList: () => [], systemMessage() {},
+    buildResults: () => ({ players: [] }), finishGame() {},
+  };
+  const game = new KartBattle(room);
+  assert.strictEqual(game.map.id, 'harbour');
+  Bots.makeBots(6, { skill: 'normal' }).forEach((b, i) => game.addKart(b, i));
+  game.items = ['rocket']; // boxes to chase, nothing that knocks anyone in
+  game.boxes = game.map.itemBoxes.map(() => 0);
+  game.rollItem = () => null;
+  game.phase = 'racing';
+  game.raceStart = 0;
+  let boxes = 0;
+  let high = 0;
+  for (let i = 0; i < 60 * 30; i++) {
+    game.time += 1 / 30;
+    const before = game.boxes.filter((b) => b > 0).length;
+    game.simulate(1 / 30);
+    boxes += Math.max(0, game.boxes.filter((b) => b > 0).length - before);
+    for (const k of game.karts.values()) if (k.dead <= 0 && k.z >= 79) high += 1 / 30;
+  }
+  assert.strictEqual(game.botError, false);
+  const wet = events.filter(([e, d]) => e === 'game:kart:hit' && d.kill && d.by < 0).length;
+  assert.ok(boxes >= 20, `${boxes} boxes picked up`);
+  assert.ok(high > 3, `${high.toFixed(0)} kart-seconds up on the pyramid`);
+  assert.ok(events.some(([e]) => e === 'game:kart:pad'), 'somebody took a jump pad');
+  assert.ok(wet <= 3, `${wet} karts drove into the water by themselves`);
+});
+
+test('layers: Harbour Havoc: the bascule bridges lift in turn, and the crane\'s load swings down to kart height', () => {
+  const map = K.getMap('harbour', 'arena');
+  const leaves = map.movers.filter((m) => m.type === 'drawbridge');
+  assert.strictEqual(leaves.length, 4, 'two leaves over each slip');
+  // Mid-slip, west and east: is there a floor there at time t?
+  const across = (x, t) => Number.isFinite(map.floorAt(x, 1060, 10, t));
+  assert.ok(across(880, 0) && !across(1920, 0), 'at the start the east pair is up');
+  assert.ok(!across(880, 17) && across(1920, 17), 'half a cycle later the west pair is up instead');
+  // The swinging container's balls: at the bottom of the swing a kart on the pier is in the way.
+  const crane = map.movers.filter((m) => m.type === 'pendulum');
+  assert.strictEqual(crane.length, 3);
+  const low = Math.min(...crane.map((m) => map.pendulumAt(m, 0).z - m.r));
+  assert.ok(low < L.KART_H && low > 0, `the load comes down to ${low.toFixed(0)} (karts are ${L.KART_H} tall)`);
 });
 
 // A raised road over flat ground: up from the west, a crest 120 high in the middle, down to the east.

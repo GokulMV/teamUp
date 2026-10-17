@@ -7,6 +7,11 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { tex, canvasTexture, rng, MOBILE, boostPad, decorate, addHills, addMoonlitTrees } from './world.js';
 import { buildSculpted, buildTyres, SCULPTED_KINDS } from './sculpt3d.js';
+import { buildBrightSolids } from './bright3d.js';
+import { buildHarbour } from './harbour3d.js';
+
+// Bright arenas' own set dressing (and models for their moving obstacles), by theme.
+const DRESSINGS = { harbour: buildHarbour };
 
 const K = window.KartCore;
 const L = K.Layers;
@@ -540,7 +545,11 @@ export function buildLayered(scene, map, theme, ctx) {
   const glows = []; // acid pools that fizz
   // Sculpted arenas (a low-poly ground, a viaduct): their own builder draws those and their props.
   const sculpted = !!(map.terrain && map.terrain.style === 'lowpoly');
-  for (const s of map.solids) {
+  // Bright arenas (clean colour blocks, painted rims): kart3d/bright3d.js draws their solids and water.
+  const bright = map.look === 'bright';
+  const dress = bright && DRESSINGS[map.theme] ? DRESSINGS[map.theme](scene, map, ctx) : null;
+  if (bright) roofs.push(...buildBrightSolids(scene, map, ctx).roofs);
+  for (const s of bright ? [] : map.solids) {
     if (s.kind === 'bumper' || s.kind === 'hub') continue; // drawn with their bumper / sweeper
     if (s.type === 3) continue; // road pieces: drawn as whole roads (sculpt3d.js)
     if (sculpted && SCULPTED_KINDS.has(s.kind)) continue;
@@ -586,7 +595,7 @@ export function buildLayered(scene, map, theme, ctx) {
 
   // The world outside the arena: the same ground, with a square hole where the arena is.
   const outerKit = kit.grass || kit.ground;
-  {
+  if (!bright) {
     const far = 9000;
     // Drawn in (x, -y) and laid flat facing up: the shape's y becomes the world's z.
     const P = (x, y) => new THREE.Vector2(x, -y);
@@ -603,11 +612,11 @@ export function buildLayered(scene, map, theme, ctx) {
   }
 
   // Edge walls: a palisade of sharpened logs (or wrought iron railings) where the physics wall stands.
-  if (map.edge === 'wall' && !sculpted) addPalisade(scene, S, theme.railings); // (cliffs ring a sculpted bowl)
+  if (map.edge === 'wall' && !sculpted && !bright) addPalisade(scene, S, theme.railings); // (cliffs ring a sculpted bowl)
 
   // Moat / lava lake: one sheet at the liquid's level (only seen through the holes in the floor).
   // (A sculpted arena's lava fills its craters: sculpt3d.js.)
-  if (map.liquid && !sculpted) {
+  if (map.liquid && !sculpted && !bright) {
     if (map.liquid.kind === 'lava') {
       const lt = tex.lava().clone();
       lt.needsUpdate = true;
@@ -660,9 +669,15 @@ export function buildLayered(scene, map, theme, ctx) {
   for (const p of map.boostPads) ctx.pads.push(boostPad(scene, p));
   const pads = map.pads.map((p) => buildPad(scene, p));
   const bumpers = map.bumpers.map((b) => (theme.pumpkins ? buildPumpkin(scene, b, S) : b.style === 'tyres' ? buildTyres(scene, b) : buildBumper(scene, b)));
-  const movers = map.movers.map((m) => buildMover(scene, map, m, kit));
+  const movers = map.movers.map((m) => (dress && dress.mover(m)) || buildMover(scene, map, m, kit));
   const flames = []; // braziers: flames come off them in ambient()
-  addScenery(scene, map, theme, ctx, kit, flames);
+  if (bright) {
+    const out = (min, max = Infinity) => (x, z) => {
+      const d = Math.max(Math.max(-x, 0, x - S), Math.max(-z, 0, z - S));
+      return d > min && d < max;
+    };
+    decorate(scene, map, theme, ctx, { minX: -1600, maxX: S + 1600, minY: -1600, maxY: S + 1600 }, out, 0);
+  } else addScenery(scene, map, theme, ctx, kit, flames);
 
   const moon = theme.moon ? addMoon(scene) : null;
   // Craters with lava in them (the pool's radius: where the ground dips under the lava).
@@ -717,6 +732,7 @@ export function buildLayered(scene, map, theme, ctx) {
     // t: the game clock (where the movers are); focus: {x, y, z} of the kart the camera follows.
     update(t, dt, focus, camera) {
       for (const m of movers) m.update(t);
+      dress?.update(t, dt);
       for (const p of pads) p.update(t, dt);
       for (const b of bumpers) b.update(dt);
       // Roofs over the kart, or between it and the camera, fade to a ghost.
