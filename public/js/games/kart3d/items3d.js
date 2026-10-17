@@ -726,7 +726,7 @@ export class ItemFX {
     const list = this.pools[kind] || (this.pools[kind] = []);
     let obj = list.pop();
     if (!obj) {
-      if (kind === 'marker' || kind === 'reticle' || kind === 'pulse') obj = this.buildMarker(kind);
+      if (kind === 'marker' || kind === 'reticle' || kind === 'pulse' || kind === 'aim') obj = this.buildMarker(kind);
       else if (kind === 'shock') obj = this.buildShock();
       else if (kind === 'flare') obj = this.buildFlare();
       else obj = buildModel(kind);
@@ -747,11 +747,48 @@ export class ItemFX {
     (this.pools[obj.userData.kind] || (this.pools[obj.userData.kind] = [])).push(obj);
   }
 
+  // My own bomb, aimed but not thrown yet: a gold ring the size of the blast where it will land and
+  // a dotted arc from the kart to it. aim: { x, z, fromX, fromZ, t } or null to hide.
+  setAim(aim) {
+    if (!aim) {
+      if (this.aimMarker) { this.put(this.aimMarker); this.aimMarker = null; }
+      if (this.aimDots) this.aimDots.visible = false;
+      return;
+    }
+    if (!this.aimMarker) this.aimMarker = this.get('aim');
+    const gy = this.ground(aim.x, aim.z);
+    this.aimMarker.position.set(aim.x, gy + 1.6, aim.z);
+    this.aimMarker.scale.setScalar(140);
+    this.aimMarker.rotation.y = aim.t * 1.5;
+    this.aimMarker.userData.mat.opacity = 0.6 + 0.25 * Math.sin(aim.t * 8);
+    const N = 18;
+    if (!this.aimDots) {
+      const mat = new THREE.MeshBasicMaterial({ color: hdr(2.2, 1.7, 0.45), transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
+      this.aimDots = new THREE.InstancedMesh(new THREE.SphereGeometry(2.6, 8, 6), mat, N);
+      this.aimDots.frustumCulled = false;
+      this.aimDots.renderOrder = 6;
+      this.scene.add(this.aimDots);
+    }
+    this.aimDots.visible = true;
+    // The same arc a thrown bomb flies (see the bomb shot above), dots marching along it.
+    const g0 = this.ground(aim.fromX, aim.fromZ);
+    const m4 = new THREE.Matrix4();
+    for (let i = 0; i < N; i++) {
+      const f = ((i + (aim.t * 2.5) % 1) / N);
+      const x = aim.fromX + (aim.x - aim.fromX) * f;
+      const z = aim.fromZ + (aim.z - aim.fromZ) * f;
+      const y = g0 + (gy - g0) * f + 12 + Math.sin(f * Math.PI) * 110;
+      m4.makeTranslation(x, y, z);
+      this.aimDots.setMatrixAt(i, m4);
+    }
+    this.aimDots.instanceMatrix.needsUpdate = true;
+  }
+
   // Ground markers: bomb landing zones, comet target reticles, mine pulses. Own material each (own opacity).
   buildMarker(kind) {
     const m = models();
     const g = new THREE.Group();
-    const color = kind === 'reticle' ? hdr(1.4, 0.6, 2.4) : kind === 'pulse' ? hdr(2, 0.2, 0.2) : hdr(2.4, 0.5, 0.3);
+    const color = kind === 'reticle' ? hdr(1.4, 0.6, 2.4) : kind === 'pulse' ? hdr(2, 0.2, 0.2) : kind === 'aim' ? hdr(2.2, 1.7, 0.45) : hdr(2.4, 0.5, 0.3);
     const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
     const ring = new THREE.Mesh(m.ring, mat);
     g.add(ring);
@@ -1475,5 +1512,7 @@ export class ItemFX {
     this.tracers.material.dispose();
     this.tracers.dispose();
     this.debris.dispose();
+    if (this.aimMarker) for (const mat of this.aimMarker.userData.mats) mat.dispose();
+    if (this.aimDots) { this.aimDots.geometry.dispose(); this.aimDots.material.dispose(); this.aimDots.dispose(); }
   }
 }

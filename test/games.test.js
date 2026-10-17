@@ -283,6 +283,52 @@ test('arena battle: rockets take health, two hits destroy, victim respawns, resu
   room.destroy();
 });
 
+test('bombs are aimed: hold to lob them near or far, a tap throws mid-range, bots aim at their target', async () => {
+  const KC = require('../public/js/shared/kart-core');
+  const { room, game, kart, place, players } = await arenaGame(2);
+  const [a, b] = [kart(0), kart(1)];
+  place(1, 2300, 2300);
+  const { near, far, tap, flight } = KC.ITEM_FX.bomb;
+  const lob = (opts, speed = 0) => {
+    place(0, 500, 1300); // facing +x
+    Object.assign(a, { item: 'bomb', ammo: 1, speed });
+    assert.ok(game.useItem(a, opts));
+    const shot = game.shots.pop();
+    assert.strictEqual(shot.kind, 'bomb');
+    return Math.round(shot.lx - 500);
+  };
+  assert.strictEqual(lob({ power: 0 }), 26 + near, 'near');
+  assert.strictEqual(lob({ power: 1 }), 26 + far, 'far');
+  assert.strictEqual(lob({}), 26 + KC.bombLead(tap), 'a tap: the middle');
+  assert.strictEqual(lob({ power: 0.25 }, 300), Math.round(26 + 300 * flight + KC.bombLead(0.25)), 'ahead of where the thrower will be');
+  for (const junk of ['1', null, NaN, Infinity, {}, [0.3]]) assert.strictEqual(lob({ power: junk }), 26 + KC.bombLead(tap), `junk ${JSON.stringify(junk)}`);
+  assert.strictEqual(lob({ power: 7 }), 26 + far, 'clamped');
+  // Over the network: the aimed release carries the power.
+  place(0, 500, 1300);
+  Object.assign(a, { item: 'bomb', ammo: 1 });
+  players[0].socket.emit('game:use', { power: 0.8 });
+  await call(players[0].socket, 'game:ping'); // handled in order: the throw is done by now
+  assert.strictEqual(Math.round(game.shots.pop().lx - 500), Math.round(26 + KC.bombLead(0.8)));
+  room.destroy();
+
+  // A bot with a bomb and a parked rival 520 units ahead lands it on them.
+  const ctx = await kartGame(1, { kartMode: 'arena', kartMap: 'colosseum', kartBots: 1, kartBotSkill: 'hard', kartItems: 'none' });
+  const bot = ctx.bots()[0];
+  const target = ctx.game.karts.get(ctx.players[0].id);
+  Object.assign(bot, { x: 700, y: 1300, angle: 0, heading: 0, speed: 0, item: 'bomb', ammo: 1, roulette: 0 });
+  Object.assign(target, { x: 1220, y: 1300, speed: 0, input: { up: false, down: false, left: false, right: false, drift: false } });
+  let shot = null;
+  for (let i = 0; i < 90 && !shot; i++) {
+    ctx.game.simulate(1 / 30);
+    shot = ctx.game.shots.find((s) => s.kind === 'bomb');
+    Object.assign(target, { x: bot.x + Math.cos(bot.angle) * 520, y: bot.y + Math.sin(bot.angle) * 520, speed: 0 });
+  }
+  assert.ok(shot, 'the bot threw it');
+  const miss = Math.hypot(shot.lx - target.x, shot.ly - target.y);
+  assert.ok(miss < 140, `lands within the blast (${Math.round(miss)} off)`);
+  ctx.room.destroy();
+});
+
 test('power-ups: mine, bomb, shock, minigun, shield and ghost', async () => {
   const { room, game, kart, place } = await arenaGame(3);
   const [a, b, c] = [kart(0), kart(1), kart(2)];
@@ -863,7 +909,7 @@ test('arena bots never stall next to a box or a rival they are gunning for', asy
     const target = ctx.game.karts.get(ctx.players[0].id);
     Object.assign(bot, { x: 1000, y: 400, angle: 0, speed: 0, item: 'minigun', ammo: 1 });
     Object.assign(target, { x: 1000, y: 550, speed: 0 });
-    ctx.run(15);
+    ctx.run(skill === 'easy' ? 20 : 15); // easy bots act on only 15% of chances, but never hold it past 16 s
     // Easy bots aim loosely and can miss a whole burst; what matters is that they don't sit on it.
     assert.ok(bot.item !== 'minigun' || target.hp < 100 || target.deaths > 0, `${skill}: bot opened fire`);
     ctx.room.destroy();

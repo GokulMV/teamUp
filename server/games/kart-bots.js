@@ -265,6 +265,27 @@ function raceDrive(game, k, ai, sk, input) {
   setSteer(input, err, 0.05);
 }
 
+// Bombs are lobbed a chosen distance beyond the thrower's own path: where can this kart land one
+// right now, and how hard to throw to hit `target` (leading its motion; better bots lead more)?
+function bombReach(k) {
+  const own = 26 + Math.max(0, k.speed) * K.ITEM_FX.bomb.flight;
+  return { min: own + K.ITEM_FX.bomb.near, max: own + K.ITEM_FX.bomb.far, own };
+}
+function bombPower(k, target, dist, sk) {
+  if (!target) return K.ITEM_FX.bomb.tap;
+  const tv = (target.speed || 0) * Math.cos((target.heading ?? target.angle) - k.angle) * K.ITEM_FX.bomb.flight * sk.lead;
+  const { near, far } = K.ITEM_FX.bomb;
+  return clamp((dist + tv - bombReach(k).own - near) / (far - near), 0, 1);
+}
+
+// Close up, a minigun is worth opening up on a rival that isn't dead ahead yet: the burst keeps
+// going while the kart turns onto them (a kart can't turn on the spot, so close targets are often
+// off to the side).
+function closeSpray(k, s) {
+  if (!s.near || s.nearD > 260 || s.near.ghost > 0) return false;
+  return Math.abs(wrap(Math.atan2(s.near.y - k.y, s.near.x - k.x) - k.angle)) < 1.0;
+}
+
 // Rivals ahead of this kart in the race (by track progress).
 function rivalsAhead(game, k) {
   let n = 0;
@@ -296,10 +317,12 @@ function raceItems(game, k, ai, sk, item = k.item) {
     case 'rocket':
     case 'triple':
       return (s.front && s.frontD < 1000) || holdTooLong;
-    case 'bomb':
-      return (s.front && s.frontD > 250 && s.frontD < 750) || holdTooLong;
+    case 'bomb': {
+      const r = bombReach(k);
+      return (s.front && s.frontD > r.min - 60 && s.frontD < r.max) || holdTooLong;
+    }
     case 'minigun':
-      return (s.front && s.frontD < 550) || holdTooLong;
+      return (s.front && s.frontD < 550) || closeSpray(k, s) || holdTooLong;
     case 'banana':
     case 'mine':
       return (s.behind && s.behindD < 380) || holdTooLong;
@@ -477,10 +500,12 @@ function arenaItems(game, k, ai, sk, item = k.item) {
     case 'rocket':
     case 'triple':
       return !!(s.front && s.frontD < 850);
-    case 'bomb':
-      return !!(s.front && s.frontD > 280 && s.frontD < 700);
+    case 'bomb': {
+      const r = bombReach(k);
+      return !!(s.front && s.frontD > Math.max(200, r.min - 60) && s.frontD < r.max);
+    }
     case 'minigun':
-      return !!(s.front && s.frontD < 520);
+      return !!(s.front && s.frontD < 520) || closeSpray(k, s);
     case 'banana':
     case 'mine':
       return (s.behind && s.behindD < 350) || holdTooLong;
@@ -560,7 +585,12 @@ function think(game, k, dt) {
     }
     if (want && (ai.hold > sk.holdMax || Math.random() < sk.itemChance)) {
       const last = k.ammo <= 1;
-      const used = game.useItem(k, { back: want === 'back' });
+      const opts = { back: want === 'back' };
+      if (k.item === 'bomb') {
+        const s = scan(game, k, sk.aim * 1.3);
+        opts.power = bombPower(k, s.front, s.frontD, sk);
+      }
+      const used = game.useItem(k, opts);
       ai.shotCd = 0.35;
       if (used && last) ai.hold = 0; // the slot emptied: the next item starts its own clock
     }

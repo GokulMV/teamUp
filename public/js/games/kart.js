@@ -54,7 +54,7 @@ window.Games.kart = {
           <div class="kart-hit" data-hit><svg viewBox="0 0 28 28"><path d="M4 4l7 7M24 4l-7 7M4 24l7-7M24 24l-7-7"/></svg></div>
           <div class="kart-dead kart-panel" data-dead></div>
           <canvas class="kart-minimap" data-minimap></canvas>
-          <div class="kart-help kart-panel" data-help>${touch ? '<b>Tap any button to start</b>Your kart accelerates by itself' : '<kbd>WASD</kbd> drive <kbd>Shift</kbd> hop/drift <span class="kh-item"><kbd>Space</kbd> use item <kbd>Q</kbd> swap <kbd>S</kbd>+<kbd>Space</kbd> throw back</span>'}</div>
+          <div class="kart-help kart-panel" data-help>${touch ? '<b>Tap any button to start</b>Your kart accelerates by itself' : '<kbd>WASD</kbd> drive <kbd>Shift</kbd> hop/drift <span class="kh-item"><kbd>Space</kbd> use item (hold to aim bombs) <kbd>Q</kbd> swap <kbd>S</kbd>+<kbd>Space</kbd> throw back</span>'}</div>
           <div class="kart-rotate kart-panel hidden" data-rotate>${svg('<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M21 14a8 8 0 0 1-6 6.5M3 10a8 8 0 0 1 6-6.5"/>')}Turn your phone for a wider view</div>
           <div class="kart-tools">
             <button class="kart-tool" data-fullscreen title="Full screen" aria-label="Full screen">${svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>')}</button>
@@ -127,6 +127,8 @@ window.Games.kart = {
     }
     const onReady = () => createRenderer();
     window.addEventListener('kart3d-ready', onReady);
+    // For automated checks: what this screen is showing.
+    window.__kartStats = { get view3d() { return view3d; }, get local() { return local; } };
 
     // ---------- Input ----------
     const keyMap = {
@@ -136,6 +138,20 @@ window.Games.kart = {
     };
     function sendInput() { api.socket.emit('game:input', input); }
     function useItem() { if (!local?.falling) api.socket.emit('game:use'); }
+    // Bombs are aimed: hold fire and the landing ring sweeps out to far, back to near and out again;
+    // let go to throw. A quick tap throws it at the middle distance, like any other item.
+    const aim = { on: false, start: 0 };
+    const bombReady = () => slotState.mode === 'ready' && itemId(slotState.code) === 'bomb';
+    const aimPower = (now) => 0.5 + 0.5 * Math.sin((2 * Math.PI * (now - aim.start)) / 2400);
+    function pressFire() {
+      if (bombReady()) { aim.on = true; aim.start = performance.now(); } else useItem();
+    }
+    function releaseFire(cancel) {
+      if (!aim.on) return;
+      aim.on = false;
+      view3d?.setAim?.(null);
+      if (!cancel && bombReady() && !local?.falling) api.socket.emit('game:use', { power: Math.round(aimPower(performance.now()) * 100) / 100 });
+    }
     // Two items at most: the one Space fires and one in reserve, which Q (or the touch bubble) swaps in.
     function swapItems() { if (reserve.code && !local?.falling) api.socket.emit('game:swap'); }
     const typing = (e) => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
@@ -143,7 +159,8 @@ window.Games.kart = {
       // Key releases still count while typing in chat, or a held key would stay down for good.
       if (typing(e) && (down || !keyMap[e.code])) return;
       if (e.code === 'Space' || e.code === 'KeyE') {
-        if (down && !e.repeat) useItem();
+        if (down && !e.repeat) pressFire();
+        else if (!down) releaseFire(false);
         e.preventDefault();
         return;
       }
@@ -165,6 +182,7 @@ window.Games.kart = {
     // Leaving the page (or opening chat) lets go of everything, auto-gas included: the next button
     // press starts it again. Otherwise a phone in a pocket keeps driving into the lava.
     function release() {
+      releaseFire(true);
       autoGas = false;
       stage.classList.remove('engaged');
       Object.keys(input).forEach((k) => { input[k] = false; });
@@ -186,11 +204,18 @@ window.Games.kart = {
         b.classList.toggle('on', v);
         if (v && !autoGas) { autoGas = true; stage.classList.add('engaged'); }
         // The fire button only works once the roulette has landed (the server would refuse it anyway).
-        if (k === 'use') { if (v && slotState.mode === 'ready') useItem(); } else if (k === 'swap') { if (v) swapItems(); } else input[k] = v;
+        if (k === 'use') {
+          if (v && slotState.mode === 'ready') pressFire();
+          else if (!v) releaseFire(e.type === 'pointercancel');
+        } else if (k === 'swap') { if (v) swapItems(); } else input[k] = v;
         input.up = autoGas && !input.down;
         sendInput();
       };
-      b.addEventListener('pointerdown', set(true));
+      b.addEventListener('pointerdown', (e) => {
+        // The fire button keeps the finger while a bomb is aimed, even if it slides off the button.
+        if (k === 'use') b.setPointerCapture?.(e.pointerId);
+        set(true)(e);
+      });
       b.addEventListener('pointerup', set(false));
       b.addEventListener('pointercancel', set(false));
       b.addEventListener('pointerleave', set(false));
@@ -692,6 +717,14 @@ window.Games.kart = {
         me.speed = local.speed;
         me.air = Math.max(0, (local.air || 0) + ((local.air || 0) - pp.air) * f);
         me.fx = (me.fx & ~2) | (local.trick > 0 ? 2 : 0);
+      }
+      // Aiming a bomb: the ring shows where it comes down (ahead of where I'll be by then).
+      if (aim.on) {
+        if (!bombReady() || !me || me.flags & F.dead || me.fx & 1) releaseFire(true);
+        else {
+          const lead = 26 + Math.max(0, local ? local.speed : me.speed) * K.ITEM_FX.bomb.flight + K.bombLead(aimPower(now));
+          view3d?.setAim?.({ x: me.x + Math.cos(me.angle) * lead, z: me.y + Math.sin(me.angle) * lead, fromX: me.x, fromZ: me.y, t: now / 1000 });
+        }
       }
 
       // Camera follows me; while I'm wrecked it follows whoever smashed me (or circles the wreck);

@@ -56,7 +56,12 @@
     starTime: 6, starSpeed: 1.2,
     shrinkTime: 3, shrinkSpeed: 0.7, // thunder victims (race)
     inkTime: 4,
+    // Bombs are lobbed `near`..`far` units ahead of where the thrower will be when they land
+    // (`flight` seconds later). Holding fire aims; a tap throws at `tap` (0 near .. 1 far).
+    bomb: { flight: 0.85, near: 60, far: 760, tap: 0.5 },
   };
+  // How far ahead of the thrower's own path a bomb aimed at `power` comes down.
+  const bombLead = (power) => ITEM_FX.bomb.near + (ITEM_FX.bomb.far - ITEM_FX.bomb.near) * Math.max(0, Math.min(1, power));
   const itemSpeed = (star, shrunk) => (star ? ITEM_FX.starSpeed : 1) * (shrunk ? ITEM_FX.shrinkSpeed : 1);
   // Deadly ground on race tracks (gap codes are indexes into this list).
   const HAZARDS = [null, 'lava', 'water', 'void'];
@@ -1306,7 +1311,7 @@
 
   return {
     KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP,
-    getMap, mapList, mapInfo, mapsBuilt, stepKart, driftLevel, itemSpeed, respawnOnTrack, makeRaceMap, timeToLand,
+    getMap, mapList, mapInfo, mapsBuilt, stepKart, driftLevel, itemSpeed, bombLead, respawnOnTrack, makeRaceMap, timeToLand,
     noise: { vnoise, fbm, smoothstep, polyDist },
   };
 });

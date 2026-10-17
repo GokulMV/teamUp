@@ -687,6 +687,9 @@ export class Kart3D {
     this.ring(x, z, kind === 'trail' ? 0xffb347 : 0x93c5fd, 70, 0.3);
   }
 
+  // Aiming a bomb: show where it will land (null hides it).
+  setAim(aim) { this.items?.setAim?.(aim); }
+
   // Two karts bumped: a burst of hot sparks where they touched (bigger and brighter for a ram).
   bumpFx(x, z, power, ram) {
     const gy = this.items.ground(x, z);

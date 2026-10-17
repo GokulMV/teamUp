@@ -19,7 +19,8 @@ const REGEN_RATE = 10; // hp per second
 
 const ROCKET = { speed: 1000, life: 1.8, homing: 2.2 };
 const BULLET = { speed: 1700, life: 0.55, every: 0.08, spread: 0.06 };
-const BOMB = { speed: 650, flight: 0.85, radius: 140 };
+// Bombs are lobbed (see K.ITEM_FX.bomb: hold fire to aim near..far, a tap throws mid-range).
+const BOMB = { ...K.ITEM_FX.bomb, radius: 140 };
 const MINE = { arm: 0.8, life: 60, trigger: 40, radius: 95 };
 // Bouncer shell: fired straight (backwards when braking), caroms off walls and obstacles.
 const BOUNCER = { speed: 880, life: 6, bounces: 5, radius: 8 };
@@ -248,7 +249,8 @@ class KartBattle {
     if (event === 'input') {
       kart.input = { up: !!data?.up, down: !!data?.down, left: !!data?.left, right: !!data?.right, drift: !!data?.drift };
     } else if (event === 'use') {
-      if (this.phase === 'racing') this.useItem(kart);
+      // A bomb thrown after aiming says how far (0 near .. 1 far); everything else ignores it.
+      if (this.phase === 'racing') this.useItem(kart, { power: data && typeof data === 'object' ? data.power : undefined });
     } else if (event === 'swap') {
       if (this.phase === 'racing') this.swapItems(kart);
     }
@@ -286,10 +288,10 @@ class KartBattle {
   }
 
   // ---------- items ----------
-  fire(kind, kart, angleOffset = 0) {
+  fire(kind, kart, angleOffset = 0, power = BOMB.tap) {
     const a = kart.angle + angleOffset;
-    const base = kind === 'bullet' ? BULLET.speed : kind === 'bomb' ? BOMB.speed : ROCKET.speed;
-    const speed = base + Math.max(0, kart.speed) * (kind === 'bomb' ? 0.5 : 1);
+    const speed = kind === 'bomb' ? Math.max(0, kart.speed) + K.bombLead(power) / BOMB.flight
+      : (kind === 'bullet' ? BULLET.speed : ROCKET.speed) + Math.max(0, kart.speed);
     const shot = {
       id: this.nextId++, kind, owner: kart.id,
       x: kart.x + Math.cos(a) * 26, y: kart.y + Math.sin(a) * 26, angle: a, speed,
@@ -365,7 +367,11 @@ class KartBattle {
       case 'minigun': kart.gun = GUN_TIME; kart.gunCd = 0; break;
       case 'rocket':
       case 'triple': this.fire('rocket', kart); break;
-      case 'bomb': this.fire('bomb', kart); break;
+      case 'bomb': {
+        const p = opts.power;
+        this.fire('bomb', kart, 0, typeof p === 'number' && Number.isFinite(p) ? Math.max(0, Math.min(1, p)) : BOMB.tap);
+        break;
+      }
       case 'banana': {
         const [x, y] = [kart.x - cos * 34, kart.y - sin * 34];
         if (this.solidGround(x, y, kart)) this.bananas.push({ id: this.nextId++, x, y, life: BANANA_LIFE, owner: kart.id, safe: 0.6 });
