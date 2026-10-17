@@ -328,6 +328,12 @@
       tone(1350 + (i % 3) * 170, { type: 'square', dur: 0.03, vol: 0.05 });
       noise({ dur: 0.03, vol: 0.06, filter: 'highpass', from: 5000, to: 3000 });
     },
+    // Swapping to the reserve item: a quick two-note flick.
+    swap() {
+      tone(660, { type: 'triangle', dur: 0.07, vol: 0.14, slide: 1.5 });
+      tone(990, { type: 'triangle', dur: 0.09, vol: 0.12, slide: 1.3, delay: 0.06 });
+      noise({ dur: 0.08, vol: 0.06, filter: 'highpass', from: 3500, to: 6000 });
+    },
     rouletteDing() {
       tone(1568, { type: 'sine', dur: 0.7, vol: 0.18 });
       tone(2093, { type: 'sine', dur: 0.55, vol: 0.09, delay: 0.015 });

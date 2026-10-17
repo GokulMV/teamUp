@@ -12,7 +12,8 @@ window.Games.kart = {
     const touch = matchMedia('(pointer: coarse)').matches;
     // Snapshot flag bits (see broadcast() in server/games/kart.js).
     const F = { spin: 1, boost: 2, shield: 4, finished: 8, invuln: 16, dead: 32, drift: 64, ghost: 1024, gun: 2048, star: 4096, shrunk: 8192, inked: 16384 };
-    // Snapshot kart row: [idx, x, y, angle*1000, speed, lap, place, item, ammo, flags, kills, deaths, hp, air, fx, roulette]
+    // Snapshot kart row: [idx, x, y, angle*1000, speed, lap, place, item, ammo, flags, kills, deaths, hp, air, fx, roulette,
+    //   item2, ammo2, roulette2] (the reserve slot)
     const I = KartHud.ICONS;
     const svg = (d, extra = '') => `<svg viewBox="0 0 24 24" class="tc-ic" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
     const STEP = 1 / 30; // prediction runs at the server's tick, so both agree on every jump and landing
@@ -35,6 +36,9 @@ window.Games.kart = {
             <div class="kart-item empty" data-item>
               <div class="kart-slot"><div class="kart-reel" data-reel></div><div class="kart-item-icon" data-item-icon></div></div>
               <small data-item-ammo></small><kbd class="kart-key">Space</kbd>
+              <div class="kart-reserve empty" data-reserve title="Reserve item (Q to swap)">
+                <div class="kart-reserve-icon" data-reserve-icon></div><b data-reserve-ammo></b><kbd class="kart-rkey">Q</kbd>
+              </div>
             </div>
             <div class="kart-top-sub">
               <div class="kart-item-name kart-panel" data-item-name></div>
@@ -50,7 +54,7 @@ window.Games.kart = {
           <div class="kart-hit" data-hit><svg viewBox="0 0 28 28"><path d="M4 4l7 7M24 4l-7 7M4 24l7-7M24 24l-7-7"/></svg></div>
           <div class="kart-dead kart-panel" data-dead></div>
           <canvas class="kart-minimap" data-minimap></canvas>
-          <div class="kart-help kart-panel" data-help>${touch ? '<b>Tap any button to start</b>Your kart accelerates by itself' : '<kbd>WASD</kbd> drive <kbd>Shift</kbd> drift <span class="kh-item"><kbd>Space</kbd> use item <kbd>S</kbd>+<kbd>Space</kbd> throw back</span>'}</div>
+          <div class="kart-help kart-panel" data-help>${touch ? '<b>Tap any button to start</b>Your kart accelerates by itself' : '<kbd>WASD</kbd> drive <kbd>Shift</kbd> drift <span class="kh-item"><kbd>Space</kbd> use item <kbd>Q</kbd> swap <kbd>S</kbd>+<kbd>Space</kbd> throw back</span>'}</div>
           <div class="kart-rotate kart-panel hidden" data-rotate>${svg('<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M21 14a8 8 0 0 1-6 6.5M3 10a8 8 0 0 1 6-6.5"/>')}Turn your phone for a wider view</div>
           <div class="kart-tools">
             <button class="kart-tool" data-fullscreen title="Full screen" aria-label="Full screen">${svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>')}</button>
@@ -63,6 +67,7 @@ window.Games.kart = {
               <button class="tc-drift" data-key="drift" aria-label="Drift">${svg('<path d="M5 17c3-1 4.5-3 5.5-6S14 6 19 6"/><path d="M15 3l4 3-3 4"/>')}<small>Drift</small></button>
               <button class="tc-brake" data-key="down" aria-label="Brake">${svg('<path d="M12 5v12M6 12l6 6 6-6"/>')}</button>
               <button class="tc-fire" data-key="use" aria-label="Use item"><span data-fire-icon></span></button>
+              <button class="tc-swap empty" data-key="swap" aria-label="Swap to the reserve item"><span data-swap-icon></span><i class="tc-swap-badge">${svg('<path d="M6 9h12l-4-4M18 15H6l4 4"/>', 'stroke-width="3"')}</i></button>
             </div>
           </div>
         </div>
@@ -131,12 +136,19 @@ window.Games.kart = {
     };
     function sendInput() { api.socket.emit('game:input', input); }
     function useItem() { if (!local?.falling) api.socket.emit('game:use'); }
+    // Two items at most: the one Space fires and one in reserve, which Q (or the touch bubble) swaps in.
+    function swapItems() { if (reserve.code && !local?.falling) api.socket.emit('game:swap'); }
     const typing = (e) => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
     function onKey(e, down) {
       // Key releases still count while typing in chat, or a held key would stay down for good.
       if (typing(e) && (down || !keyMap[e.code])) return;
       if (e.code === 'Space' || e.code === 'KeyE') {
         if (down && !e.repeat) useItem();
+        e.preventDefault();
+        return;
+      }
+      if (e.code === 'KeyQ') {
+        if (down && !e.repeat) swapItems();
         e.preventDefault();
         return;
       }
@@ -174,7 +186,7 @@ window.Games.kart = {
         b.classList.toggle('on', v);
         if (v && !autoGas) { autoGas = true; stage.classList.add('engaged'); }
         // The fire button only works once the roulette has landed (the server would refuse it anyway).
-        if (k === 'use') { if (v && slotState.mode === 'ready') useItem(); } else input[k] = v;
+        if (k === 'use') { if (v && slotState.mode === 'ready') useItem(); } else if (k === 'swap') { if (v) swapItems(); } else input[k] = v;
         input.up = autoGas && !input.down;
         sendInput();
       };
@@ -246,6 +258,9 @@ window.Games.kart = {
       const cs = (row && row[15]) || 0; // 15: roulette time left
       if (cs > slotState.cs) slotState.again = true;
       slotState.cs = cs;
+      const cs2 = (row && row[18]) || 0; // 18: the reserve slot's roulette
+      if (cs2 > reserve.cs) reserve.again = true;
+      reserve.cs = cs2;
     }
 
     function reconcile(s) {
@@ -348,10 +363,12 @@ window.Games.kart = {
     const roulette = { start: 0, end: 0, cells: 0, last: -1, cell: 60, strip: [] };
     let nameTimer = 0;
 
+    // Each copy gets its own SVG: an icon's gradient ids are unique per call, and a copy whose ids
+    // resolve into a hidden twin paints without its gradients.
+    const iconHtml = (id) => (id ? Icons.svg(id, 'item-icon') : '');
     function showIcon(code) {
-      const html = code ? Icons.svg(itemId(code), 'item-icon') : '';
-      iconBox.innerHTML = html;
-      fireIcon.innerHTML = html;
+      iconBox.innerHTML = iconHtml(code && itemId(code));
+      fireIcon.innerHTML = iconHtml(code && itemId(code));
     }
     function setSlotMode(mode) {
       slotState.mode = mode;
@@ -424,6 +441,60 @@ window.Games.kart = {
       if (ammo !== slotState.ammo) {
         slotState.ammo = ammo;
         q('[data-item-ammo]').textContent = code && ammo > 1 ? `×${ammo}` : '';
+      }
+    }
+
+    // The reserve slot: a smaller glass box beside the main one (the swap bubble by the fire button
+    // on touch). Its roulette is a quick flicker of icons, not a second reel.
+    const reserveEl = q('[data-reserve]');
+    const reserveIcon = q('[data-reserve-icon]');
+    const swapBtn = q('.tc-swap');
+    const swapIcon = q('[data-swap-icon]');
+    const reserve = { code: 0, ammo: -1, mode: 'empty', cs: 0, again: false, start: 0, end: 0, strip: [], last: -1 };
+    function showReserve(id) {
+      reserveIcon.innerHTML = iconHtml(id);
+      swapIcon.innerHTML = iconHtml(id);
+    }
+    function setReserveMode(mode) {
+      reserve.mode = mode;
+      for (const node of [reserveEl, swapBtn]) {
+        node.classList.toggle('empty', mode === 'empty');
+        node.classList.toggle('rolling', mode === 'rolling');
+        node.classList.toggle('ready', mode === 'ready');
+      }
+    }
+    function landReserve() {
+      showReserve(itemId(reserve.code));
+      setReserveMode('ready');
+      reserveEl.classList.remove('landed');
+      void reserveEl.offsetWidth; // restart the pop animation
+      reserveEl.classList.add('landed');
+    }
+    function updateReserve(now, code, ammo, rouletteCs) {
+      const again = !!code && reserve.again;
+      reserve.again = false;
+      if (code !== reserve.code || again) {
+        reserve.code = code;
+        if (!code) { showReserve(null); setReserveMode('empty'); } else if (rouletteCs > 0) {
+          const age = clockOffset === null ? rtt / 2 : Math.max(0, now - clockOffset - latest.t);
+          const pool = (info?.itemList?.length ? info.itemList : K.ITEMS).filter((id) => K.ITEMS.includes(id));
+          reserve.strip = Array.from({ length: 11 }, () => pool[Math.floor(Math.random() * pool.length)]).concat(itemId(code));
+          Object.assign(reserve, { start: now, end: now + Math.max(300, rouletteCs * 10 - age), last: -1 });
+          setReserveMode('rolling');
+        } else landReserve();
+      }
+      if (reserve.mode === 'rolling') {
+        const p = Math.min(1, (now - reserve.start) / (reserve.end - reserve.start));
+        const idx = Math.round((1 - (1 - p) ** 3) * (reserve.strip.length - 1));
+        if (idx !== reserve.last) { reserve.last = idx; showReserve(reserve.strip[idx]); }
+        if (p >= 1) {
+          landReserve();
+          Sfx.rouletteDing?.();
+        }
+      }
+      if (ammo !== reserve.ammo) {
+        reserve.ammo = ammo;
+        q('[data-reserve-ammo]').textContent = code && ammo > 1 ? `×${ammo}` : '';
       }
     }
 
@@ -523,8 +594,10 @@ window.Games.kart = {
       hud.update(now, latest, row, { finishTime, death });
       if (row) {
         // Place, lap, health and kills are drawn by the HUD kit; the item slot, ink and warnings here.
-        const [, , , , , , , item, ammo, flags, , , , , , rouletteCs] = row; // 13 air, 14 fall/trick bits, 15 roulette
+        // 13 air, 14 fall/trick bits, 15 roulette, 16-18 the reserve slot
+        const [, , , , , , , item, ammo, flags, , , , , , rouletteCs, item2 = 0, ammo2 = 0, roulette2Cs = 0] = row;
         updateSlot(now, item, ammo, rouletteCs || 0);
+        updateReserve(now, item2, ammo2, roulette2Cs);
         const boosting = !!(flags & F.boost);
         const driftLvl = flags & 256 ? 2 : flags & 128 ? 1 : 0;
         if (boosting && !prev.boost) (prev.drift > 0 && !(flags & F.drift) ? Sfx.miniTurbo(prev.drift) : Sfx.boost());
@@ -685,7 +758,9 @@ window.Games.kart = {
       onEvent(event, data) {
         if (event === 'game:kart:init') onInit(data);
         else if (event === 'game:kart:state') onState(data);
-        else if (event === 'game:kart:use') {
+        else if (event === 'game:kart:swap') {
+          if (data.idx === myIdx) Sfx.swap?.();
+        } else if (event === 'game:kart:use') {
           if (data.idx === myIdx && ITEM_SOUND[data.item]) Sfx[ITEM_SOUND[data.item]]?.();
           if (data.idx === myIdx && data.item === 'minigun') Sfx.minigun?.();
           if (data.item === 'comet') Sfx.comet?.();

@@ -228,7 +228,7 @@ async function arenaGame(n, settings = {}) {
   // Two karts face to face in open space, nothing protecting them. Placing a kart also empties its
   // item slot: karts parked on an item box pick up random items (a held banana or mine would block
   // shells from behind and make tests flaky).
-  const fresh = { speed: 0, shield: 0, invuln: 0, spin: 0, ghost: 0, angle: 0, heading: 0, item: null, ammo: 0, roulette: 0 };
+  const fresh = { speed: 0, shield: 0, invuln: 0, spin: 0, ghost: 0, angle: 0, heading: 0, item: null, ammo: 0, roulette: 0, item2: null, ammo2: 0, roulette2: 0 };
   ctx.place = (i, x, y) => Object.assign(ctx.kart(i), fresh, { x, y });
   return ctx;
 }
@@ -1294,7 +1294,7 @@ test('falling into water, lava or a gap fishes you back onto the road', async ()
   const state = once(host, 'game:kart:state');
   game.broadcast();
   const row = (await state).k.find((r) => r[0] === me.idx);
-  assert.strictEqual(row.length, 16, 'air and fx appended to the kart row (then the item roulette)');
+  assert.strictEqual(row.length, 19, 'air and fx appended to the kart row (then the item roulette and the reserve slot)');
   assert.ok(row[14] & 1 && row[14] & 4, 'falling into lava');
   Object.assign(me, { shield: 0, invuln: 0, ghost: 0 });
   game.damage(me, 50, null, 'rocket');
@@ -1397,7 +1397,8 @@ test('CPU drivers lap every race track, forward and reversed', async () => {
 
 // ---------- Power-ups: item roulette and the five newer items ----------
 const KC = require('../public/js/shared/kart-core');
-const CALM = { speed: 0, shield: 0, invuln: 0, spin: 0, ghost: 0, star: 0, shrink: 0, ink: 0, boost: 0, drift: 0, item: null, ammo: 0, roulette: 0 };
+const Bots = require('../server/games/kart-bots');
+const CALM = { speed: 0, shield: 0, invuln: 0, spin: 0, ghost: 0, star: 0, shrink: 0, ink: 0, boost: 0, drift: 0, item: null, ammo: 0, roulette: 0, item2: null, ammo2: 0, roulette2: 0 };
 // Park a race kart on lap 1 at centerline sample i (lateral -1..1), facing down the track.
 function onTrack(game, k, i, lateral = 0) {
   const [x, y] = game.map.trackPoint(i, lateral);
@@ -1438,6 +1439,104 @@ test('item roulette: the item is decided at pickup but can only be used once the
   assert.ok(k.boost > 0);
   assert.strictEqual(k.item, null);
   c.room.destroy();
+});
+
+test('two item slots: a second box fills the reserve, a full kart leaves boxes alone, swap and promotion', async () => {
+  const c = await kartGame(2, { kartMap: 'grandprix' });
+  const [k, other] = c.players.map((p) => c.game.karts.get(p.id));
+  onTrack(c.game, other, 200);
+  const rolls = ['rocket', 'banana', 'star'];
+  c.game.rollItem = () => rolls.shift();
+  const box = c.game.map.itemBoxes[0];
+  const park = () => Object.assign(k, { x: box.x, y: box.y, speed: 0, trackIndex: null, air: 0 });
+  park();
+  c.run(1 / 30);
+  assert.deepStrictEqual([k.item, k.ammo, k.item2], ['rocket', 1, null]);
+  assert.ok(c.game.boxes[0] > 0, 'box taken');
+  // A second box while still holding the first: it goes to the reserve, with its own roulette.
+  c.game.boxes[0] = 0;
+  park();
+  c.run(1 / 30);
+  assert.deepStrictEqual([k.item, k.item2, k.ammo2], ['rocket', 'banana', 1]);
+  assert.ok(k.roulette2 > 1 && k.roulette2 <= KC.ITEM_FX.roulette, `reserve roulette started (${k.roulette2})`);
+  assert.ok(c.game.boxes[0] > 0);
+  let { row } = await latestRow(c, k.idx);
+  assert.strictEqual(row.length, 19);
+  assert.deepStrictEqual(row.slice(16, 18), [KC.ITEMS.indexOf('banana') + 1, 1], 'reserve item and ammo at the end of the row');
+  assert.ok(row[18] > 0 && row[18] <= 110, 'reserve roulette in hundredths');
+  // Full: the kart drives straight through the next box and it stays for someone else.
+  c.game.boxes[0] = 0;
+  park();
+  c.run(1 / 30);
+  assert.strictEqual(c.game.boxes[0], 0, 'the box is still there');
+  assert.deepStrictEqual([k.item, k.item2, rolls.length], ['rocket', 'banana', 1], 'nothing rolled, nothing lost');
+  // Swap (Q): the roulettes travel with their items.
+  const swapped = once(c.host, 'game:kart:swap');
+  c.players[0].socket.emit('game:swap');
+  assert.strictEqual((await swapped).idx, k.idx);
+  assert.deepStrictEqual([k.item, k.item2], ['banana', 'rocket']);
+  assert.ok(k.roulette > 0 && k.roulette2 > 0, 'still rolling after the swap');
+  assert.strictEqual(c.game.useItem(k), false, 'the swapped-in item is still rolling');
+  assert.ok(c.game.swapItems(k));
+  assert.deepStrictEqual([k.item, k.item2], ['rocket', 'banana']);
+  c.run(1.2);
+  // Using the front item moves the reserve up.
+  onTrack(c.game, k, 40);
+  Object.assign(k, { item: 'rocket', ammo: 1, item2: 'banana', ammo2: 1 });
+  assert.ok(c.game.useItem(k));
+  assert.deepStrictEqual([k.item, k.ammo, k.item2, k.ammo2], ['banana', 1, null, 0], 'reserve promoted');
+  assert.strictEqual(c.game.swapItems(k), false, 'nothing to swap with');
+  ({ row } = await latestRow(c, k.idx));
+  assert.deepStrictEqual(row.slice(16), [0, 0, 0]);
+  // A triple keeps its shells in whichever slot it sits.
+  Object.assign(k, { item: 'boost', ammo: 1, item2: 'triple', ammo2: 3 });
+  assert.ok(c.game.useItem(k));
+  assert.deepStrictEqual([k.item, k.ammo, k.item2], ['triple', 3, null]);
+  c.room.destroy();
+
+  // Arena: a wrecked kart loses both items.
+  const ar = await arenaGame(2);
+  ar.place(0, 1000, 400); ar.place(1, 1400, 400);
+  Object.assign(ar.kart(1), { item: 'rocket', ammo: 1, item2: 'banana', ammo2: 1, roulette2: 0.4 });
+  ar.game.damage(ar.kart(1), 1000, ar.kart(0), 'rocket');
+  assert.ok(ar.kart(1).dead > 0);
+  assert.deepStrictEqual(['item', 'item2', 'roulette', 'roulette2'].map((f) => ar.kart(1)[f]), [null, null, 0, 0]);
+  ar.room.destroy();
+});
+
+test('CPU drivers follow the two-item rule and swap to the item they need', async () => {
+  // Arena: a shield up front, a rocket in reserve and a rival dead ahead: swap and fire.
+  const ctx = await kartGame(1, { kartMode: 'arena', kartMap: 'colosseum', kartBots: 1, kartBotSkill: 'hard', kartItems: 'none' });
+  const bot = ctx.bots()[0];
+  const target = ctx.game.karts.get(ctx.players[0].id);
+  Object.assign(bot, { x: 1000, y: 400, angle: 0, heading: 0, speed: 0, hp: ctx.game.hpMax, item: 'shield', ammo: 1, item2: 'rocket', ammo2: 1 });
+  Object.assign(target, { x: 1400, y: 400, speed: 0 });
+  const fired = once(ctx.host, 'game:kart:use', (e) => e.idx === bot.idx && e.item === 'rocket');
+  let used = false;
+  for (let i = 0; i < 90 && !used; i++) {
+    ctx.run(1 / 30);
+    used = bot.item !== 'shield' && bot.item2 !== 'rocket';
+    Object.assign(target, { x: bot.x + Math.cos(bot.angle) * 400, y: bot.y + Math.sin(bot.angle) * 400, speed: 0, invuln: 0 });
+  }
+  await fired;
+  assert.strictEqual(bot.item, 'shield', 'kept the shield for later');
+  ctx.room.destroy();
+
+  // Only defensive items: it keeps hunting for boxes while a slot is free, not once both are full.
+  const ar = await kartGame(1, { kartMode: 'arena', kartMap: 'colosseum', kartBots: 1, kartBotSkill: 'hard' });
+  const b = ar.bots()[0];
+  Object.assign(ar.game.karts.get(ar.players[0].id), { x: 2300, y: 2300, speed: 0 });
+  ar.run(1 / 30);
+  const goal = (items) => {
+    Object.assign(b, { x: 1300, y: 1300, speed: 0, hp: ar.game.hpMax, item: null, ammo: 0, item2: null, ammo2: 0 }, items);
+    b.ai.clock = 0;
+    Bots.think(ar.game, b, 1 / 30);
+    return b.ai.mode;
+  };
+  assert.strictEqual(goal({ item: 'shield', ammo: 1 }), 'box');
+  assert.notStrictEqual(goal({ item: 'shield', ammo: 1, item2: 'ghost', ammo2: 1 }), 'box', 'both slots full');
+  assert.notStrictEqual(goal({ item: 'shield', ammo: 1, item2: 'rocket', ammo2: 1 }), 'box', 'armed with the reserve item');
+  ar.room.destroy();
 });
 
 test('bouncer: bounces off walls and obstacles, comes back for its owner, breaks after a few bounces', async () => {
@@ -1636,7 +1735,7 @@ test('thunder: rivals spin out, shrink, slow down and lose their item; teammates
   setTeams(c, [0, 1, 1, 0, 1, 1, 1]);
   const [a, holder, rolling, mate, ghost, star, shield] = c.players.map((p) => c.game.karts.get(p.id));
   [a, holder, rolling, mate, ghost, star, shield].forEach((k, i) => onTrack(c.game, k, 10 + i * 25));
-  Object.assign(holder, { item: 'rocket', ammo: 1 });
+  Object.assign(holder, { item: 'rocket', ammo: 1, item2: 'star', ammo2: 1 });
   Object.assign(rolling, { item: 'banana', ammo: 1, roulette: 0.5 });
   Object.assign(mate, { item: 'boost', ammo: 1 });
   Object.assign(ghost, { ghost: 3 });
@@ -1650,6 +1749,7 @@ test('thunder: rivals spin out, shrink, slow down and lose their item; teammates
     assert.ok(k.spin > 0, 'spun out');
     assert.strictEqual(k.shrink, KC.ITEM_FX.shrinkTime);
     assert.strictEqual(k.item, null, 'item lost');
+    assert.strictEqual(k.item2, null, 'the reserve item too');
     assert.strictEqual(k.roulette, 0);
   }
   assert.strictEqual(mate.item, 'boost');

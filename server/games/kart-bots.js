@@ -198,8 +198,8 @@ function raceDrive(game, k, ai, sk, input) {
 
   let [tx, ty] = map.trackPoint(ti, lateral);
 
-  // Grab a nearby item box when empty-handed.
-  if (!k.item && game.boxes.length) {
+  // Grab a nearby item box while there's a free item slot (two at most).
+  if (!(k.item && k.item2) && game.boxes.length) {
     let best = null;
     let bestD = 380;
     for (let i = 0; i < game.boxes.length; i++) {
@@ -273,8 +273,7 @@ function rivalsAhead(game, k) {
 }
 
 // true = use it now, 'back' = use it backwards (bouncer), false = keep it.
-function raceItems(game, k, ai, sk) {
-  const item = k.item;
+function raceItems(game, k, ai, sk, item = k.item) {
   const s = scan(game, k, sk.aim * 1.3);
   const T = trackInfo(game.map);
   const idx = k.trackIndex || 0;
@@ -320,14 +319,15 @@ function pickArenaGoal(game, k, ai, sk) {
   const map = game.map;
   const s = scan(game, k, sk.aim);
   const hpFrac = k.hp / (game.hpMax || 100);
-  // Defensive items aren't a weapon: keep looking for boxes until they're used.
-  const armed = (!!k.item && !['ghost', 'shield', 'boost'].includes(k.item)) || k.gun > 0;
+  // Defensive items aren't a weapon: keep looking for boxes until they're used (while a slot is free).
+  const weapon = (it) => !!it && !['ghost', 'shield', 'boost'].includes(it);
+  const armed = weapon(k.item) || weapon(k.item2) || k.gun > 0;
   if (hpFrac < 0.3 && s.near && s.nearD < 650) {
     ai.mode = 'flee';
     ai.target = s.near;
     return;
   }
-  if (!armed && game.boxes.length) {
+  if (!armed && !(k.item && k.item2) && game.boxes.length) {
     let best = -1;
     let bestD = Infinity;
     for (let i = 0; i < game.boxes.length; i++) {
@@ -456,8 +456,7 @@ function arenaDrive(game, k, ai, sk, input) {
   setSteer(input, err, 0.06);
 }
 
-function arenaItems(game, k, ai, sk) {
-  const item = k.item;
+function arenaItems(game, k, ai, sk, item = k.item) {
   const s = scan(game, k, sk.aim);
   const hpFrac = k.hp / (game.hpMax || 100);
   const holdTooLong = ai.hold > sk.holdMax;
@@ -506,7 +505,7 @@ function think(game, k, dt) {
   const input = k.input;
   if (k.dead > 0 || k.finished || k.fall > 0) { Object.assign(input, NO_INPUT); return; }
 
-  ai.hold = k.item ? ai.hold + dt : 0;
+  ai.hold = k.item ? ai.hold + dt : 0; // how long the front item has been held
   ai.roamClock -= dt;
   ai.clock -= dt;
   if (ai.clock <= 0) {
@@ -547,11 +546,18 @@ function think(game, k, dt) {
   ai.itemClock -= dt;
   if (k.item && k.roulette <= 0 && ai.itemClock <= 0 && ai.shotCd <= 0 && k.spin <= 0) {
     ai.itemClock = sk.react * (0.7 + Math.random() * 0.6);
-    const want = game.arena ? arenaItems(game, k, ai, sk) : raceItems(game, k, ai, sk);
+    const decide = game.arena ? arenaItems : raceItems;
+    let want = decide(game, k, ai, sk);
+    // The front item isn't wanted right now but the reserve one is: swap it in first.
+    if (!want && k.item2 && k.item2 !== k.item && k.roulette2 <= 0) {
+      const alt = decide(game, k, ai, sk, k.item2);
+      if (alt && game.swapItems(k)) want = alt;
+    }
     if (want && (ai.hold > sk.holdMax || Math.random() < sk.itemChance)) {
-      game.useItem(k, { back: want === 'back' });
+      const last = k.ammo <= 1;
+      const used = game.useItem(k, { back: want === 'back' });
       ai.shotCd = 0.35;
-      if (!k.item) ai.hold = 0;
+      if (used && last) ai.hold = 0; // the slot emptied: the next item starts its own clock
     }
   }
 }

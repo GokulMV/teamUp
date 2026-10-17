@@ -45,7 +45,7 @@ const DAMAGE = {
 
 const SHOT_CODE = { rocket: 1, bullet: 2, bomb: 3, bouncer: 4, comet: 5 };
 const NO_INPUT = { up: false, down: false, left: false, right: false, drift: false };
-const TIMERS = ['shield', 'invuln', 'ghost', 'star', 'shrink', 'ink', 'roulette']; // per-kart countdowns (seconds)
+const TIMERS = ['shield', 'invuln', 'ghost', 'star', 'shrink', 'ink', 'roulette', 'roulette2']; // per-kart countdowns (seconds)
 
 // Item odds. Arena favours weapons; in a race, karts at the back get stronger items.
 const ARENA_ODDS = {
@@ -186,6 +186,7 @@ class KartBattle {
       hp: this.hpMax, lastHit: -99, lastAttacker: null,
       dead: 0,
       item: null, ammo: 0, roulette: 0, // the item can't be used until the roulette stops
+      item2: null, ammo2: 0, roulette2: 0, // a second item held in reserve (two at most)
       input: { ...NO_INPUT },
       finished: false, finishTime: null,
       hits: 0, kills: 0, deaths: 0, streak: 0,
@@ -245,7 +246,40 @@ class KartBattle {
       kart.input = { up: !!data?.up, down: !!data?.down, left: !!data?.left, right: !!data?.right, drift: !!data?.drift };
     } else if (event === 'use') {
       if (this.phase === 'racing') this.useItem(kart);
+    } else if (event === 'swap') {
+      if (this.phase === 'racing') this.swapItems(kart);
     }
+  }
+
+  // ---------- item slots ----------
+  // Every kart holds at most two items: the one it fires next and one in reserve. A full kart
+  // drives straight through item boxes, leaving them for someone else.
+  static ammoFor(item) { return item === 'triple' ? 3 : 1; }
+
+  giveItem(kart, item) {
+    if (!item) return;
+    if (!kart.item) Object.assign(kart, { item, ammo: KartBattle.ammoFor(item), roulette: ROULETTE_TIME });
+    else if (!kart.item2) Object.assign(kart, { item2: item, ammo2: KartBattle.ammoFor(item), roulette2: ROULETTE_TIME });
+  }
+
+  // The front slot just emptied: the reserve item moves up (its roulette keeps spinning if it was).
+  promoteItem(kart) {
+    if (kart.item || !kart.item2) return;
+    Object.assign(kart, { item: kart.item2, ammo: kart.ammo2, roulette: kart.roulette2, item2: null, ammo2: 0, roulette2: 0 });
+  }
+
+  clearItems(kart) {
+    Object.assign(kart, { item: null, ammo: 0, roulette: 0, item2: null, ammo2: 0, roulette2: 0 });
+  }
+
+  swapItems(kart) {
+    if (!kart.item2 || kart.dead > 0 || kart.fall > 0 || kart.finished) return false;
+    Object.assign(kart, {
+      item: kart.item2, ammo: kart.ammo2, roulette: kart.roulette2,
+      item2: kart.item, ammo2: kart.ammo, roulette2: kart.roulette,
+    });
+    this.room.emit('game:kart:swap', { idx: kart.idx });
+    return true;
   }
 
   // ---------- items ----------
@@ -349,7 +383,7 @@ class KartBattle {
     }
     this.room.emit('game:kart:use', { idx: kart.idx, item });
     kart.ammo--;
-    if (kart.ammo <= 0) { kart.item = null; kart.ammo = 0; }
+    if (kart.ammo <= 0) { kart.item = null; kart.ammo = 0; this.promoteItem(kart); }
     return true;
   }
 
@@ -473,8 +507,9 @@ class KartBattle {
       target.invuln = SPIN_TIME + 1;
       target.boost = 0;
       if (kind === 'thunder') {
-        // Shrunk for a while (slower top speed) and the item is gone, roulette and all.
-        Object.assign(target, { shrink: SHRINK_TIME, item: null, ammo: 0, roulette: 0, gun: 0 });
+        // Shrunk for a while (slower top speed) and both items are gone, roulettes and all.
+        Object.assign(target, { shrink: SHRINK_TIME, gun: 0 });
+        this.clearItems(target);
       } else if (by) {
         by.hits++; // thunder counts once for the striker, in thunder()
       }
@@ -497,7 +532,8 @@ class KartBattle {
     target.dead = this.respawnTime;
     target.deaths++;
     target.streak = 0;
-    Object.assign(target, { speed: 0, boost: 0, item: null, ammo: 0, roulette: 0, gun: 0, drift: 0, hp: 0, star: 0, shrink: 0, ink: 0 });
+    Object.assign(target, { speed: 0, boost: 0, gun: 0, drift: 0, hp: 0, star: 0, shrink: 0, ink: 0 });
+    this.clearItems(target);
     if (killer && !this.isFriendly(killer.id, target.id)) {
       killer.kills++;
       killer.streak++;
@@ -667,13 +703,11 @@ class KartBattle {
       const box = this.map.itemBoxes[i];
       for (const k of alive) {
         if ((k.air || 0) < BOX_CLEAR && (k.x - box.x) ** 2 + (k.y - box.y) ** 2 < 32 * 32) {
+          // Both slots full (or finished): drive straight through, the box stays for someone else.
+          if (k.finished || (k.item && k.item2)) continue;
           this.boxes[i] = this.boxRespawn;
-          if (!k.item && !k.finished) {
-            // Decided now, usable once the roulette in the HUD stops spinning.
-            k.item = this.rollItem(k);
-            k.ammo = k.item === 'triple' ? 3 : 1;
-            k.roulette = k.item ? ROULETTE_TIME : 0;
-          }
+          // Decided now, usable once the roulette in the HUD stops spinning.
+          this.giveItem(k, this.rollItem(k));
           break;
         }
       }
@@ -808,7 +842,7 @@ class KartBattle {
     if (k.star > 0 || k.shield > 0 || k.invuln > 0 || k.finished) return false;
     if ((s.x - k.x) * Math.cos(k.angle) + (s.y - k.y) * Math.sin(k.angle) > -4) return false;
     k.ammo--;
-    if (k.ammo <= 0) { k.item = null; k.ammo = 0; }
+    if (k.ammo <= 0) { k.item = null; k.ammo = 0; this.promoteItem(k); }
     this.room.emit('game:kart:block', { idx: k.idx, kind: 'trail' });
     this.room.emit('game:kart:boom', { x: Math.round(s.x), y: Math.round(s.y), r: 30, kind: s.kind });
     return true;
@@ -986,9 +1020,11 @@ class KartBattle {
       countdown: this.phase === 'countdown' ? COUNTDOWN_S - this.time : 0,
       elapsed,
       timeLeft: this.arena ? Math.max(0, this.duration - elapsed) : null,
-      // [idx, x, y, angle*1000, speed, lap, place, item, ammo, flags, kills, deaths, hp, air, fx, roulette]
+      // [idx, x, y, angle*1000, speed, lap, place, item, ammo, flags, kills, deaths, hp, air, fx, roulette,
+      //  item2, ammo2, roulette2]
       // air: height above the ground; fx: 1 falling, 2 trick, 4 fell in lava, 8 fell in water
       // roulette: hundredths of a second until the item roulette stops (0 = item ready / none)
+      // item2 / ammo2 / roulette2: the reserve slot, same encoding
       k: [...this.karts.values()].map((k) => [
         k.idx, Math.round(k.x), Math.round(k.y), Math.round(k.angle * 1000), Math.round(k.speed),
         Math.max(1, Math.min(this.laps, k.lap)), place.get(k.id), itemCode(k.item), k.ammo,
@@ -1003,6 +1039,7 @@ class KartBattle {
         Math.round(k.air || 0),
         (k.fall > 0 ? 1 : 0) | (k.trick > 0 ? 2 : 0) | (k.fall > 0 && k.fallKind === 'lava' ? 4 : 0) | (k.fall > 0 && k.fallKind === 'water' ? 8 : 0),
         Math.ceil(k.roulette * 100 - 1e-6),
+        itemCode(k.item2), k.ammo2, Math.ceil(k.roulette2 * 100 - 1e-6),
       ]),
       // shots: [id, kind (1 rocket, 2 bullet, 3 bomb, 4 bouncer, 5 comet), x, y, angle*1000, flight progress 0-100]
       //   bombs add [landing x, landing y]; comets send their altitude as the 6th field and add [target kart idx]

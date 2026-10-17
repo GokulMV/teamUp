@@ -557,9 +557,26 @@ textarea { resize: vertical; min-height: 70px; }
 @keyframes item-land { 0% { transform: scale(0.4) rotate(-12deg); } 70% { transform: scale(1.18) rotate(4deg); } 100% { transform: scale(1); } }
 .kart-item small { position: absolute; z-index: 1; top: -7px; right: -7px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: #ff4fa3; border: 2px solid #fff; font-weight: 800; font-size: 12px; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
 .kart-item small:empty, .kart-item.rolling small { display: none; } /* the ammo would give the roulette away */
-.kart-key, .kart-help kbd { font: inherit; font-weight: 800; font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: 5px; background: rgba(255, 255, 255, 0.92); color: #160f35; box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }
+.kart-key, .kart-rkey, .kart-help kbd { font: inherit; font-weight: 800; font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: 5px; background: rgba(255, 255, 255, 0.92); color: #160f35; box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }
 .kart-key { position: absolute; z-index: 1; bottom: -11px; left: 50%; transform: translateX(-50%); font-size: 9.5px; transition: opacity 0.18s; }
 .kart-item:not(.ready) .kart-key { opacity: 0; }
+/* the reserve slot: a smaller glass box beside the main one, Q swaps the two */
+.kart-reserve {
+  position: absolute; left: calc(100% + 9px); bottom: 0; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
+  background: radial-gradient(circle at 50% 40%, rgba(255, 181, 71, 0.22), rgba(14, 10, 36, 0.62) 70%); border: 2px solid rgba(255, 255, 255, 0.72);
+  box-shadow: 0 8px 18px -10px rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  transition: opacity 0.18s, transform 0.18s, border-color 0.18s;
+}
+.kart-reserve.empty { opacity: 0; transform: translateX(-10px) scale(0.75); }
+.kart-reserve .item-icon { width: 28px; height: 28px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35)); }
+.kart-reserve-icon { display: grid; place-items: center; }
+.kart-reserve.rolling { border-color: #fde047; border-style: dashed; }
+.kart-reserve.rolling .item-icon { opacity: 0.7; }
+.kart-reserve.landed .kart-reserve-icon { animation: item-land 0.38s cubic-bezier(.3, 1.6, .5, 1); }
+.kart-reserve b { position: absolute; top: -8px; right: -8px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: #ff4fa3; border: 2px solid #fff; font-size: 10px; font-weight: 800; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums; }
+.kart-reserve b:empty, .kart-reserve.rolling b { display: none; }
+.kart-rkey { position: absolute; bottom: -11px; left: 50%; transform: translateX(-50%); font-size: 9px; }
+.kart-reserve:not(.ready) .kart-rkey { opacity: 0; }
 /* under the top cluster: the item's name when it lands, and the comet warning */
 .kart-top-sub { position: absolute; top: calc(100% + 18px); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .mode-arena .kart-top-sub { left: calc(100% + 42px); }
@@ -697,18 +714,27 @@ textarea { resize: vertical; min-height: 70px; }
 .tc-fire.rolling { opacity: 0.85; border-color: #fde047; border-style: dashed; }
 .tc-fire.rolling .item-icon { width: 40px; height: 40px; opacity: 0.75; }
 .tc-fire.armed.on { transform: scale(0.92); }
+/* the reserve item: a bubble above the fire button, tap it to swap the two */
+.tc-swap { right: 4px; bottom: 126px; width: 54px; height: 54px; border-width: 2px; border-color: rgba(255, 255, 255, 0.75); background: radial-gradient(circle at 50% 40%, rgba(255, 181, 71, 0.28), rgba(14, 10, 36, 0.55) 70%); }
+.tc-swap.empty { display: none; }
+.tc-swap .item-icon { width: 30px; height: 30px; }
+.tc-swap.rolling { border-color: #fde047; border-style: dashed; }
+.tc-swap.rolling .item-icon { opacity: 0.7; }
+.tc-swap.on { transform: scale(0.9); }
+.tc-swap-badge { position: absolute; left: -6px; bottom: -4px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: #ff4fa3; border: 2px solid #fff; }
+.tc-swap-badge .tc-ic { width: 12px; height: 12px; }
 .tc-drift { right: 92px; bottom: 92px; width: 60px; height: 60px; }
 .tc-drift small { position: absolute; bottom: 7px; font-size: 9px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.8; }
 .tc-drift .tc-ic { width: 22px; height: 22px; margin-top: -8px; }
 .tc-brake { right: 100px; bottom: 12px; width: 52px; height: 52px; }
 .tc-brake .tc-ic { width: 22px; height: 22px; }
-.kart-stage.no-items .tc-fire, .kart-stage.no-items .kh-item { display: none; }
+.kart-stage.no-items .tc-fire, .kart-stage.no-items .tc-swap, .kart-stage.no-items .kh-item { display: none; }
 .kart-stage.spectating .touch-controls, .kart-stage.spectating .kart-help { display: none; }
 /* empty fire button: a faint item box, so it reads as "no item yet", not as a missing control */
 .tc-fire:not(.armed)::before { content: "?"; position: absolute; inset: 0; margin: auto; width: 30px; height: 30px; box-sizing: border-box; border: 2px solid rgba(255, 255, 255, 0.55); border-radius: 9px; display: grid; place-items: center; font-weight: 800; font-size: 15px; color: rgba(255, 255, 255, 0.7); transform: rotate(-8deg); }
 /* Touch: the HUD lives in the top band and the controls at the bottom, so the middle, where your
    kart and the road ahead are, stays clear. */
-.kart-stage.touch .kart-key { display: none; }
+.kart-stage.touch .kart-key, .kart-stage.touch .kart-reserve { display: none; }
 .kart-stage.touch .kart-card { top: 10px; left: 10px; min-width: 0; transform: scale(0.8); }
 .kart-stage.touch .kart-minimap { top: 10px; right: 10px; bottom: auto; width: 102px; height: 102px; }
 .kart-stage.touch .kart-tools { left: auto; bottom: auto; top: 10px; right: 120px; }
