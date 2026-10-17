@@ -465,7 +465,7 @@ export const THEMES = {
     moon: true, wisps: true, pumpkins: true, railings: true,
   },
   keep: {
-    sky: [0x4a90d9, 0xd8ecfb], fog: [0xd2e6f5, 2200, 7800], hemi: [0xe4f1ff, 0x5b7a45, 1.2], sun: [0xfff0d4, 2.7],
+    sky: [0x3d8ce8, 0xcfe6ff], fog: [0xcfe5fa, 3200, 13000], hemi: [0xe4f1ff, 0x5b7a45, 1.2], sun: [0xfff0d4, 2.7],
     ground: () => tex.ground('#5c9a43', ['#4f8c3a', '#6aab4e']),
     trees: ['almond', 'casuarina'], bushes: ['grape'], grass: true, clouds: 26, hills: 0x5f8f55, water: 0x35706f,
   },

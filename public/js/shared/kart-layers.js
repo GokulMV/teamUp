@@ -1179,7 +1179,7 @@
     const ROOF = 100;
     const TOWER = 170;
     const def = {
-      id: 'keep', name: 'The Keep', emoji: '🏰', theme: 'keep', size: S,
+      id: 'keep', name: 'The Keep', emoji: '🏰', theme: 'keep', size: S, look: 'bright',
       blurb: 'Storm the castle: drawbridges, wall walks, tower perches and a moat.',
       edge: 'wall', deathZ: -320, liquid: { kind: 'water', z: -46 },
       ground: { z: 0, depth: 60, kind: 'grass', holes: [{ x0: 560, y0: 560, x1: 2640, y1: 2640 }] },
@@ -1248,6 +1248,30 @@
       bumpers: [{ x: 1170, y: 1190, z: 0, r: 30 }, { x: 1260, y: 1215, z: 0, r: 30 }, { x: 1195, y: 1280, z: 0, r: 30 }],
     }, S, [0, 2]);
     def.cyls.push({ x: S / 2, y: S / 2, r: 34, z0: -60, z1: 76, kind: 'pillar' }); // holds up the keep's roof
+    // Two trebuchets out in the siege camps (west and east), aimed at the castle: their frames are solid.
+    for (const [x, y, angle] of [[260, 1950, 0], [S - 260, S - 1950, Math.PI]]) {
+      def.blocks.push({ x0: x - 75, y0: y - 42, x1: x + 75, y1: y + 42, z0: 0, z1: 28, kind: 'trebuchet' });
+      def.deco.push({ kind: 'trebuchet', x, y, z: 0, angle });
+    }
+    // Warm sandstone walls and towers, a whitewashed keep under blue slates, cobbles in the
+    // courtyard, mown lawns outside, a bright moat.
+    def.palette = {
+      grass: { top: '#78c85c', side: '#b98a5a', top2: '#69ba4f', side2: '#9c7046', pattern: 'checker', cell: 120, sidePattern: 'bands', sideCell: 16, round: 0 },
+      courtyard: { top: '#ddd2bd', side: '#cbbda4', top2: '#cdbfa6', pattern: 'tiles', cell: 44, round: 0 },
+      wall: { top: '#ecd3a6', side: '#f2dbb2', top2: '#dfc292', side2: '#e3c899', pattern: 'slabs', cell: 40, sidePattern: 'slabs', sideCell: 36, round: 3, foot: 0.85 },
+      gate: { top: '#ecd3a6', side: '#f2dbb2', top2: '#dfc292', side2: '#e3c899', pattern: 'slabs', cell: 40, sidePattern: 'slabs', sideCell: 36, round: 3, roof: false },
+      merlon: { top: '#f4dfba', side: '#f2dbb2', side2: '#e3c899', sidePattern: 'slabs', sideCell: 30, round: 3 },
+      tower: { top: '#ecd3a6', side: '#f2dbb2', top2: '#dfc292', side2: '#e3c899', pattern: 'slabs', cell: 40, sidePattern: 'slabs', sideCell: 34, foot: 0.85 },
+      stair: { top: '#f2dbb2', side: '#e3c899', top2: '#ffffff', pattern: 'chevrons', cell: 44, round: 0 },
+      bridge: { top: '#cf945c', side: '#9f6b3f', top2: '#a8703e', pattern: 'planks', cell: 22, angle: 1, round: 3 },
+      keep: { top: '#eef1f7', side: '#eef1f7', side2: '#d9dfea', sidePattern: 'slabs', sideCell: 34, round: 3, foot: 0.88 },
+      roof: { top: '#5b8be0', side: '#eef1f7', top2: '#4a76c4', pattern: 'tiles', cell: 30, round: 4, roof: true },
+      pillar: { top: '#eef1f7', side: '#eef1f7', side2: '#d9dfea', sidePattern: 'bands', sideCell: 40 },
+      crate: { top: '#d49a5c', side: '#c98c50', top2: '#a8703e', side2: '#a8703e', pattern: 'planks', cell: 16, sidePattern: 'planks', sideCell: 16, round: 3 },
+      tent: { top: '#f04e5e', side: '#ffffff' },
+      rim: ['#ffffff', '#e5484d'], hazardRim: ['#ffffff', '#e5484d'],
+      water: { shallow: '#3cc6c9', deep: '#1c7aa0', line: '#d4fbff' },
+    };
     return def;
   }
 

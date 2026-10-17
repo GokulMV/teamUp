@@ -10,9 +10,10 @@ import { buildSculpted, buildTyres, SCULPTED_KINDS } from './sculpt3d.js';
 import { buildBrightSolids } from './bright3d.js';
 import { buildHarbour } from './harbour3d.js';
 import { buildSkyGardens } from './skygarden3d.js';
+import { buildKeep } from './keep3d.js';
 
 // Bright arenas' own set dressing (and models for their moving obstacles), by theme.
-const DRESSINGS = { harbour: buildHarbour, skygarden: buildSkyGardens };
+const DRESSINGS = { harbour: buildHarbour, skygarden: buildSkyGardens, keep: buildKeep };
 
 const K = window.KartCore;
 const L = K.Layers;
@@ -677,7 +678,9 @@ export function buildLayered(scene, map, theme, ctx) {
       const d = Math.max(Math.max(-x, 0, x - S), Math.max(-z, 0, z - S));
       return d > min && d < max;
     };
-    decorate(scene, map, theme, ctx, { minX: -1600, maxX: S + 1600, minY: -1600, maxY: S + 1600 }, out, 0);
+    // (A dressing with a world of its own round the field: no stock trees or grass.)
+    const look = dress?.ownWorld ? { ...theme, trees: null, bushes: null, deadTrees: null, grass: false, cacti: false, buildings: false } : theme;
+    decorate(scene, map, look, ctx, { minX: -1600, maxX: S + 1600, minY: -1600, maxY: S + 1600 }, out, 0);
   } else addScenery(scene, map, theme, ctx, kit, flames);
 
   const moon = theme.moon ? addMoon(scene) : null;
