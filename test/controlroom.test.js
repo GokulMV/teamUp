@@ -230,9 +230,12 @@ test('every client message is validated: control id, ownership, type, range, pha
   const ctx = await startCR(6);
   const { game, room } = ctx;
   ctx.advance(5200);
-  const crew = game.crews[0];
-  const me = crew.members[0].id;
-  const mate = crew.members[1].id;
+  // No random events: an asteroid storm locks the panels and would turn the checks below upside down.
+  for (const c of game.crews) { c.event = null; c.eventCooldown = Infinity; }
+  // Crews are shuffled: act as a crew member who isn't the host (the host may end the flight).
+  const crew = game.crews.find((c) => c.members.some((m) => m.id !== room.hostId) && c.members.length >= 2);
+  const me = crew.members.find((m) => m.id !== room.hostId).id;
+  const mate = crew.members.find((m) => m.id !== me).id;
   const s = ctx.sock(me);
   const mine = (type) => crew.panels.get(me).map((id) => crew.controls.get(id)).find((c) => c.type === type);
   // Make sure the panel has one of each value type to poke at.
@@ -246,7 +249,7 @@ test('every client message is validated: control id, ownership, type, range, pha
   const bad = [
     undefined, null, 5, 'k1', [], [{ c: mine('toggle').id }], {}, { c: 12 }, { c: { id: 1 } }, { c: 'nope' }, { c: '__proto__' },
     { c: crew.panels.get(mate)[0] }, // a crewmate's control
-    { c: game.crews[1].panels.get(game.crews[1].members[0].id)[0] }, // another ship's control
+    { c: ((o) => o.panels.get(o.members[0].id)[0])(game.crews.find((c) => c !== crew)) }, // another ship's control
     { c: mine('toggle').id, v: 1 }, { c: mine('toggle').id, v: 'true' }, { c: mine('toggle').id },
     { c: mine('slider').id, v: 6 }, { c: mine('slider').id, v: -1 }, { c: mine('slider').id, v: 2.5 }, { c: mine('slider').id, v: '3' }, { c: mine('slider').id, v: null },
     { c: mine('dial').id, v: 10 }, { c: mine('dial').id, v: Infinity },
