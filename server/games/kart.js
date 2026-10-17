@@ -65,10 +65,16 @@ const BOX_CLEAR = 40;
 
 // Damage in the arena (karts have 100 hp). In a race every hit except bullets spins you out.
 const DAMAGE = {
-  rocket: 70, triple: 45, bullet: 6, banana: 35, mine: 100, bomb: 100, shock: 45, lava: 1000, // lava is instant death
+  rocket: 70, triple: 45, bullet: 6, banana: 35, mine: 100, bomb: 100, shock: 45, lava: 1000, // lava (water, the void) is instant death
   bouncer: 50, comet: 90, star: 40, thunder: 35, ram: 6, // ram: 6 at ramSpeed, up to 16 for a full-speed T-bone
   snowball: 10, sticky: 75, spikes: 25, decoy: 40,
 };
+
+// Lava, water and falling into the void: nothing protects you, and the kill goes to whoever hit you last.
+const ENV_KILLS = new Set(['lava', 'water', 'void']);
+// Layered arenas: how close in height things must be to touch (shots, traps and boxes are on one floor).
+const LEVEL = { shot: 26, trap: 20, box: 30, shock: 90 };
+const BOMB_LOB = { apex: 110, reach: 60 }; // a bomb lands on a floor up to `reach` above the thrower
 
 const SHOT_CODE = { rocket: 1, bullet: 2, bomb: 3, bouncer: 4, comet: 5, snowball: 6, sticky: 7 };
 const SHOT_SPEED = { rocket: ROCKET.speed, bullet: BULLET.speed, snowball: SNOW.speed, sticky: STICKY.speed };
@@ -143,6 +149,7 @@ class KartBattle {
     const type = s.kartMode === 'arena' ? 'arena' : 'race';
     this.map = K.getMap(s.kartMap, type, { reverse: type === 'race' && s.kartReverse === true });
     this.arena = this.map.type === 'arena';
+    this.layered = !!this.map.layered; // floors at several heights: everything carries a z
     this.reverse = !!this.map.reverse;
     this.laps = s.kartLaps;
     this.duration = s.arenaTime;
@@ -197,7 +204,7 @@ class KartBattle {
     let g;
     if (this.arena) {
       const s = this.map.spawns[slot % this.map.spawns.length];
-      g = { x: s.x, y: s.y, angle: s.angle, index: null };
+      g = { x: s.x, y: s.y, angle: s.angle, index: null, z: this.layered ? s.z : null };
     } else {
       g = this.map.gridPosition(slot);
     }
@@ -212,6 +219,7 @@ class KartBattle {
       body: bot && Math.random() < 0.35 ? `pickup-${pickupFor(player.color)}` : 'kart',
       speedMul: this.speedMul * (bot ? Bots.SKILLS[player.skill].speed : 1),
       x: g.x, y: g.y, angle: g.angle, speed: 0,
+      z: g.z ?? null, // height (race tracks and layered arenas; set by the physics on races)
       trackIndex: g.index,
       lap: 0,
       boost: 0, spin: 0, shield: 0, invuln: 0, ghost: 0,
@@ -332,25 +340,50 @@ class KartBattle {
       ti: kart.trackIndex, // nearest centerline sample, a hint for cheap wall checks
       dmg: kind === 'rocket' && kart.item === 'triple' ? DAMAGE.triple : DAMAGE[kind],
     };
+    if (this.layered) { shot.z = this.heightOf(kart); shot.vz = 0; }
     if (kind === 'bomb') {
       // Where it will land, so everyone can see the danger zone.
       shot.lx = shot.x + Math.cos(a) * speed * BOMB.flight;
       shot.ly = shot.y + Math.sin(a) * speed * BOMB.flight;
+      if (this.layered) {
+        // On whatever floor is there (a deck up to BOMB_LOB.reach above the thrower, or anything below).
+        const f = this.map.floorAt(shot.lx, shot.ly, shot.z + BOMB_LOB.reach, this.time);
+        shot.z0 = shot.z;
+        shot.lz = Number.isFinite(f) ? f : this.map.deathZ;
+      }
     }
     this.shots.push(shot);
     return shot;
+  }
+
+  // Height of a kart: race tracks and layered arenas know it; on a flat arena it is just the air under it.
+  heightOf(k) {
+    return Number.isFinite(k.z) ? k.z : k.air || 0;
+  }
+
+  // Layered arenas: are a kart and something lying or flying at height z on the same level?
+  level(k, z, tol) {
+    return !this.layered || z === undefined || Math.abs(this.heightOf(k) - z) < tol;
+  }
+
+  // Layered arenas: the height on the end of an event or snapshot row (nothing elsewhere).
+  withZ(obj, z) {
+    if (this.layered) obj.z = Math.round(z);
+    return obj;
   }
 
   // Straight ahead, or backwards when braking. The owner can be hit once it has bounced.
   fireBouncer(kart, back) {
     const a = kart.angle + (back ? Math.PI : 0);
     const fwd = Math.max(0, kart.speed);
-    this.shots.push({
+    const shot = {
       id: this.nextId++, kind: 'bouncer', owner: kart.id,
       x: kart.x + Math.cos(a) * 30, y: kart.y + Math.sin(a) * 30, angle: a,
       speed: back ? BOUNCER.speed * 0.85 : BOUNCER.speed + fwd * 0.8,
       life: BOUNCER.life, age: 0, ti: kart.trackIndex, bounces: BOUNCER.bounces, bounced: false, dmg: DAMAGE.bouncer,
-    });
+    };
+    if (this.layered) { shot.z = this.heightOf(kart); shot.vz = 0; }
+    this.shots.push(shot);
   }
 
   launchComet(kart) {
@@ -360,6 +393,7 @@ class KartBattle {
       x: kart.x, y: kart.y, angle: kart.angle, speed: COMET.speed, alt: 20,
       life: COMET.life, age: 0, phase: 'cruise', dmg: DAMAGE.comet,
     };
+    if (this.layered) comet.z = this.heightOf(kart); // the height its altitude is counted from
     if (!this.arena) {
       // Ride the centerline from here; the sideways offset to it fades out as the comet climbs.
       const near = this.map.nearestIndex(kart.x, kart.y, kart.trackIndex);
@@ -406,12 +440,14 @@ class KartBattle {
       }
       case 'banana': {
         const [x, y] = [kart.x - cos * 34, kart.y - sin * 34];
-        if (this.solidGround(x, y, kart)) this.bananas.push({ id: this.nextId++, x, y, life: BANANA_LIFE, owner: kart.id, safe: 0.6 });
+        const z = this.dropZ(x, y, kart);
+        if (z !== null) this.bananas.push({ id: this.nextId++, x, y, z, life: BANANA_LIFE, owner: kart.id, safe: 0.6 });
         break;
       }
       case 'mine': {
         const [x, y] = [kart.x - cos * 36, kart.y - sin * 36];
-        if (this.solidGround(x, y, kart)) this.mines.push({ id: this.nextId++, x, y, owner: kart.id, arm: MINE.arm, life: MINE.life });
+        const z = this.dropZ(x, y, kart);
+        if (z !== null) this.mines.push({ id: this.nextId++, x, y, z, owner: kart.id, arm: MINE.arm, life: MINE.life });
         break;
       }
       case 'shock': this.shock(kart); break;
@@ -420,7 +456,8 @@ class KartBattle {
       case 'spikes': kart.spikes = K.ITEM_FX.spikesTime; kart.spikeHits = 0; break;
       case 'decoy': {
         const [x, y] = [kart.x - cos * 38, kart.y - sin * 38];
-        if (this.solidGround(x, y, kart)) this.decoys.push({ id: this.nextId++, x, y, owner: kart.id, life: DECOY.life });
+        const z = this.dropZ(x, y, kart);
+        if (z !== null) this.decoys.push({ id: this.nextId++, x, y, z, owner: kart.id, life: DECOY.life });
         break;
       }
       case 'bouncer': this.fireBouncer(kart, opts.back !== undefined ? !!opts.back : !!kart.input.down); break;
@@ -436,19 +473,28 @@ class KartBattle {
     return true;
   }
 
-  // Can a dropped item lie here? Over a gap, water or lava it just falls in.
-  solidGround(x, y, kart) {
-    if (this.arena) return true;
+  // Can a dropped item lie here? Over a gap, water or lava it just falls in. The height it lies at
+  // (layered arenas: the floor there, which may be below a ledge; 0 elsewhere), or null.
+  dropZ(x, y, kart, from = this.heightOf(kart)) {
+    if (this.layered) {
+      const z = this.map.floorAt(x, y, from + K.Layers.STEP, this.time);
+      return Number.isFinite(z) && !this.map.hazardAt(x, y, z) ? z : null;
+    }
+    if (this.arena) return 0;
     const q = this.map.nearestIndex(x, y, kart.trackIndex);
-    return !this.map.gap[q.index] && !this.map.hazardAt(x, y, q);
+    return !this.map.gap[q.index] && !this.map.hazardAt(x, y, q) ? 0 : null;
+  }
+
+  solidGround(x, y, kart) {
+    return this.dropZ(x, y, kart) !== null;
   }
 
   shock(kart) {
     for (const k of this.karts.values()) {
-      if (k === kart || k.dead > 0 || this.isFriendly(k.id, kart.id)) continue;
+      if (k === kart || k.dead > 0 || this.isFriendly(k.id, kart.id) || !this.level(k, this.heightOf(kart), LEVEL.shock)) continue;
       if ((k.x - kart.x) ** 2 + (k.y - kart.y) ** 2 < SHOCK_RADIUS ** 2) this.damage(k, DAMAGE.shock, kart, 'shock');
     }
-    this.room.emit('game:kart:shock', { idx: kart.idx, x: Math.round(kart.x), y: Math.round(kart.y), r: SHOCK_RADIUS });
+    this.room.emit('game:kart:shock', this.withZ({ idx: kart.idx, x: Math.round(kart.x), y: Math.round(kart.y), r: SHOCK_RADIUS }, this.heightOf(kart)));
   }
 
   // Can an item from `owner` reach kart k at all? (Ghosts and stars shrug everything off.)
@@ -531,9 +577,10 @@ class KartBattle {
   damage(target, amount, attacker, kind) {
     // Nothing more can happen once the round is over (e.g. a kill limit hit mid-blast).
     if (this.phase !== 'racing') return false;
-    if (target.dead > 0 || target.finished || target.fall > 0 || (target.ghost > 0 && kind !== 'lava')) return false;
+    const env = ENV_KILLS.has(kind);
+    if (target.dead > 0 || target.finished || target.fall > 0 || (target.ghost > 0 && !env)) return false;
     if (attacker && attacker !== target && this.isFriendly(attacker.id, target.id)) return false;
-    if (kind !== 'lava') {
+    if (!env) {
       if (target.star > 0) return false; // star power: invincible
       if (target.shield > 0) {
         target.shield = 0;
@@ -544,9 +591,9 @@ class KartBattle {
       if (target.invuln > 0) return false;
     }
     const by = attacker && attacker !== target ? attacker : null;
-    const event = { target: target.idx, by: by ? by.idx : -1, x: Math.round(target.x), y: Math.round(target.y), kind, kill: false, streak: 0 };
+    const event = this.withZ({ target: target.idx, by: by ? by.idx : -1, x: Math.round(target.x), y: Math.round(target.y), kind, kill: false, streak: 0 }, this.heightOf(target));
     // Shatter: a proper hit on a frozen kart breaks the ice, and hurts more for it.
-    const shatter = target.freeze > 0 && !['snowball', 'lava', 'bullet'].includes(kind);
+    const shatter = target.freeze > 0 && !env && !['snowball', 'bullet'].includes(kind);
     if (shatter) { target.freeze = 0; event.shatter = true; }
     if (kind === 'snowball') Object.assign(target, { freeze: K.ITEM_FX.freezeTime, drift: 0, driftTime: 0, boost: 0, gun: 0 });
 
@@ -576,21 +623,21 @@ class KartBattle {
     }
 
     target.hp -= shatter ? Math.round(amount * SNOW.shatterMul) : amount;
-    if (kind !== 'lava' || !target.lastAttacker) target.lastHit = this.time;
+    if (!env || !target.lastAttacker) target.lastHit = this.time;
     if (by) { target.lastAttacker = by.id; target.lastHit = this.time; }
     if (kind === 'banana') { target.spin = 0.8; target.invuln = 0.3; }
     if (target.hp > 0) {
-      if (kind !== 'lava') this.room.emit('game:kart:hit', event);
+      if (!env) this.room.emit('game:kart:hit', event);
       return true;
     }
-    // Destroyed. Lava kills go to whoever hit you last (within 5 s), so knocking rivals in counts.
+    // Destroyed. Lava (and void) kills go to whoever hit you last (within 5 s), so knocking rivals in counts.
     let killer = by;
     if (!killer && target.lastAttacker && this.time - target.lastHit < 5) killer = this.karts.get(target.lastAttacker) || null;
     if (killer === target) killer = null;
     target.dead = this.respawnTime;
     target.deaths++;
     target.streak = 0;
-    Object.assign(target, { speed: 0, boost: 0, gun: 0, drift: 0, hp: 0, star: 0, shrink: 0, ink: 0, freeze: 0, spikes: 0, sticky: null });
+    Object.assign(target, { speed: 0, boost: 0, gun: 0, drift: 0, hp: 0, star: 0, shrink: 0, ink: 0, freeze: 0, spikes: 0, sticky: null, kx: 0, ky: 0, launch: 0, lost: null });
     this.clearItems(target);
     if (killer && !this.isFriendly(killer.id, target.id)) {
       killer.kills++;
@@ -617,14 +664,20 @@ class KartBattle {
     if (reached) this.endRace();
   }
 
-  explode(x, y, radius, maxDmg, attacker, kind) {
+  // z: the height the blast goes off at (layered arenas; elsewhere blasts are on the ground).
+  explode(x, y, radius, maxDmg, attacker, kind, z = 0) {
     for (const k of this.karts.values()) {
-      const d = Math.hypot(k.x - x, k.y - y, k.air || 0); // blasts are on the ground: high flyers escape
+      const dz = this.layered ? this.heightOf(k) - z : k.air || 0; // high flyers escape
+      const d = Math.hypot(k.x - x, k.y - y, dz);
       if (d > radius) continue;
       if (attacker && k.id === attacker.id) continue; // your own blasts never hurt you
       this.damage(k, Math.round(maxDmg * (1 - 0.5 * (d / radius))), attacker, kind);
     }
-    this.room.emit('game:kart:boom', { x: Math.round(x), y: Math.round(y), r: radius, kind });
+    this.boom(x, y, radius, kind, z);
+  }
+
+  boom(x, y, r, kind, z = 0) {
+    this.room.emit('game:kart:boom', this.withZ({ x: Math.round(x), y: Math.round(y), r, kind }, z));
   }
 
   respawn(kart) {
@@ -635,7 +688,7 @@ class KartBattle {
       let nearest = Infinity;
       for (const k of this.karts.values()) {
         if (k === kart || k.dead > 0) continue;
-        nearest = Math.min(nearest, (k.x - s.x) ** 2 + (k.y - s.y) ** 2);
+        nearest = Math.min(nearest, (k.x - s.x) ** 2 + (k.y - s.y) ** 2 + (this.layered ? (this.heightOf(k) - s.z) ** 2 : 0));
       }
       const score = nearest + Math.random() * 1000;
       if (score > bestScore) { bestScore = score; best = s; }
@@ -644,6 +697,7 @@ class KartBattle {
       x: best.x, y: best.y, angle: best.angle, heading: best.angle, speed: 0, spin: 0, dead: 0,
       shield: SPAWN_SHIELD, invuln: 0, hp: this.hpMax, lastAttacker: null, kx: 0, ky: 0, air: 0, vz: 0, hopping: false,
     });
+    if (this.layered) Object.assign(kart, { z: best.z, gz: null, launch: 0, padCd: 0, lost: null });
   }
 
   // ---------- simulation ----------
@@ -696,7 +750,8 @@ class KartBattle {
       const input = k.input;
       const prevIndex = k.trackIndex;
       const wasFalling = k.fall > 0;
-      K.stepKart(k, input, dt, this.map, { speed: k.speedMul * K.itemSpeed(k.star > 0, k.shrink > 0), frozen: k.freeze > 0 });
+      K.stepKart(k, input, dt, this.map, { speed: k.speedMul * K.itemSpeed(k.star > 0, k.shrink > 0), frozen: k.freeze > 0, t: this.time });
+      if (this.layered) this.layerEvents(k);
       if (!wasFalling && k.fall > 0) {
         // Off the road into water, lava or a gap: fished back out after a moment (a sticky bomb sinks).
         Object.assign(k, { gun: 0, freeze: 0, sticky: null });
@@ -719,9 +774,11 @@ class KartBattle {
         }
       }
       if (this.arena) {
-        // Driving (or getting knocked) into lava blows you up on the spot.
-        for (const h of this.map.hazards) {
-          if ((k.x - h.x) ** 2 + (k.y - h.y) ** 2 < (h.r - 6) ** 2) { this.damage(k, DAMAGE.lava, null, 'lava'); break; }
+        // Driving (or getting knocked) into lava blows you up on the spot (layered arenas: see layerEvents).
+        if (!this.layered) {
+          for (const h of this.map.hazards) {
+            if ((k.x - h.x) ** 2 + (k.y - h.y) ** 2 < (h.r - 6) ** 2) { this.damage(k, DAMAGE.lava, null, 'lava'); break; }
+          }
         }
         if (k.dead <= 0 && k.hp < this.hpMax && this.time - k.lastHit > REGEN_DELAY) {
           k.hp = Math.min(this.hpMax, k.hp + REGEN_RATE * (this.hpMax / HP_MAX) * dt);
@@ -745,7 +802,7 @@ class KartBattle {
         // Spin spikes reach a little beyond the kart.
         const spiky = (a.spikes > 0) !== (b.spikes > 0);
         const reach = R + (spiky ? SPIKES.reach : 0);
-        if (d2 >= reach * reach || d2 < 0.0001 || Math.abs((a.air || 0) - (b.air || 0)) >= 30) continue;
+        if (d2 >= reach * reach || d2 < 0.0001 || Math.abs(this.heightOf(a) - this.heightOf(b)) >= 30) continue;
         const d = Math.sqrt(d2);
         const nx = dx / d;
         const ny = dy / d;
@@ -769,7 +826,7 @@ class KartBattle {
       if (this.boxes[i] > 0) { this.boxes[i] = Math.max(0, this.boxes[i] - dt); continue; }
       const box = this.map.itemBoxes[i];
       for (const k of alive) {
-        if ((k.air || 0) < BOX_CLEAR && (k.x - box.x) ** 2 + (k.y - box.y) ** 2 < 32 * 32) {
+        if ((k.air || 0) < BOX_CLEAR && (k.x - box.x) ** 2 + (k.y - box.y) ** 2 < 32 * 32 && this.level(k, box.z, LEVEL.box)) {
           // Both slots full (or finished): drive straight through, the box stays for someone else.
           if (k.finished || (k.item && k.item2)) continue;
           this.boxes[i] = this.boxRespawn;
@@ -787,10 +844,10 @@ class KartBattle {
       m.life -= dt;
       if (m.arm > 0) { m.arm -= dt; continue; }
       for (const k of alive) {
-        if (k.ghost > 0 || k.dead > 0 || k.air > GROUND_CLEAR || k.id === m.owner || this.isFriendly(k.id, m.owner)) continue;
+        if (k.ghost > 0 || k.dead > 0 || k.air > GROUND_CLEAR || k.id === m.owner || this.isFriendly(k.id, m.owner) || !this.level(k, m.z, LEVEL.trap)) continue;
         if ((k.x - m.x) ** 2 + (k.y - m.y) ** 2 < MINE.trigger ** 2) {
           m.life = 0;
-          this.explode(m.x, m.y, MINE.radius, DAMAGE.mine, this.karts.get(m.owner), 'mine');
+          this.explode(m.x, m.y, MINE.radius, DAMAGE.mine, this.karts.get(m.owner), 'mine', m.z);
           break;
         }
       }
@@ -802,7 +859,7 @@ class KartBattle {
       b.life -= dt;
       if (b.safe > 0) b.safe -= dt;
       for (const k of alive) {
-        if (k.ghost > 0 || k.dead > 0 || k.air > GROUND_CLEAR || (b.safe > 0 && k.id === b.owner) || this.isFriendly(k.id, b.owner)) continue;
+        if (k.ghost > 0 || k.dead > 0 || k.air > GROUND_CLEAR || (b.safe > 0 && k.id === b.owner) || this.isFriendly(k.id, b.owner) || !this.level(k, b.z, LEVEL.trap)) continue;
         if ((k.x - b.x) ** 2 + (k.y - b.y) ** 2 < (K.KART_RADIUS + 10) ** 2) {
           if (k.invuln > 0 && k.shield <= 0) continue;
           this.damage(k, DAMAGE.banana, this.karts.get(b.owner), 'banana');
@@ -818,7 +875,7 @@ class KartBattle {
       g.life -= dt;
       g.age += dt;
       for (const k of alive) {
-        if (k.ghost > 0 || k.sticky || k.finished || k.air > GROUND_CLEAR || this.isFriendly(k.id, g.owner)) continue;
+        if (k.ghost > 0 || k.sticky || k.finished || k.air > GROUND_CLEAR || this.isFriendly(k.id, g.owner) || !this.level(k, g.z, LEVEL.trap)) continue;
         if (k.id === g.owner && g.age < STICKY.ownerGrace) continue;
         if ((k.x - g.x) ** 2 + (k.y - g.y) ** 2 < (K.KART_RADIUS + 12) ** 2) {
           this.attachSticky(k, this.karts.get(g.owner));
@@ -833,16 +890,41 @@ class KartBattle {
     for (const d of this.decoys) {
       d.life -= dt;
       for (const k of alive) {
-        if (k.ghost > 0 || k.finished || k.id === d.owner || this.isFriendly(k.id, d.owner) || (k.air || 0) > BOX_CLEAR) continue;
+        if (k.ghost > 0 || k.finished || k.id === d.owner || this.isFriendly(k.id, d.owner) || (k.air || 0) > BOX_CLEAR || !this.level(k, d.z, LEVEL.box)) continue;
         if ((k.x - d.x) ** 2 + (k.y - d.y) ** 2 < DECOY.trigger ** 2) {
           d.life = 0;
-          this.room.emit('game:kart:boom', { x: Math.round(d.x), y: Math.round(d.y), r: 60, kind: 'decoy' });
+          this.boom(d.x, d.y, 60, 'decoy', d.z);
           this.damage(k, DAMAGE.decoy, this.karts.get(d.owner), 'decoy');
           break;
         }
       }
     }
     this.decoys = this.decoys.filter((d) => d.life > 0);
+  }
+
+  // ---------- layered arenas ----------
+  // After a kart's physics step: fell into the void, the moat or a lava pool (the kill goes to whoever
+  // hit it last), flew off a jump pad, bounced off a bumper or got hit by a moving obstacle.
+  layerEvents(k) {
+    if (k.padded) { this.room.emit('game:kart:pad', { idx: k.idx, i: k.padded - 1 }); k.padded = 0; }
+    if (k.bumper) { this.room.emit('game:kart:bumper', { idx: k.idx, i: k.bumper - 1 }); k.bumper = 0; }
+    if (k.whacked) { this.room.emit('game:kart:whack', { idx: k.idx, i: k.whacked - 1, x: Math.round(k.x), y: Math.round(k.y), z: Math.round(k.z) }); k.whacked = 0; }
+    if (k.lost) {
+      const kind = k.lost;
+      k.lost = null;
+      this.damage(k, DAMAGE.lava, null, kind);
+    }
+  }
+
+  // Shots in a layered arena hug the floor: they follow ramps, drop off ledges (falling) and are
+  // stopped by walls at their own height; over the void they fall away.
+  shotFloor(s, dt) {
+    const f = this.map.floorAt(s.x, s.y, s.z + K.Layers.STEP, this.time);
+    if (f >= s.z - 2) { s.z = f; s.vz = 0; return; }
+    s.vz = (s.vz || 0) - K.PHYS.gravity * dt;
+    s.z = Math.max(f, s.z + s.vz * dt);
+    if (s.z <= f) s.vz = 0;
+    if (s.z < this.map.deathZ) s.life = 0;
   }
 
   // ---------- sticky bombs and spikes ----------
@@ -870,11 +952,11 @@ class KartBattle {
     k.sticky = null;
     const by = st.by ? this.karts.get(st.by) : null;
     const credit = by && by !== k && !this.isFriendly(by.id, k.id) ? by : null;
-    this.room.emit('game:kart:boom', { x: Math.round(k.x), y: Math.round(k.y), r: STICKY.radius, kind: 'sticky' });
+    this.boom(k.x, k.y, STICKY.radius, 'sticky', this.heightOf(k));
     this.damage(k, DAMAGE.sticky, credit, 'sticky');
     for (const o of this.karts.values()) {
       if (o === k || o === by || o.dead > 0) continue;
-      const d = Math.hypot(o.x - k.x, o.y - k.y, o.air || 0);
+      const d = Math.hypot(o.x - k.x, o.y - k.y, this.layered ? this.heightOf(o) - this.heightOf(k) : o.air || 0);
       if (d > STICKY.radius) continue;
       this.damage(o, Math.round(DAMAGE.sticky * 0.5 * (1 - 0.5 * (d / STICKY.radius))), by, 'sticky');
     }
@@ -933,10 +1015,10 @@ class KartBattle {
     const jb = (j / mb) * (victim === b ? BUMP.ramShove : 1);
     const shoves = [shove(a, -nx * ja, -ny * ja), shove(b, nx * jb, ny * jb)];
     if (closing > BUMP.eventSpeed) {
-      this.room.emit('game:kart:bump', {
+      this.room.emit('game:kart:bump', this.withZ({
         x: Math.round((a.x + b.x) / 2), y: Math.round((a.y + b.y) / 2), p: Math.round(Math.min(1, closing / 600) * 100) / 100,
         ram: rammer ? rammer.idx : -1, s: shoves,
-      });
+      }, (this.heightOf(a) + this.heightOf(b)) / 2));
     }
     // Arena: a proper ram costs the victim a little health (once per ram, teammates excepted).
     if (rammer && this.arena && !this.isFriendly(rammer.id, victim.id)
@@ -964,6 +1046,7 @@ class KartBattle {
 
   // Is (x, y) past the walls (or inside an obstacle)? `shot.ti` keeps race lookups local and cheap.
   blocked(x, y, shot) {
+    if (this.layered) return this.map.blocked(x, y, 0, shot ? shot.z : 0, this.time);
     if (this.arena) return this.map.blocked(x, y);
     const near = this.map.nearestIndex(x, y, shot ? shot.ti : undefined);
     if (shot) shot.ti = near.index;
@@ -979,7 +1062,7 @@ class KartBattle {
         let turn = null;
         let bestD = 700 * 700;
         for (const k of alive) {
-          if (k.id === s.owner || k.ghost > 0 || k.dead > 0 || this.isFriendly(k.id, s.owner)) continue;
+          if (k.id === s.owner || k.ghost > 0 || k.dead > 0 || this.isFriendly(k.id, s.owner) || !this.level(k, s.z, 60)) continue;
           const dx = k.x - s.x;
           const dy = k.y - s.y;
           const d2 = dx * dx + dy * dy;
@@ -998,17 +1081,24 @@ class KartBattle {
       s.age += dt;
 
       if (s.kind === 'bomb') {
-        // Bombs fly over karts and go off where they land (or against a wall).
-        if (s.life <= 0 || (this.arena && this.map.blocked(s.x, s.y))) {
+        // Bombs fly over karts and go off where they land (or against a wall). In a layered arena
+        // the lob arcs from the thrower's height down (or up) to the floor it lands on.
+        if (this.layered) {
+          const u = Math.min(1, s.age / BOMB.flight);
+          s.z = s.z0 + (s.lz - s.z0) * u + BOMB_LOB.apex * 4 * u * (1 - u);
+        }
+        const wall = this.layered ? this.map.blocked(s.x, s.y, 0, s.z - K.Layers.STEP, this.time) : this.arena && this.map.blocked(s.x, s.y);
+        if (s.life <= 0 || wall) {
           s.life = 0;
-          this.explode(s.x, s.y, BOMB.radius, DAMAGE.bomb, owner, 'bomb');
+          this.explode(s.x, s.y, BOMB.radius, DAMAGE.bomb, owner, 'bomb', this.layered ? (s.life <= 0 && !wall ? s.lz : s.z) : 0);
         }
         continue;
       }
+      if (this.layered && s.kind !== 'sticky') this.shotFloor(s, dt);
       if (s.kind === 'bouncer') {
         this.bounce(s);
         if (s.life <= 0) { // out of bounces (or time): it shatters
-          this.room.emit('game:kart:boom', { x: Math.round(s.x), y: Math.round(s.y), r: 30, kind: 'bouncer' });
+          this.boom(s.x, s.y, 30, 'bouncer', s.z);
           continue;
         }
       }
@@ -1017,6 +1107,7 @@ class KartBattle {
         // Bouncers can come back for their owner once they have hit a wall.
         const own = k.id === s.owner;
         if ((own && !(s.kind === 'bouncer' && s.bounced)) || k.ghost > 0 || k.dead > 0 || (!own && this.isFriendly(k.id, s.owner))) continue;
+        if (!this.level(k, s.z, LEVEL.shot)) continue;
         const r = K.KART_RADIUS + (s.kind === 'bullet' ? 4 : 8);
         // Swept test over this tick's whole path: bullets cover ~60 units a
         // tick, more than a kart is wide, so a point test lets them pass through.
@@ -1031,17 +1122,18 @@ class KartBattle {
             break;
           }
           this.damage(k, s.dmg, owner, s.kind === 'bullet' ? 'bullet' : s.kind);
-          if (shell) this.room.emit('game:kart:boom', { x: Math.round(s.x), y: Math.round(s.y), r: 40, kind: s.kind });
+          if (shell) this.boom(s.x, s.y, 40, s.kind, s.z);
           break;
         }
       }
       if (s.life > 0 && s.kind !== 'bouncer' && this.blocked(s.x, s.y, s)) {
         s.life = 0;
-        if (s.kind === 'rocket' || s.kind === 'snowball') this.room.emit('game:kart:boom', { x: Math.round(s.x), y: Math.round(s.y), r: 40, kind: s.kind });
+        if (s.kind === 'rocket' || s.kind === 'snowball') this.boom(s.x, s.y, 40, s.kind, s.z);
       }
       // A sticky bomb that touched nobody lands and waits for a kart.
-      if (s.kind === 'sticky' && s.life <= 0 && !s.used && owner && this.solidGround(s.x, s.y, owner)) {
-        this.stickies.push({ id: s.id, x: s.x, y: s.y, owner: s.owner, life: STICKY.ground, age: 0 });
+      if (s.kind === 'sticky' && s.life <= 0 && !s.used && owner) {
+        const z = this.dropZ(s.x, s.y, owner, s.z);
+        if (z !== null) this.stickies.push({ id: s.id, x: s.x, y: s.y, z, owner: s.owner, life: STICKY.ground, age: 0 });
       }
     }
     this.shots = this.shots.filter((s) => s.life > 0);
@@ -1056,7 +1148,7 @@ class KartBattle {
     k.ammo--;
     if (k.ammo <= 0) { k.item = null; k.ammo = 0; this.promoteItem(k); }
     this.room.emit('game:kart:block', { idx: k.idx, kind: 'trail' });
-    this.room.emit('game:kart:boom', { x: Math.round(s.x), y: Math.round(s.y), r: 30, kind: s.kind });
+    this.boom(s.x, s.y, 30, s.kind, s.z);
     return true;
   }
 
@@ -1065,7 +1157,17 @@ class KartBattle {
     const R = BOUNCER.radius;
     let nx = 0;
     let ny = 0;
-    if (this.arena) {
+    if (this.layered) {
+      this.map.walls(s.x, s.y, s.z, R, (wx, wy, depth) => { s.x += wx * depth; s.y += wy * depth; nx += wx; ny += wy; });
+      if (this.map.edge === 'wall') {
+        const lo = K.Layers.EDGE + R;
+        const hi = this.map.size - K.Layers.EDGE - R;
+        if (s.x < lo) { s.x = lo; nx += 1; }
+        if (s.x > hi) { s.x = hi; nx -= 1; }
+        if (s.y < lo) { s.y = lo; ny += 1; }
+        if (s.y > hi) { s.y = hi; ny -= 1; }
+      }
+    } else if (this.arena) {
       const lo = 40 + R;
       const hi = this.map.size - 40 - R;
       if (s.x < lo) { s.x = lo; nx += 1; }
@@ -1137,11 +1239,11 @@ class KartBattle {
       // The target finished or was destroyed: go after whoever leads now.
       target = owner ? this.cometTarget(owner) : null;
       s.target = target ? target.id : null;
-      if (s.phase === 'dive' && target) { s.sx = s.x; s.sy = s.y; s.sAlt = s.alt; s.diveT = 0; }
+      if (s.phase === 'dive' && target) { s.sx = s.x; s.sy = s.y; s.sAlt = s.alt; s.sz = s.z; s.diveT = 0; }
     }
     if (!target || s.life <= 0) {
       s.life = 0;
-      this.room.emit('game:kart:boom', { x: Math.round(s.x), y: Math.round(s.y), r: 60, kind: 'comet' });
+      this.boom(s.x, s.y, 60, 'comet', (s.z || 0) + (this.layered ? s.alt : 0));
       return;
     }
     if (s.phase === 'cruise') {
@@ -1170,7 +1272,7 @@ class KartBattle {
         if (s.x !== px || s.y !== py) s.angle = Math.atan2(s.y - py, s.x - px);
       }
       if (s.age > COMET.climb && Math.hypot(target.x - s.x, target.y - s.y) < COMET.divePoint) {
-        Object.assign(s, { phase: 'dive', diveT: 0, sx: s.x, sy: s.y, sAlt: s.alt });
+        Object.assign(s, { phase: 'dive', diveT: 0, sx: s.x, sy: s.y, sAlt: s.alt, sz: s.z });
       }
       return;
     }
@@ -1183,9 +1285,10 @@ class KartBattle {
     s.y = s.sy + (target.y - s.sy) * p;
     if (s.x !== px || s.y !== py) s.angle = Math.atan2(s.y - py, s.x - px);
     s.alt = s.sAlt * (1 - p * p);
+    if (this.layered) s.z = s.sz + (this.heightOf(target) - s.sz) * p; // down onto the floor the target is on
     if (p >= 1) {
       s.life = 0;
-      this.explode(target.x, target.y, COMET.radius, DAMAGE.comet, owner, 'comet');
+      this.explode(target.x, target.y, COMET.radius, DAMAGE.comet, owner, 'comet', this.heightOf(target));
     }
   }
 
@@ -1240,7 +1343,9 @@ class KartBattle {
       // item2 / ammo2 / roulette2: the reserve slot, same encoding
       // sticky: tenths of a second until the sticky bomb on this kart goes off (0 = none)
       // flags add 32768 frozen, 65536 spin spikes
-      k: [...this.karts.values()].map((k) => [
+      // Layered arenas add [z]: the kart's height (its wheels), and every shot, trap and decoy row
+      // below ends with the height it is at.
+      k: [...this.karts.values()].map((k) => this.zRow([
         k.idx, Math.round(k.x), Math.round(k.y), Math.round(k.angle * 1000), Math.round(k.speed),
         Math.max(1, Math.min(this.laps, k.lap)), place.get(k.id), itemCode(k.item), k.ammo,
         (k.spin > 0 ? 1 : 0) | (k.boost > 0 ? 2 : 0) | (k.shield > 0 ? 4 : 0) | (k.finished ? 8 : 0)
@@ -1257,7 +1362,7 @@ class KartBattle {
         Math.ceil(k.roulette * 100 - 1e-6),
         itemCode(k.item2), k.ammo2, Math.ceil(k.roulette2 * 100 - 1e-6),
         k.sticky ? Math.max(1, Math.ceil(k.sticky.fuse * 10)) : 0,
-      ]),
+      ], k.z)),
       // shots: [id, kind (1 rocket, 2 bullet, 3 bomb, 4 bouncer, 5 comet, 6 snowball, 7 sticky), x, y, angle*1000,
       //   flight progress 0-100 (bombs, stickies)]
       //   bombs add [landing x, landing y]; comets send their altitude as the 6th field and add [target kart idx]
@@ -1267,15 +1372,21 @@ class KartBattle {
             : s.kind === 'sticky' ? Math.round((s.age / STICKY.flight) * 100) : 0];
         if (s.kind === 'bomb') row.push(Math.round(s.lx), Math.round(s.ly));
         else if (s.kind === 'comet') row.push(s.target ? this.karts.get(s.target).idx : -1);
-        return row;
+        return this.zRow(row, s.z);
       }),
-      m: this.mines.map((m) => [m.id, Math.round(m.x), Math.round(m.y), m.arm > 0 ? 0 : 1]),
-      b: this.bananas.map((b) => [b.id, Math.round(b.x), Math.round(b.y)]),
-      g: this.stickies.map((g) => [g.id, Math.round(g.x), Math.round(g.y)]),
+      m: this.mines.map((m) => this.zRow([m.id, Math.round(m.x), Math.round(m.y), m.arm > 0 ? 0 : 1], m.z)),
+      b: this.bananas.map((b) => this.zRow([b.id, Math.round(b.x), Math.round(b.y)], b.z)),
+      g: this.stickies.map((g) => this.zRow([g.id, Math.round(g.x), Math.round(g.y)], g.z)),
       // decoys carry their owner's index so the owner's team can tell them apart
-      d: this.decoys.map((d) => [d.id, Math.round(d.x), Math.round(d.y), this.karts.get(d.owner)?.idx ?? -1]),
+      d: this.decoys.map((d) => this.zRow([d.id, Math.round(d.x), Math.round(d.y), this.karts.get(d.owner)?.idx ?? -1], d.z)),
       x: this.boxes.map((t) => (t > 0 ? 0 : 1)),
     });
+  }
+
+  // Layered arenas: a snapshot row ends with the height of what it describes.
+  zRow(row, z) {
+    if (this.layered) row.push(Math.round(Number.isFinite(z) ? z : 0));
+    return row;
   }
 
   endRace() {

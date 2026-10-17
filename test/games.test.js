@@ -2281,4 +2281,6 @@ test('page assets: every kart ES module is versioned and every classic script is
   for (const s of ['kart-hud.js', 'kart-minimap.js', 'kart.js']) assert.ok(html.includes(`/js/games/${s}?v=`), `${s} is loaded`);
   assert.ok(html.includes('/js/item-icons.js?v='), 'item-icons.js is loaded');
   assert.ok(html.indexOf('kart-hud.js') < html.indexOf('/js/games/kart.js'), 'the HUD kit loads before kart.js');
+  assert.ok(html.includes('/js/shared/kart-layers.js?v='), 'kart-layers.js is loaded');
+  assert.ok(html.indexOf('/js/shared/kart-layers.js') < html.indexOf('/js/shared/kart-core.js'), 'layered arenas load before kart-core, which needs them');
 });

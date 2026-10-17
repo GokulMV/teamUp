@@ -1,10 +1,12 @@
 // Maps and kart physics shared by the server (authoritative simulation)
 // and the browser (prediction for your own kart + rendering).
+// Layered arenas (floors at several heights) come from kart-layers.js, loaded first in the browser.
 (function (root, factory) {
-  const api = factory();
-  if (typeof module === 'object' && module.exports) module.exports = api;
+  const node = typeof module === 'object' && module.exports;
+  const api = factory(node ? require('./kart-layers') : root.KartLayers);
+  if (node) module.exports = api;
   else root.KartCore = api;
-})(typeof self !== 'undefined' ? self : this, function () {
+})(typeof self !== 'undefined' ? self : this, function (Layers) {
   const KART_RADIUS = 16;
   const WALL_PAD = 160; // race tracks: hard wall this far outside the asphalt
   const CURB = 18; // painted curb outside the asphalt; still counts as road
@@ -43,6 +45,8 @@
     hopVz: 290, // a tap of the drift button on the ground: ~0.39 s in the air, ~28 units up
     hopCooldown: 0.4,
     knockDecay: 5.5, // 1/s: how fast a shove from another kart dies away
+    padSteer: 0.12, // steering left on a jump pad's flight (it flies you to its landing spot)
+    bumperHop: 170, // a pinball bumper pops you up this fast as it shoves you away
   };
 
   // Item codes on the wire are index + 1. New items are only ever appended.
@@ -963,6 +967,18 @@
     }));
   }
 
+  // Layered arenas (kart-layers.js) are built on first use as well. `hidden` ones are left out of
+  // the lobby's list while they are being made.
+  for (const def of (Layers && Layers.ARENAS) || []) {
+    info(def, 'arena');
+    if (def.hidden) INFO[def.id].hidden = true;
+    let map = null;
+    Object.defineProperty(MAPS, def.id, {
+      enumerable: true,
+      get() { return map || (map = Layers.makeLayeredArena(def)); },
+    });
+  }
+
   const DEFAULT_MAP = { race: 'grandprix', arena: 'colosseum' };
   const REVERSED = {};
   // opts.reverse: race tracks only, a cached variant driven the other way.
@@ -976,7 +992,7 @@
     return m;
   }
   function mapList() {
-    return Object.values(INFO).map((m) => ({ ...m }));
+    return Object.values(INFO).filter((m) => !m.hidden).map((m) => ({ ...m }));
   }
   // Name, type and blurb of a map without building it (null for an unknown id).
   function mapInfo(id) {
@@ -1141,6 +1157,110 @@
     }
   }
 
+  // ---------- layered arenas ----------
+  const CONTACTS = [];
+  const FLOOR = { z: 0, gx: 0, gy: 0, s: null };
+  // A kart with no height yet (a fresh spawn) stands on the highest floor under it.
+  function settle(kart, map, t) {
+    const g = map.floorAt(kart.x, kart.y, Infinity, t);
+    Object.assign(kart, { z: Number.isFinite(g) ? g : 0, vz: 0, air: 0, gz: null });
+  }
+
+  // Walls, bumpers and moving obstacles: slide along walls (like race walls), get shoved by the rest.
+  function collideLayers(kart, map, dt, t) {
+    if (!Number.isFinite(kart.z)) settle(kart, map, t);
+    let impact = 0;
+    for (const c of map.collide(kart, t, CONTACTS)) {
+      const hit = slideOffWall(kart, c.nx, c.ny, dt);
+      impact = Math.max(impact, hit);
+      const kn = (kart.kx || 0) * c.nx + (kart.ky || 0) * c.ny;
+      if (kn < 0) { kart.kx -= kn * c.nx; kart.ky -= kn * c.ny; }
+      let shove = 0;
+      if (c.kick) shove = c.kick + 0.6 * hit; // a pinball bumper: the harder you hit it, the harder it throws you
+      if (c.mover) {
+        // Whatever moves into you carries you along, and then some.
+        const vn = c.vx * c.nx + c.vy * c.ny;
+        if (vn > 0) shove = Math.max(shove, vn * 1.25 + 140);
+      }
+      if (shove <= 0) continue;
+      kart.kx = (kart.kx || 0) + c.nx * shove;
+      kart.ky = (kart.ky || 0) + c.ny * shove;
+      if (c.kick) {
+        if (!(kart.air > 0)) { kart.vz = PHYS.bumperHop; kart.air = 0.5; kart.z += 0.5; kart.hopping = true; }
+        kart.bumper = c.s.bumper + 1; // read (and cleared) by the server for the bumper's flash and sound
+      } else {
+        kart.whacked = c.s.i + 1;
+      }
+      if (kart.drift) { kart.drift = 0; kart.driftTime = 0; }
+    }
+    return impact;
+  }
+
+  // Jump pad: fly from here to the pad's landing spot in t seconds (the kart is turned to face it).
+  function launchPad(kart, p) {
+    const dx = p.tx - kart.x;
+    const dy = p.ty - kart.y;
+    const a = Math.atan2(dy, dx);
+    Object.assign(kart, {
+      angle: a, heading: a, speed: Math.hypot(dx, dy) / p.t, vz: (p.tz - kart.z) / p.t + 0.5 * PHYS.gravity * p.t,
+      air: 0.5, airTime: 0, hopping: false, launch: p.t + 1, padCd: 0.6, trickable: true, tricked: false,
+      drift: 0, driftTime: 0, kx: 0, ky: 0, padded: p.i + 1,
+    });
+    kart.z += 0.5;
+  }
+
+  // Heights in layered arenas: stand on the floor (ramps, decks), drop off ledges, bonk on
+  // ceilings, land, fly off jump pads, and fall to your doom (kart.lost: what got you).
+  function verticalLayers(kart, dt, map, t) {
+    const G = PHYS.gravity;
+    if (!Number.isFinite(kart.z)) settle(kart, map, t);
+    const f = map.floorInfo(kart.x, kart.y, kart.z + Layers.STEP, t, FLOOR);
+    const g = f.z;
+    const floor = Number.isFinite(g) ? g : map.deathZ;
+    // The floor's own rise under a kart driving along it (ramps); steps are clamped to it, so a
+    // kerb is a bump, never a catapult.
+    const h = kart.heading === undefined ? kart.angle : kart.heading;
+    const slopeVz = f.gx * (Math.cos(h) * kart.speed + (kart.kx || 0)) + f.gy * (Math.sin(h) * kart.speed + (kart.ky || 0));
+    const groundVz = Number.isFinite(kart.gz) && Number.isFinite(g) ? clamp((g - kart.gz) / dt, slopeVz - 300, slopeVz + 300) : slopeVz;
+    if (kart.air > 0) {
+      kart.airTime = (kart.airTime || 0) + dt;
+      kart.vz -= G * dt;
+      let z = kart.z + kart.vz * dt;
+      if (kart.vz > 0) {
+        const ceil = map.ceilingAt(kart.x, kart.y, kart.z + Layers.KART_H - 1);
+        if (z + Layers.KART_H > ceil) { z = ceil - Layers.KART_H; kart.vz = 0; }
+      }
+      kart.z = z;
+      if (kart.z <= g) {
+        kart.landed = -kart.vz;
+        // A jump pad's flight is fast; you touch down at your normal top speed, not sliding off the far side.
+        if (kart.launch > 0) kart.speed = Math.min(kart.speed, PHYS.maxSpeed);
+        Object.assign(kart, { z: g, air: 0, vz: groundVz, airTime: 0, trickable: false, hopping: false, launch: 0 });
+        if (kart.tricked) kart.boost = Math.max(kart.boost || 0, PHYS.trickBoost);
+        kart.tricked = false;
+      } else {
+        kart.air = kart.z - floor;
+      }
+    } else {
+      const vz0 = kart.vz || 0;
+      const free = kart.z + vz0 * dt - G * dt * dt;
+      // Off a ledge (the floor dropped away by more than a step) or over a crest at speed.
+      if (free > g + Math.max(CREST_TOL * dt * dt, 0.05) && (g < kart.z - Layers.STEP || Math.abs(kart.speed) > 150)) {
+        Object.assign(kart, { vz: vz0 - G * dt, z: free, air: free - floor, airTime: 0, trickable: false });
+      } else {
+        Object.assign(kart, { vz: groundVz, z: g, air: 0 });
+      }
+    }
+    kart.gz = Number.isFinite(g) ? g : null;
+    if (!(kart.air > 0) && !(kart.padCd > 0)) {
+      const p = map.padAt(kart.x, kart.y, kart.z);
+      if (p) launchPad(kart, p);
+    }
+    const lost = map.hazardAt(kart.x, kart.y, kart.z);
+    if (lost) kart.lost = lost;
+    if (kart.z < map.deathZ - 600) { kart.z = map.deathZ - 600; kart.vz = 0; } // the client waits here for the server
+  }
+
   const FROZEN_INPUT = { up: false, down: false, left: false, right: false, drift: false };
 
   // Advance a kart by dt seconds. `input` = {up, down, left, right, drift}.
@@ -1149,8 +1269,12 @@
   // (the room's speed class); it must match on the server and in prediction.
   // opts.noFall: never start a fall (client prediction follows the server for those).
   // opts.frozen: the kart is frozen (input ignored, it slides).
+  // opts.t: the game clock in seconds (layered arenas: where the moving obstacles are).
   function stepKart(kart, input, dt, map, opts) {
     const arena = map.type === 'arena';
+    const layered = !!map.layered;
+    const flat = arena && !layered; // the original arenas: one floor, a hop is all the height there is
+    const t = opts && Number.isFinite(opts.t) ? opts.t : 0;
     if (kart.fall > 0) {
       // In the water/lava: wait to be fished out.
       kart.fall -= dt;
@@ -1167,12 +1291,14 @@
     const hopPress = !!input.drift && !kart.hopHeld;
     kart.hopHeld = !!input.drift;
     if (kart.hopCd > 0) kart.hopCd = Math.max(0, kart.hopCd - dt);
+    if (kart.padCd > 0) kart.padCd = Math.max(0, kart.padCd - dt);
+    if (kart.launch > 0) kart.launch = Math.max(0, kart.launch - dt);
     if (hopPress && !(kart.spin > 0) && !(kart.air > 0) && !(kart.hopCd > 0)) {
       kart.hopCd = PHYS.hopCooldown;
       kart.hopping = true;
-      kart.vz = (arena ? 0 : kart.vz || 0) + PHYS.hopVz;
+      kart.vz = (flat ? 0 : kart.vz || 0) + PHYS.hopVz;
       kart.air = 0.5;
-      if (!arena && Number.isFinite(kart.z)) kart.z += 0.5;
+      if (!flat && Number.isFinite(kart.z)) kart.z += 0.5;
     }
     const accel = PHYS.accel * mul;
     const maxSpeed = PHYS.maxSpeed * mul;
@@ -1180,10 +1306,12 @@
     const offTrackMax = PHYS.offTrackMax * mul;
     const grip = map.grip || 1;
     const spinning = kart.spin > 0;
-    const air = !arena && kart.air > 0;
+    const air = !flat && kart.air > 0;
     // A hop keeps the grip of the ground: only a real jump (ramp, crest) loses it.
     const flying = air && !kart.hopping;
-    const steerMul = flying ? PHYS.airSteer : 1;
+    // A jump pad's flight is aimed: the kart only wiggles a little on the way.
+    const launched = flying && kart.launch > 0;
+    const steerMul = flying ? (launched ? PHYS.padSteer : PHYS.airSteer) : 1;
     const steer = (input.left ? -1 : 0) + (input.right ? 1 : 0);
     const v0 = kart.speed;
     if (spinning) {
@@ -1192,7 +1320,7 @@
       kart.drift = 0;
       kart.driftTime = 0;
     } else {
-      if (flying) kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), 15 * dt); // no grip, keep momentum
+      if (launched) { /* on a pad's arc: neither drag nor throttle */ } else if (flying) kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), 15 * dt); // no grip, keep momentum
       else if (input.up) kart.speed += accel * dt * (0.6 + 0.4 * grip);
       else if (input.down) kart.speed -= (kart.speed > 0 ? PHYS.brake * grip : accel * 0.6) * dt;
       else kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), PHYS.drag * 100 * grip * dt * (frozen ? 0.25 : 1));
@@ -1221,7 +1349,7 @@
         kart.angle += steer * PHYS.turnRate * g * (0.75 + 0.25 * grip) * dt * (kart.speed >= 0 ? 1 : -1) * steerMul;
       }
     }
-    if (!arena) {
+    if (!flat) {
       // Tricks: press drift at take-off or in the air; land it for a mini boost. Only real jumps
       // count: there must be time to finish the flip before touching down.
       if (air && !spinning && input.drift && kart.trickable && !kart.tricked && (!kart.prevDrift || kart.airTime < PHYS.trickWindow)
@@ -1249,18 +1377,35 @@
         slope = map.grade[near.index] * (Math.cos(h) * t[0] + Math.sin(h) * t[1]);
         kart.speed -= PHYS.slopePull * slope * dt;
       }
+    } else if (layered && !flying && Number.isFinite(kart.z)) {
+      // Ramps (and a tipping drawbridge) pull you back as you climb and speed you up going down.
+      const f = map.floorInfo(kart.x, kart.y, kart.z + Layers.STEP, t, FLOOR);
+      if (f.gx || f.gy) {
+        const h = kart.heading === undefined ? kart.angle : kart.heading;
+        const hx = Math.cos(h);
+        const hy = Math.sin(h);
+        slope = f.gx * hx + f.gy * hy;
+        kart.speed -= PHYS.slopePull * slope * dt;
+        // Across the slope the kart slowly slides sideways downhill.
+        const sx = f.gx - slope * hx;
+        const sy = f.gy - slope * hy;
+        kart.kx = (kart.kx || 0) - PHYS.slopePull * sx * dt;
+        kart.ky = (kart.ky || 0) - PHYS.slopePull * sy * dt;
+      }
     }
     kart.surface = surface;
     if (!flying) {
       for (const p of map.boostPads) {
-        if ((kart.x - p.x) ** 2 + (kart.y - p.y) ** 2 < 34 * 34) kart.boost = Math.max(kart.boost || 0, PHYS.padBoost);
+        if ((kart.x - p.x) ** 2 + (kart.y - p.y) ** 2 < 34 * 34 && (!layered || Math.abs((kart.z || 0) - p.z) < 16)) {
+          kart.boost = Math.max(kart.boost || 0, PHYS.padBoost);
+        }
       }
     }
     const hill = clamp(1 - slope * PHYS.slopeTop, 0.85, 1.12);
     let max = (kart.boost > 0 ? boostSpeed : maxSpeed) * hill;
     if (kart.boost <= 0 && surface) max = (surface === 2 ? offTrackMax : PHYS.runoffMax * mul) * hill;
     if (kart.boost > 0 && !spinning) kart.speed = Math.max(kart.speed, boostSpeed * 0.95);
-    if (kart.speed > max) {
+    if (kart.speed > max && !launched) {
       // Over a surface's cap the throttle does nothing: grass and run-off only ever slow you down.
       const from = surface ? Math.min(kart.speed, v0) : kart.speed;
       kart.speed = Math.max(max, from - (surface ? PHYS.offTrackDecel : PHYS.brake * 1.5) * dt);
@@ -1271,7 +1416,7 @@
     kart.heading = kart.heading === undefined ? kart.angle : kart.heading;
     let dh = kart.angle - kart.heading;
     dh = Math.atan2(Math.sin(dh), Math.cos(dh));
-    kart.heading += dh * Math.min(1, dt * 14 * grip * grip * (kart.drift ? 0.55 : 1));
+    kart.heading += dh * Math.min(1, dt * (launched ? 1.2 : 14 * grip * grip * (kart.drift ? 0.55 : 1)));
     kart.x += Math.cos(kart.heading) * kart.speed * dt;
     kart.y += Math.sin(kart.heading) * kart.speed * dt;
     // A shove from another kart: extra velocity the kart's own grip doesn't fight; it dies away.
@@ -1285,7 +1430,10 @@
     }
 
     kart.bump = 0;
-    if (arena) {
+    if (layered) {
+      kart.bump = collideLayers(kart, map, dt, t);
+      verticalLayers(kart, dt, map, t);
+    } else if (arena) {
       kart.bump = collideArena(kart, map, dt);
       if (kart.bump) { kart.kx = 0; kart.ky = 0; }
       // Arena floors are flat: a hop is all the height there is.
@@ -1319,7 +1467,7 @@
   }
 
   return {
-    KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP,
+    KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP, Layers,
     getMap, mapList, mapInfo, mapsBuilt, stepKart, driftLevel, itemSpeed, bombLead, respawnOnTrack, makeRaceMap, timeToLand,
     noise: { vnoise, fbm, smoothstep, polyDist },
   };
