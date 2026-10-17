@@ -12,9 +12,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { MOBILE, THEMES, tex, part, buildArena, loadMoonlit } from './kart3d/world.js';
 import { buildRace } from './kart3d/track.js';
 import { buildLayered } from './kart3d/arena3d.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { ItemFX, shieldMaterial, shieldGeometry, ghostMaterial, starVariant } from './kart3d/items3d.js';
-import { buildGoKart, setEnvironment, kartMaterials, EXHAUSTS } from './kart3d/gokart.js';
+import { buildGoKart, setNight, kartMaterials, EXHAUSTS } from './kart3d/gokart.js';
+import { Juice, ease } from './kart3d/juice.js';
 
 const K = window.KartCore;
 
@@ -277,14 +277,32 @@ function buildKart(meta, teamColor, isMe) {
     steer: 0, lastAngle: null, smoke: 0, slide: 0, hop: 0, wasSpin: false, wasDead: false,
     hint: null, pitch: 0, roll: 0, lastY: null, vy: 0, prevAir: 0, squash: 0, trickT: -1, trickDir: 1, wasTrick: false, falling: false, fallT: 0,
     color: meta.color, fade: 1, look: 'solid', tagAlpha: 0, tagLift: 0, tagOn: false,
-    rig: model.rig, top, model,
+    rig: model.rig, top, model, flashT: 0, recoilT: -1, recoilAmt: 0, wreck: 0, outlines: model.outlines,
+    buckT: -1, buckAmt: 0, buckSide: 1,
   };
 }
 
-// A kart is drawn solid, as a ghost (ghost item), in rainbow versions of its own materials (star
-// power) or, while it fades out next to the lens, in a see-through coat of its own colour.
+// A hit flash: a copy of a kart material glowing pure red (shown for 150 ms when it takes damage).
+const HIT_SKIN = new WeakMap();
+function hitVariant(mat) {
+  let hit = HIT_SKIN.get(mat);
+  if (hit) return hit;
+  hit = mat.clone();
+  if (hit.emissive) {
+    hit.emissive.set(0xff0000);
+    hit.emissiveIntensity = 1;
+  } else {
+    hit.color.set(0xff2020);
+  }
+  HIT_SKIN.set(mat, hit);
+  return hit;
+}
+
+// A kart is drawn solid, as a ghost (ghost item), flashing red (just hit), in rainbow versions of
+// its own materials (star power) or, while it fades out next to the lens, in a see-through coat of
+// its own colour.
 function applyLook(kart) {
-  const look = kart.fade < 1 ? 'fade' : kart.ghosted ? 'ghost' : kart.starred ? 'star' : 'solid';
+  const look = kart.fade < 1 ? 'fade' : kart.ghosted ? 'ghost' : kart.flashT > 0 ? 'hit' : kart.starred ? 'star' : 'solid';
   if (look === 'fade') {
     kart.fadeMat = kart.fadeMat || new THREE.MeshStandardMaterial({ color: new THREE.Color(kart.color), roughness: 0.5, transparent: true, depthWrite: false });
     kart.fadeMat.opacity = 0.75 * kart.fade;
@@ -292,10 +310,22 @@ function applyLook(kart) {
   if (look === kart.look) return;
   kart.look = look;
   for (const m of kart.meshes) {
-    m.material = look === 'fade' ? kart.fadeMat : look === 'ghost' ? SHARED.ghost : look === 'star' ? starVariant(m.userData.mat) : m.userData.mat;
-    m.castShadow = (look === 'solid' || look === 'star') && !m.userData.noShadow;
+    m.material = look === 'fade' ? kart.fadeMat : look === 'ghost' ? SHARED.ghost : look === 'hit' ? hitVariant(m.userData.mat)
+      : look === 'star' ? starVariant(m.userData.mat) : m.userData.mat;
+    m.castShadow = (look === 'solid' || look === 'star' || look === 'hit') && !m.userData.noShadow;
   }
+  // See-through karts have no ink outline.
+  for (const o of kart.outlines) o.visible = look !== 'fade' && look !== 'ghost';
 }
+
+// Took damage: flash red for 150 ms.
+function flashHit(kart) {
+  kart.flashT = 0.15;
+  applyLook(kart);
+}
+
+// How far heavy weapons kick a kart's nose up when fired (radians; 0.26 is 15 degrees).
+const RECOIL = { rocket: 0.2, triple: 0.15, bomb: 0.26, bouncer: 0.18, snowball: 0.14, sticky: 0.16 };
 
 function setLook(kart, ghost, star) {
   if (kart.ghosted === ghost && kart.starred === star) return;
@@ -328,17 +358,13 @@ export class Kart3D {
     this.renderer = new THREE.WebGLRenderer({ antialias: !MOBILE, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, MOBILE ? 1.5 : 2));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap; // crisp shadows, for the cartoon look
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = theme.night ? 1.15 : 1.05;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.domElement.className = 'kart-canvas';
     container.prepend(this.renderer.domElement);
-    // A soft studio room for the karts to reflect (paint, chrome, glossy eyes).
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    pmrem.dispose();
-    setEnvironment(this.envTex, !!theme.night);
+    setNight(!!theme.night);
 
     const scene = new THREE.Scene();
     this.scene = scene;
@@ -397,7 +423,6 @@ export class Kart3D {
     this.camPos = null;
     this.camLook = new THREE.Vector3();
     this.camHeading = 0;
-    this.shakeAmt = 0;
 
     this.fire = new Particles(scene, 3000, true);
     this.smoke = new Particles(scene, 3000, false);
@@ -446,10 +471,11 @@ export class Kart3D {
     this.karts = new Map();
     this.lastKarts = new Map(); // idx -> latest drawn position, for item effects aimed at karts
     this.items = new ItemFX(this, { items: opts.items !== false });
+    this.juice = new Juice(this, MOBILE);
     // Compile every item and aura shader with the first frame, not with a stutter mid-race:
     // the karts' materials and their star versions too.
     const S = sharedKartParts();
-    const starMats = kartMaterials().map(starVariant);
+    const starMats = [...kartMaterials().map(starVariant), ...kartMaterials().map(hitVariant)];
     this.warm = this.items.warmUp([...starMats, S.ghost, S.shield]);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -510,10 +536,10 @@ export class Kart3D {
     }
   }
 
+  // Camera trauma from something at (x, z): amount 3 (a nudge) .. 24 (a comet strike).
   shake(x, z, amount) {
     if (!this.focus) return;
-    const d = Math.hypot(this.focus.x - x, this.focus.y - z);
-    this.shakeAmt = Math.max(this.shakeAmt, Math.max(0, 1 - d / 700) * amount);
+    this.juice.addTrauma(amount / 24, x, z, this.focus);
   }
 
   // y: a known height (layered arenas send one with every event); otherwise the ground there.
@@ -526,7 +552,6 @@ export class Kart3D {
     if (kind === 'comet' || kind === 'bouncer' || kind === 'snowball') { this.items.blast(kind, x, z, radius, y); return; }
     if (kind === 'sticky' || kind === 'decoy') this.items.blast(kind, x, z, radius, y); // goo or box shards, then the fireball
     const gy = this.groundY(x, z, y);
-    if (kind === 'kill') this.killBurst(x, z, radius, color, gy);
     if (kind === 'bullet') {
       for (let i = 0; i < 6; i++) {
         const a = Math.random() * Math.PI * 2;
@@ -534,52 +559,26 @@ export class Kart3D {
       }
       return;
     }
+    if (kind === 'kill') this.killBurst(x, z, radius, color, gy);
+    // The layered blast (core, shockwave, fireball, smoke, debris), a spray of hot sparks and trauma:
+    // mines and bombs hit hardest.
     const big = kind !== 'hit';
-    const scale = Math.max(0.6, Math.min(2.2, radius / 70));
-    const fireCols = [new THREE.Color(0xffd166), new THREE.Color(0xff7b00), new THREE.Color(0xff3d00)];
-    const n = Math.round((big ? 70 : 26) * Math.min(1.6, scale));
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const up = Math.random();
-      const sp = (big ? 160 : 90) * scale * (0.4 + Math.random());
-      this.fire.emit(x, gy + 12, z, Math.cos(a) * sp, up * sp * 1.2, Math.sin(a) * sp,
-        fireCols[i % 3], (big ? 26 : 16) * scale * (0.6 + Math.random()), 0.5 + Math.random() * 0.4, { grow: 1.6, drag: 2.5, rise: 40 });
-    }
-    const smokeCol = new THREE.Color(0x3a3a42);
-    for (let i = 0; i < (big ? 35 : 12); i++) {
-      const a = Math.random() * Math.PI * 2;
-      const sp = 60 * scale * Math.random();
-      this.smoke.emit(x, gy + 14, z, Math.cos(a) * sp, 30 + Math.random() * 40, Math.sin(a) * sp,
-        smokeCol, (30 + Math.random() * 25) * scale, 1.2 + Math.random() * 0.8, { alpha: 0.7, grow: 1.8, drag: 1.2, rise: 25 });
-    }
+    this.juice.blast(x, gy, z, radius, { big, color: kind === 'kill' ? color : null });
     const spark = new THREE.Color(0xfff3b0);
-    for (let i = 0; i < (big ? 30 : 10); i++) {
+    for (let i = 0; i < (big ? 14 : 6); i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = 250 + Math.random() * 200;
-      this.fire.emit(x, gy + 10, z, Math.cos(a) * sp, 120 + Math.random() * 200, Math.sin(a) * sp, spark, 6, 0.6, { drag: 1.2, rise: -500 });
+      const sp = 220 + Math.random() * 220;
+      this.fire.emit(x, gy + 12, z, Math.cos(a) * sp, 120 + Math.random() * 220, Math.sin(a) * sp, spark, 5, 0.45, { drag: 1.4, rise: -600 });
     }
-    if (big) this.ring(x, z, 0xffb347, radius * 1.6, 0.5, gy);
-    this.shake(x, z, big ? 14 * Math.min(1.5, scale) : 6);
+    const heavy = kind === 'bomb' || kind === 'mine';
+    if (this.focus) this.juice.addTrauma(heavy ? 1 : kind === 'kill' ? 0.6 : big ? 0.5 : 0.25, x, z, this.focus);
   }
 
-  // A smashed kart: a hot core flash, confetti in its colour and a few tumbling body panels.
+  // A smashed kart: a few of its body panels tumbling away (the blast does the rest).
   killBurst(x, z, radius, color, gy) {
     const y = this.groundY(x, z, gy);
     const col = new THREE.Color(color || '#ffffff');
     const white = new THREE.Color(0xffffff);
-    for (let i = 0; i < 36; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const sp = 120 + Math.random() * 220;
-      this.smoke.emit(x, y + 16, z, Math.cos(a) * sp, 260 + Math.random() * 260, Math.sin(a) * sp,
-        i % 3 ? col : white, 6, 1 + Math.random() * 0.5, { drag: 1.4, rise: -300 });
-    }
-    const flash = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex.spark(), color: 0xfff1c2, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
-    flash.position.set(x, y + 18, z);
-    flash.scale.setScalar(0.01);
-    flash.renderOrder = 4;
-    this.scene.add(flash);
-    const mine = !!this.focus && Math.hypot(this.focus.x - x, this.focus.y - z) < 60;
-    this.effects.push({ mesh: flash, life: 0.37, max: 0.37, kind: 'flash', radius, mine });
     const D = this.debris;
     for (let n = 0; n < 6; n++) {
       const i = D.next;
@@ -699,7 +698,7 @@ export class Kart3D {
   // list: [{ x, z, idx? }]
   thunder(list) {
     this.items.thunder(list);
-    if (this.focus) this.shakeAmt = Math.max(this.shakeAmt, 8);
+    if (this.focus) this.juice.addTrauma(0.35, this.focus.x, this.focus.y, this.focus);
   }
 
   inkBurst(idx, hit) {
@@ -707,7 +706,36 @@ export class Kart3D {
   }
 
   itemUsed(idx, item) {
-    this.items.used(this.lastKarts.get(idx), item);
+    const k = this.lastKarts.get(idx);
+    this.items.used(k, item);
+    // Heavy weapons kick the kart's nose up (it springs back), and flash at the muzzle.
+    const kart = this.karts.get(idx);
+    if (!kart || !k) return;
+    const kick = RECOIL[item];
+    if (kick) {
+      kart.recoilT = 0;
+      kart.recoilAmt = kick;
+      const y = kart.group.position.y;
+      this.juice.muzzle(k.x + Math.cos(k.angle) * 34, y + 16, k.y + Math.sin(k.angle) * 34, item === 'bomb' ? 34 : 26);
+    }
+  }
+
+  // Kart `idx` was thrown by a blast or a shell (push: its knock speed): it bucks up into the air,
+  // nose high, and comes down with a bounce on its springs.
+  buck(idx, push) {
+    const kart = this.karts.get(idx);
+    if (!kart) return;
+    kart.buckT = 0;
+    kart.buckAmt = Math.min(1.3, push / 300);
+    kart.buckSide = Math.random() < 0.5 ? -1 : 1;
+  }
+
+  // A damage number floating up off kart `idx`: style deal (you hit them), big (a big hit) or hurt (you).
+  damageNumber(idx, amount, style) {
+    const k = this.lastKarts.get(idx);
+    const kart = this.karts.get(idx);
+    if (!k || !kart || !kart.group.visible) return;
+    this.juice.number(k.x, kart.group.position.y + kart.top * 0.6, k.y, `-${amount}`, style);
   }
 
   ring(x, z, color, radius, life, y) {
@@ -931,6 +959,10 @@ export class Kart3D {
       }
       if (kart.falling) { kart.falling = false; kart.chassis.rotation.set(0, 0, 0); kart.prevAir = 0; this.respawnBeam(k.x, k.y); }
       kart.group.visible = !blink;
+      if (kart.flashT > 0) {
+        kart.flashT -= dt;
+        if (kart.flashT <= 0) applyLook(kart);
+      }
       setLook(kart, !!(k.flags & 1024), !!(k.flags & 4096));
       const drifting = k.flags & 64;
       const driftDir = k.flags & 512 ? -1 : 1;
@@ -983,13 +1015,30 @@ export class Kart3D {
 
       // Getting hit in a race: the kart pops up and does a flip.
       const spinNow = !!(k.flags & 1);
-      if (spinNow && !kart.wasSpin) { kart.hop = 0.8; kart.rig.jolt(1, true); }
+      if (spinNow && !kart.wasSpin) { kart.hop = 0.8; kart.rig.jolt(1, true); flashHit(kart); }
       kart.wasSpin = spinNow;
       let hopY = 0;
+      // Bucked by a blast: up in an arc (0.45 s), nose high and rolled a little to one side.
+      let buckPitch = 0;
+      let buckRoll = 0;
+      if (kart.buckT >= 0) {
+        kart.buckT += dt;
+        const p = Math.min(1, kart.buckT / 0.45);
+        const arc = Math.sin(p * Math.PI);
+        hopY += arc * 26 * kart.buckAmt;
+        buckPitch = arc * 0.42 * kart.buckAmt;
+        buckRoll = arc * 0.28 * kart.buckAmt * kart.buckSide;
+        if (p >= 1) {
+          kart.buckT = -1;
+          kart.squash = 1;
+          if (kart.susp) kart.susp.vy -= 60 * kart.buckAmt;
+          kart.rig.jolt(kart.buckAmt);
+        }
+      }
       if (kart.hop > 0) {
         kart.hop = Math.max(0, kart.hop - dt);
         const p = 1 - kart.hop / 0.8;
-        hopY = Math.sin(p * Math.PI) * 30;
+        hopY += Math.sin(p * Math.PI) * 30;
         kart.chassis.rotation.z = p * Math.PI * 2;
       } else {
         kart.chassis.rotation.z = 0;
@@ -1048,8 +1097,16 @@ export class Kart3D {
         S.vy += (-(w * w) * S.y - 2 * z * w * S.vy - grip * aVert * 0.003) * step;
         S.y = Math.max(-5, Math.min(3.5, S.y + S.vy * step));
       }
-      kart.chassis.rotation.x = S.r;
-      kart.chassis.rotation.z += S.p; // on top of a spin-out flip (set above)
+      // Recoil: heavy weapons kick the nose up 15 degrees or so, and it springs back (elastic, 0.2 s).
+      let recoil = 0;
+      if (kart.recoilT >= 0) {
+        kart.recoilT += dt;
+        const p = Math.min(1, kart.recoilT / 0.2);
+        recoil = kart.recoilAmt * (1 - ease.outElastic(p));
+        if (p >= 1) kart.recoilT = -1;
+      }
+      kart.chassis.rotation.x = S.r + buckRoll;
+      kart.chassis.rotation.z += S.p + recoil + buckPitch; // on top of a spin-out flip (set above)
       kart.chassis.position.y = S.y + (airborne ? 0 : Math.sin(t * 18 + k.idx) * 0.35 * Math.min(1, Math.abs(k.speed) / 200));
       for (const w of kart.wheels) {
         w.spin.rotation.z -= (k.speed * dt) / w.r;
@@ -1061,7 +1118,7 @@ export class Kart3D {
       const near = this.camera.position.distanceTo(kart.group.position) < 1100;
       if (near !== kart.near) { kart.near = near; for (const m of kart.details) m.visible = near; }
       if (kart.halo) kart.halo.rotation.y = t;
-      if (k.hp < kart.lastHp) { kart.hitAt = t; kart.rig.jolt(0.8, true); }
+      if (k.hp < kart.lastHp) { kart.hitAt = t; kart.rig.jolt(0.8, true); flashHit(kart); }
       kart.lastHp = k.hp;
       const boosting = k.flags & 2;
       // The driver: blinks, ears on springs, looking into the turn, hands on the wheel.
@@ -1117,6 +1174,22 @@ export class Kart3D {
             dustCol, 9, 0.7, { alpha: 0.4, grow: 2, drag: 1 });
         }
       }
+      // A damaged kart smokes from its engine: grey wisps under half health, black smoke and
+      // flames when one more hit will finish it.
+      if (this.arena && k.hp < 50) {
+        kart.wreck -= dt;
+        if (kart.wreck <= 0) {
+          const hot = k.hp < 20;
+          kart.wreck = hot ? 0.05 : 0.1;
+          // Out of the engine's top, just behind the seat; left behind as the kart drives on.
+          const wx = k.x - cos * 20;
+          const wz = k.y - sin * 20;
+          const vx = Math.cos(k.angle) * k.speed * 0.3;
+          const vz = Math.sin(k.angle) * k.speed * 0.3;
+          if (hot) this.juice.burn(wx, y + 19, wz, vx, vz);
+          else this.smoke.emit(wx, y + 19, wz, vx + (Math.random() - 0.5) * 16, 60, vz + (Math.random() - 0.5) * 16, smokeCol, 9, 1, { alpha: 0.55, grow: 2.4, drag: 1, rise: 30 });
+        }
+      }
       if (spinning) {
         const a = t * 12;
         this.fire.emit(k.x + Math.cos(a) * 14, y + 34, k.y + Math.sin(a) * 14, 0, 0, 0, new THREE.Color(0xfff27a), 8, 0.3);
@@ -1144,6 +1217,7 @@ export class Kart3D {
     this.updateEffects(dt);
     this.updateDebris(dt);
     this.updateCamera(view.focus, dt, t);
+    this.juice.update(dt, (this.camera.projectionMatrix.elements[5] * this.viewH) / 2);
     if (this.layers) {
       const f = view.focus;
       this.layers.update(this.mapTime, dt, f && f.idx >= 0 ? { x: f.x, y: f.y, z: f.z || 0 } : null, this.camera);
@@ -1334,12 +1408,8 @@ export class Kart3D {
       this.camera.fov = focus.snap ? fov : this.camera.fov + (fov - this.camera.fov) * Math.min(1, dt * (fov > this.camera.fov ? 7 : 3));
       this.camera.updateProjectionMatrix();
       this.camera.position.copy(this.camPos);
-      if (this.shakeAmt > 0.01) {
-        this.camera.position.x += (Math.random() - 0.5) * this.shakeAmt;
-        this.camera.position.y += (Math.random() - 0.5) * this.shakeAmt;
-        this.shakeAmt *= Math.exp(-dt * 6);
-      }
       this.camera.lookAt(this.camLook);
+      this.juice.applyShake(this.camera, dt);
       // The shadow camera follows the player.
       this.sun.position.set(focus.x + 450, fy + 900, focus.y + 300);
       this.sun.target.position.set(focus.x, fy, focus.y);
@@ -1379,8 +1449,8 @@ export class Kart3D {
     this.resizeObserver.disconnect();
     for (const k of this.karts.values()) this.items.releaseKart(k);
     this.items.dispose();
+    this.juice.dispose();
     this.composer?.dispose();
-    this.envTex.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
     this.renderer.domElement.remove();

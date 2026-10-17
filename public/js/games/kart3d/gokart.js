@@ -5,7 +5,8 @@
 // their own colours, and the rims wear the driver's accent colour.
 //
 // The driver: one of CHARACTERS, a big-headed animal in a racing suit (the paint colour) with white
-// gloves on the wheel and the player's lobby hat on. Their rig brings them to life: the eyes blink
+// gloves on the wheel and the player's lobby hat on. Everything is toon-shaded with ink outlines
+// round the silhouettes (kart3d/toon.js). Their rig brings them to life: the eyes blink
 // (and squeeze shut when hit), the ears swing on springs (back under boost, out in the turns, up
 // over jumps), the head looks into the turn and the hands turn the wheel.
 //
@@ -14,6 +15,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { hatFor } from './driver.js';
+import { toon, toonOf, outlined } from './toon.js';
 
 // ---------- the cast ----------
 // ears: round (size `ear`) | pointy | long | floppy | fold | none. `rim`: their wheels' colour.
@@ -142,7 +144,9 @@ function kartGeometry() {
   const fixed = [];
   const chrome = [];
   const lights = [];
+  const edges = []; // the big shapes, for the ink outline (not every stripe and bolt)
   const mirror = (fn) => { fn(1); fn(-1); };
+  const edge = (g) => { edges.push(g); return g; };
 
   // Nose: a side profile pushed out across the kart with rounded edges, narrowing to the tip.
   const s = new THREE.Shape();
@@ -160,39 +164,39 @@ function kartGeometry() {
   const np = nose.attributes.position;
   for (let i = 0; i < np.count; i++) np.setZ(i, np.getZ(i) * (1 - 0.22 * Math.min(1, Math.max(0, (np.getX(i) - 8) / 19))));
   nose.computeVertexNormals();
-  paint.push(P(nose, { shade: 1 }));
+  paint.push(edge(P(nose, { shade: 1 })));
 
   // A chunky front bumper across the front wheels.
-  paint.push(P(rbox(4.6, 4.6, 33, 2.1), { at: [26.6, 4.4, 0], shade: 0.86 }));
+  paint.push(edge(P(rbox(4.6, 4.6, 33, 2.1), { at: [26.6, 4.4, 0], shade: 0.86 })));
 
   // Side pods with black intakes and a white stripe.
   mirror((sz) => {
-    paint.push(P(rbox(14.5, 7.6, 7, 2.7), { at: [1.4, 7.6, sz * 11.3], shade: 1 }));
+    paint.push(edge(P(rbox(14.5, 7.6, 7, 2.7), { at: [1.4, 7.6, sz * 11.3], shade: 1 })));
     fixed.push(P(rbox(1.2, 4.6, 4.6, 0.5), { at: [8.4, 8, sz * 11.3], color: COL.grille }));
     fixed.push(P(rbox(11.5, 0.7, 2.6, 0.3), { at: [1.2, 11.5, sz * 11.3], color: COL.white }));
   });
 
   // Rear wing on two struts, and the rear bumper with the tail lights.
-  paint.push(P(rbox(7.2, 1.6, 30, 0.7), { at: [-24.8, 21.4, 0], rot: [0, 0, 0.1], shade: 1 }));
-  mirror((sz) => paint.push(P(rbox(9.4, 7.6, 1.3, 0.6), { at: [-24.8, 19.4, sz * 15.3], shade: 0.68 })));
+  paint.push(edge(P(rbox(7.2, 1.6, 30, 0.7), { at: [-24.8, 21.4, 0], rot: [0, 0, 0.1], shade: 1 })));
+  mirror((sz) => paint.push(edge(P(rbox(9.4, 7.6, 1.3, 0.6), { at: [-24.8, 19.4, sz * 15.3], shade: 0.68 }))));
   mirror((sz) => fixed.push(P(rod([-21.5, 9, sz * 4.5], [-24.6, 20.6, sz * 4.5], 0.75), { color: COL.frame })));
-  paint.push(P(rbox(4.4, 4.6, 30, 2), { at: [-25.8, 5.6, 0], shade: 0.86 }));
+  paint.push(edge(P(rbox(4.4, 4.6, 30, 2), { at: [-25.8, 5.6, 0], shade: 0.86 })));
   mirror((sz) => lights.push(P(rbox(1, 1.9, 4.6, 0.45), { at: [-28, 6.2, sz * 9.2], color: COL.tail })));
 
   // Floor pan, axles, the steering column and the side bumpers.
-  fixed.push(P(rbox(48, 2.2, 19, 1), { at: [0, 2.6, 0], color: COL.frame }));
+  fixed.push(edge(P(rbox(48, 2.2, 19, 1), { at: [0, 2.6, 0], color: COL.frame })));
   fixed.push(P(rod([-14, 8, -13], [-14, 8, 13], 1.15), { color: COL.steel }));
   fixed.push(P(rod([16, 6.4, -12], [16, 6.4, 12], 0.9), { color: COL.frame }));
   fixed.push(P(rod([12.6, 6.6, 0], [6.8, 14.2, 0], 0.75), { color: COL.frame }));
-  mirror((sz) => fixed.push(P(tube([[9.2, 4.2, sz * 12.6], [7.6, 5.2, sz * 16.9], [-2, 5.2, sz * 16.9], [-5.4, 4.2, sz * 13]], 1.05, 20), { color: COL.tube })));
+  mirror((sz) => fixed.push(edge(P(tube([[9.2, 4.2, sz * 12.6], [7.6, 5.2, sz * 16.9], [-2, 5.2, sz * 16.9], [-5.4, 4.2, sz * 13]], 1.05, 20), { color: COL.tube }))));
 
   // The seat.
   fixed.push(P(rbox(10.5, 2.8, 11.6, 1.3), { at: [-5.6, 6.2, 0], color: COL.seat }));
-  fixed.push(P(rbox(3, 12.4, 12.6, 1.4), { at: [-12, 11.6, 0], rot: [0, 0, 0.22], color: COL.seat }));
+  fixed.push(edge(P(rbox(3, 12.4, 12.6, 1.4), { at: [-12, 11.6, 0], rot: [0, 0, 0.22], color: COL.seat })));
   fixed.push(P(rbox(3.2, 1.3, 12.8, 0.5), { at: [-13.2, 16.4, 0], rot: [0, 0, 0.22], color: COL.seatTrim }));
 
   // The engine behind the seat: a block with a finned cylinder, an air filter and twin exhausts.
-  fixed.push(P(rbox(9, 8, 10, 1.8), { at: [-18.4, 10, 0], color: COL.engine }));
+  fixed.push(edge(P(rbox(9, 8, 10, 1.8), { at: [-18.4, 10, 0], color: COL.engine })));
   for (let i = 0; i < 4; i++) chrome.push(P(cyl(3.7, 3.7, 0.7, 22), { at: [-18.4, 14.6 + i * 1.15, 0], color: COL.chrome }));
   chrome.push(P(cyl(2.2, 2.6, 1.4, 18), { at: [-18.4, 19.4, 0], color: COL.chrome }));
   fixed.push(P(cyl(2.5, 2.5, 3.6, 18), { at: [-18.4, 10.4, -7], rot: [Math.PI / 2, 0, 0], color: '#e5484d' }));
@@ -210,7 +214,7 @@ function kartGeometry() {
   // Headlights on the nose.
   mirror((sz) => lights.push(P(ball(1.5, 14, 10), { at: [27.6, 7.4, sz * 4.4], scale: [0.5, 1, 1.15], color: COL.head })));
 
-  kartGeo = { paint: merge(paint), fixed: merge(fixed), chrome: merge(chrome), lights: merge(lights) };
+  kartGeo = { paint: merge(paint), fixed: merge(fixed), chrome: merge(chrome), lights: merge(lights), edges: merge(edges) };
   return kartGeo;
 }
 
@@ -256,6 +260,8 @@ function headGeometry(id) {
   const penguin = !!c.beak;
   const duck = !!c.bill;
   const fur = [P(ball(R, 36, 26), { scale: HS, color: c.fur })];
+  const edges = [fur[0]]; // the head's silhouette for its ink outline: not the eyes, cheeks or whiskers
+  const edge = (g) => { edges.push(g); return g; };
   const eyes = [];
   const ears = [];
   const glossy = (g, o) => eyes.push(P(g, o));
@@ -273,7 +279,7 @@ function headGeometry(id) {
       // Frog eyes bulge up out of the head.
       // (a fur lid over the top of each)
       const bulge = surf(side * eyeAz, eyeEl, 1.2).p;
-      fur.push(P(ball(3.7, 20, 16), { at: at(bulge), color: '#ffffff' }));
+      fur.push(edge(P(ball(3.7, 20, 16), { at: at(bulge), color: '#ffffff' })));
       fur.push(P(new THREE.SphereGeometry(3.95, 20, 16, 0, Math.PI * 2, 0, 1.2), { at: at(bulge), quat: facing(n), color: c.fur }));
     }
     if (c.sclera || c.frog) glossy(ball(2.5, 18, 14), { at: at(p.clone().addScaledVector(n, -0.4)), quat: q, scale: [0.42, 1.12, 0.98], color: '#ffffff' });
@@ -294,19 +300,19 @@ function headGeometry(id) {
   // Muzzle, nose and mouth (or a beak, a bill, a snout).
   const front = (el, inset) => surf(0, el, inset);
   if (c.foxFace) {
-    fur.push(P(ball(R * 0.78, 28, 20), { at: [R * 0.42, -3.6, 0], scale: [0.62, 0.62, 1.12], color: c.muzzle }));
+    fur.push(edge(P(ball(R * 0.78, 28, 20), { at: [R * 0.42, -3.6, 0], scale: [0.62, 0.62, 1.12], color: c.muzzle })));
   }
   if (penguin) {
     fur.push(P(ball(R * 0.9, 28, 20), { at: [R * 0.5, -0.8, 0], scale: [0.55, 0.82, 0.92], color: c.face }));
     for (const side of [1, -1]) fur.push(P(ball(R * 0.5, 20, 14), { at: [R * 0.62, 2.2, side * 2.8], scale: [0.6, 0.9, 0.9], color: c.face }));
-    fur.push(P(new THREE.ConeGeometry(1.9, 4.6, 16), { at: [R * 1.08, -1.6, 0], rot: [0, 0, -Math.PI / 2], scale: [1, 1, 0.8], color: c.beak }));
+    fur.push(edge(P(new THREE.ConeGeometry(1.9, 4.6, 16), { at: [R * 1.08, -1.6, 0], rot: [0, 0, -Math.PI / 2], scale: [1, 1, 0.8], color: c.beak })));
   } else if (duck) {
-    fur.push(P(rbox(6.4, 1.7, 6.8, 0.8), { at: [R * 1.04, -2.2, 0], rot: [0, 0, -0.1], color: c.bill }));
+    fur.push(edge(P(rbox(6.4, 1.7, 6.8, 0.8), { at: [R * 1.04, -2.2, 0], rot: [0, 0, -0.1], color: c.bill })));
     fur.push(P(rbox(5.4, 1.2, 6, 0.55), { at: [R * 1.0, -3.6, 0], rot: [0, 0, 0.06], color: '#f08410' }));
   } else if (c.ears === 'fold') {
     // Pig: a round snout with two nostrils.
     const sn = front(-0.2, -0.6);
-    fur.push(P(cyl(3, 3.1, 3, 22), { at: at(sn.p), rot: [0, 0, -Math.PI / 2], color: c.snout }));
+    fur.push(edge(P(cyl(3, 3.1, 3, 22), { at: at(sn.p), rot: [0, 0, -Math.PI / 2], color: c.snout })));
     for (const side of [1, -1]) fur.push(P(ball(0.7, 10, 8), { at: [sn.p.x + 1.55, sn.p.y + 0.3, side * 1.1], scale: [0.4, 1.3, 1], color: '#c45478' }));
     fur.push(P(new THREE.TorusGeometry(1.2, 0.3, 6, 12, Math.PI), { at: [sn.p.x - 0.3, sn.p.y - 3.4, 0], rot: [0, Math.PI / 2, Math.PI], color: COL.mouth }));
   } else if (c.frog) {
@@ -320,7 +326,7 @@ function headGeometry(id) {
     if (c.muzzle) {
       const mc = surf(0, -0.3, 2.1 * big).p;
       const mr = new THREE.Vector3(2.9 * big, 3 * big, 4.3 * big);
-      fur.push(P(ball(1, 22, 16), { at: at(mc), scale: [mr.x, mr.y, mr.z], color: c.muzzle }));
+      fur.push(edge(P(ball(1, 22, 16), { at: at(mc), scale: [mr.x, mr.y, mr.z], color: c.muzzle })));
       // A point on the muzzle `out` units off its surface, el up and az round from its front.
       on = (el, az = 0, out = 0) => {
         const d = new THREE.Vector3(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az));
@@ -360,7 +366,7 @@ function headGeometry(id) {
   if (c.mane) {
     for (let i = 0; i < 16; i++) {
       const a = (i / 16) * Math.PI * 2;
-      fur.push(P(ball(3.8, 14, 10), { at: [-0.5, Math.sin(a) * R * 0.98 - 0.4, Math.cos(a) * R * 1.02], color: c.mane }));
+      fur.push(edge(P(ball(3.8, 14, 10), { at: [-0.5, Math.sin(a) * R * 0.98 - 0.4, Math.cos(a) * R * 1.02], color: c.mane })));
     }
     fur.push(P(ball(R * 0.98, 28, 20), { at: [-2.2, 0, 0], color: c.mane }));
   }
@@ -369,7 +375,7 @@ function headGeometry(id) {
     for (let i = 0; i < 5; i++) {
       const th = 1.25 + i * 0.42;
       const n = new THREE.Vector3(Math.cos(th), Math.sin(th), 0);
-      fur.push(P(new THREE.ConeGeometry(1.9 - i * 0.12, 3.4 - i * 0.2, 12), { at: [Math.cos(th) * R * 0.98, Math.sin(th) * R * 0.92, 0], quat: new THREE.Quaternion().setFromUnitVectors(UP, n), scale: [1, 1, 0.55], color: c.spikes }));
+      fur.push(edge(P(new THREE.ConeGeometry(1.9 - i * 0.12, 3.4 - i * 0.2, 12), { at: [Math.cos(th) * R * 0.98, Math.sin(th) * R * 0.92, 0], quat: new THREE.Quaternion().setFromUnitVectors(UP, n), scale: [1, 1, 0.55], color: c.spikes })));
     }
   }
   // Duck: a tuft on top.
@@ -404,7 +410,7 @@ function headGeometry(id) {
       ear(side, merge(g), surf(side * 0.95, 0.98, 0.8).p, [side * 0.5, 0, -0.7]);
     }
   }
-  const out = { fur: merge(fur), eyes: merge(eyes.map((g) => g.translate(0, -eyeY, 0))), eyeY, ears };
+  const out = { fur: merge(fur), edges: merge(edges), eyes: merge(eyes.map((g) => g.translate(0, -eyeY, 0))), eyeY, ears };
   headCache.set(id, out);
   return out;
 }
@@ -425,41 +431,23 @@ function bodyGeometry() {
 }
 
 // ---------- materials ----------
-// Shared (except the paint, one per kart); all take the environment map that setEnvironment gives.
+// Toon-shaded and shared, except the paint (one per kart).
 let MATS = null;
-const envMats = new Set();
-let ENV = null;
-let envK = 1; // dimmer reflections at night
-function env(m, k) {
-  m.envMap = ENV;
-  m.userData.env = k;
-  m.envMapIntensity = k * envK;
-  envMats.add(m);
-  return m;
-}
 function mats() {
   if (MATS) return MATS;
   MATS = {
-    fixed: env(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.08 }), 0.55),
-    chrome: env(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.2, metalness: 1 }), 1.1),
-    wheel: env(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.58, metalness: 0.1 }), 0.5),
-    fur: env(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.72, metalness: 0 }), 0.4),
-    eyes: env(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.1, metalness: 0 }), 1.3),
+    fixed: toon({ vertexColors: true }),
+    chrome: toon({ vertexColors: true }),
+    wheel: toon({ vertexColors: true }),
+    fur: toon({ vertexColors: true }),
+    eyes: toon({ vertexColors: true }),
     lights: new THREE.MeshBasicMaterial({ vertexColors: true }),
   };
   return MATS;
 }
-// An environment map (a PMREM texture for this renderer) for the karts' reflections.
-export function setEnvironment(texture, night) {
-  ENV = texture;
-  envK = night ? 0.35 : 1;
-  mats();
-  for (const m of envMats) {
-    m.envMap = texture;
-    m.envMapIntensity = m.userData.env * envK;
-    m.needsUpdate = true;
-  }
-  MATS.lights.color.setScalar(night ? 2.4 : 1);
+// Head and tail lights burn brighter at night (and bloom).
+export function setNight(night) {
+  mats().lights.color.setScalar(night ? 2.4 : 1);
 }
 // The materials every kart shares (and a paint), for compiling them and their star versions up front.
 export function kartMaterials() {
@@ -468,7 +456,7 @@ export function kartMaterials() {
   return [m.fixed, m.chrome, m.wheel, m.fur, m.eyes, m.lights, m.samplePaint];
 }
 function paintMaterial(color) {
-  return env(new THREE.MeshStandardMaterial({ color: new THREE.Color(color), vertexColors: true, roughness: 0.34, metalness: 0.22 }), 0.45);
+  return toon({ color: new THREE.Color(color), vertexColors: true });
 }
 
 // ---------- one kart ----------
@@ -488,7 +476,9 @@ export function buildGoKart(meta, paint) {
     out.push({ mesh: m, shadow, detail });
     return m;
   };
-  mesh(K.paint, paintMat, true);
+  const outlines = [];
+  const ink = (m, geo) => { outlines.push(outlined(m, geo)); return m; };
+  ink(mesh(K.paint, paintMat, true), K.edges);
   mesh(K.fixed, M.fixed, true);
   mesh(K.chrome, M.chrome, false, true);
   mesh(K.lights, M.lights, false, true);
@@ -516,15 +506,15 @@ export function buildGoKart(meta, paint) {
   const body = bodyGeometry();
   const driver = new THREE.Group();
   driver.position.copy(HIP);
-  const torso = mesh(body.torso, paintMat, true);
+  const torso = ink(mesh(body.torso, paintMat, true));
   const collar = mesh(body.collar, M.fixed);
   driver.add(torso, collar);
-  const arms = SHOULDERS.map(() => mesh(body.arm, paintMat));
+  const arms = SHOULDERS.map(() => ink(mesh(body.arm, paintMat)));
   const H = headGeometry(id);
   const head = new THREE.Group();
   head.position.set(HEAD[0] - HIP.x, HEAD[1] - HIP.y, 0);
   driver.add(head);
-  head.add(mesh(H.fur, M.fur, true));
+  head.add(ink(mesh(H.fur, M.fur, true), H.edges));
   const eyes = mesh(H.eyes, M.eyes, false, true);
   eyes.position.y = H.eyeY;
   head.add(eyes);
@@ -532,7 +522,7 @@ export function buildGoKart(meta, paint) {
     const root = new THREE.Group();
     root.position.copy(e.at);
     root.rotation.set(e.rot[0], e.rot[1], e.rot[2]);
-    const m = mesh(e.geo, M.fur, true);
+    const m = ink(mesh(e.geo, M.fur, true));
     root.add(m);
     head.add(root);
     return { mesh: m, side: e.side };
@@ -545,7 +535,7 @@ export function buildGoKart(meta, paint) {
     crown.position.set(0.4, R * HS[1] - 0.6, 0);
     crown.scale.setScalar(1.06);
     crown.rotation.z = -0.08;
-    const m = mesh(hat.mesh.geometry, hat.mesh.material, true);
+    const m = ink(mesh(hat.mesh.geometry, toonOf(hat.mesh.material), true));
     m.position.copy(hat.mesh.position);
     crown.add(m);
     head.add(crown);
@@ -558,13 +548,14 @@ export function buildGoKart(meta, paint) {
   const top = new THREE.Box3().setFromObject(head).max.y;
   return {
     top,
+    outlines,
     chassis: out.filter((o) => !o.mesh.parent).map((o) => o.mesh),
     parts: out,
     driver,
     wheels,
     rig,
     halo,
-    dispose: () => { envMats.delete(paintMat); paintMat.dispose(); },
+    dispose: () => paintMat.dispose(),
   };
 }
 

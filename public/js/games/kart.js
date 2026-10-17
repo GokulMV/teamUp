@@ -104,6 +104,7 @@ window.Games.kart = {
     const spec = { idx: -1, next: -1, since: 0 }; // spectator cam: who it follows, who's taking over
     let finishTime = null;
     let bulletHits = 0;
+    const bulletDmg = new Map(); // target idx -> minigun damage not shown yet
     const deathMarks = []; // arena minimap: where karts were just smashed
 
     // ---------- 3D renderer (ES module, may finish loading after mount) ----------
@@ -920,6 +921,15 @@ window.Games.kart = {
           }
         } else if (event === 'game:kart:hit') {
           const kind = data.kill ? 'kill' : data.kind === 'bullet' ? 'bullet' : 'hit';
+          // A blast or shell threw the kart: mine moves at once, not a round trip later; and the
+          // kart bucks up into the air (drawn only).
+          if (data.kx !== undefined) {
+            if (data.target === myIdx && local && !local.dead && !local.falling) {
+              local.kx = (local.kx || 0) + data.kx;
+              local.ky = (local.ky || 0) + data.ky;
+            }
+            view3d?.buck?.(data.target, Math.hypot(data.kx, data.ky));
+          }
           const victim = kartsByIdx.get(data.target);
           if (data.kind === 'water' || data.kind === 'acid') {
             // Into the moat, or an open grave full of acid: a splash (green and fizzing for acid).
@@ -936,6 +946,17 @@ window.Games.kart = {
           }
           if (data.target === myIdx && data.kind === 'snowball') hud.callout('FROZEN!', { kind: 'small', hold: 900, sub: 'Hit again and the ice shatters' });
           if (data.kill || (map?.type === 'race' && data.kind !== 'bullet' && data.by >= 0)) hud.smash(data);
+          // Damage numbers float off your victims (your own health bar shows what you take);
+          // minigun bullets add up into one number per 18 or so.
+          if (data.dmg > 0 && data.by === myIdx && data.target !== myIdx) {
+            let amount = data.dmg;
+            if (data.kind === 'bullet' && !data.kill) {
+              const sum = (bulletDmg.get(data.target) || 0) + amount;
+              amount = sum >= 18 ? sum : 0;
+              bulletDmg.set(data.target, amount ? 0 : sum);
+            }
+            if (amount) view3d?.damageNumber?.(data.target, amount, amount >= 50 || data.kill ? 'big' : 'deal');
+          }
           if (data.kill) deathMarks.push({ x: data.x, y: data.y, color: colorOf(victim), t: performance.now() });
           if (data.target === myIdx) {
             if (data.kill) death = { at: performance.now(), by: data.by, kind: data.kind, watching: -1 };

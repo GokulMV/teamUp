@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { MOBILE, part, canvasTexture, tex } from './world.js';
+import { outlined } from './toon.js';
 
 const K = window.KartCore;
 const TAU = Math.PI * 2;
@@ -799,6 +800,7 @@ export class ItemFX {
       const mesh = new THREE.Mesh(m.box, mat);
       mesh.castShadow = true;
       mesh.renderOrder = 4;
+      const ink = outlined(mesh); // the cartoon ink outline, like the karts'
       const q = new THREE.Sprite(m.questionMat);
       q.scale.set(17, 17, 1);
       q.renderOrder = 3;
@@ -807,7 +809,7 @@ export class ItemFX {
       const gy = this.ground(b.x, b.y, this.layered ? b.z : undefined);
       g.position.set(b.x, gy + 22, b.y);
       this.scene.add(g);
-      return { g, mesh, mat, x: b.x, z: b.y, gy, phase: i * 0.7, state: 'on', t: 0 };
+      return { g, mesh, mat, ink, x: b.x, z: b.y, gy, phase: i * 0.7, state: 'on', t: 0 };
     });
   }
 
@@ -817,6 +819,7 @@ export class ItemFX {
     const mat = boxMaterial(this.scene.fog);
     const mesh = new THREE.Mesh(m.box, mat);
     mesh.renderOrder = 4;
+    outlined(mesh);
     const q = new THREE.Sprite(m.decoyQ);
     q.scale.set(17, 17, 1);
     q.renderOrder = 3;
@@ -930,11 +933,13 @@ export class ItemFX {
           float r = length(p); float a = atan(p.y, p.x);
           float jag = 0.035 * sin(a * 23.0 + uTime * 47.0) + 0.025 * sin(a * 61.0 - uTime * 31.0) + 0.015 * sin(a * 7.0 + uTime * 13.0);
           float d = abs(r - uP + jag);
+          // A crisp ring with a thin glow: no wash over the inside, so a shock next to the camera
+          // never whites out the screen.
           float core = smoothstep(0.03, 0.0, d);
-          float halo = smoothstep(0.14, 0.0, d) * 0.4;
-          float inner = smoothstep(uP, 0.0, r) * 0.18 * (1.0 - uP);
+          float halo = smoothstep(0.08, 0.0, d) * 0.25;
+          float inner = smoothstep(uP, 0.0, r) * 0.04 * (1.0 - uP);
           float fade = 1.0 - uP * uP;
-          vec3 col = mix(uColor, vec3(1.0), core) * 2.0;
+          vec3 col = mix(uColor, vec3(1.0), core) * 1.5;
           gl_FragColor = vec4(col, (core + halo + inner) * fade);
         }`,
       transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
@@ -1473,6 +1478,7 @@ export class ItemFX {
         b.mat.uniforms.uFlash.value = 0;
       }
       b.g.visible = b.state !== 'off';
+      b.ink.visible = b.state !== 'pop'; // a box bursting into shards has no outline
       if (!b.g.visible) return;
       b.g.scale.setScalar(Math.max(0.01, s));
       b.mesh.rotation.set(t * 0.9 + b.phase, t * 1.3 + b.phase, 0);

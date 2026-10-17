@@ -41,6 +41,9 @@ const STAR_RAM_GAP = 0.8; // seconds before the same star kart can ram the same 
 // faster than ramSpeed is a ram: the victim gets shoved harder (and in the arena takes a little damage).
 const BUMP = { restitution: 0.35, boostMass: 1.5, shrunkMass: 0.55, ramSpeed: 260, ramShove: 1.35, ramGap: 0.5, eventSpeed: 90 };
 const SHOCK_RADIUS = 360;
+// Arena knockback (units/s, dying away like a bump's shove): a shell's direct hit, and a blast at
+// point blank (scaled by its size).
+const KNOCK = { shell: 300, blast: 360 };
 // Everyone drives a kart with one of the animal drivers (kart-core CHARACTERS, modelled by
 // kart3d/gokart.js): the one they picked, or else the one that goes with their lobby avatar.
 function characterFor(player) {
@@ -566,8 +569,10 @@ class KartBattle {
   }
 
   // ---------- damage ----------
-  // Returns true when the hit landed (not dodged, blocked or friendly).
-  damage(target, amount, attacker, kind) {
+  // Returns true when the hit landed (not dodged, blocked or friendly). knock: [x, y] velocity a
+  // blast or a shell gives the kart it hits in the arena (it's sent with the hit, so the victim's
+  // own prediction is thrown too).
+  damage(target, amount, attacker, kind, knock = null) {
     // Nothing more can happen once the round is over (e.g. a kill limit hit mid-blast).
     if (this.phase !== 'racing') return false;
     const env = ENV_KILLS.has(kind);
@@ -615,11 +620,21 @@ class KartBattle {
       return true;
     }
 
-    target.hp -= shatter ? Math.round(amount * SNOW.shatterMul) : amount;
+    // The damage dealt rides on the hit event (floating damage numbers); a finishing blow counts
+    // only what it took.
+    const dealt = shatter ? Math.round(amount * SNOW.shatterMul) : amount;
+    event.dmg = Math.max(0, Math.min(dealt, Math.ceil(target.hp)));
+    target.hp -= dealt;
     if (!env || !target.lastAttacker) target.lastHit = this.time;
     if (by) { target.lastAttacker = by.id; target.lastHit = this.time; }
     if (kind === 'banana') { target.spin = 0.8; target.invuln = 0.3; }
     if (target.hp > 0) {
+      if (knock) {
+        target.kx = (target.kx || 0) + knock[0];
+        target.ky = (target.ky || 0) + knock[1];
+        event.kx = Math.round(knock[0]);
+        event.ky = Math.round(knock[1]);
+      }
       if (!env) this.room.emit('game:kart:hit', event);
       return true;
     }
@@ -664,7 +679,10 @@ class KartBattle {
       const d = Math.hypot(k.x - x, k.y - y, dz);
       if (d > radius) continue;
       if (attacker && k.id === attacker.id) continue; // your own blasts never hurt you
-      this.damage(k, Math.round(maxDmg * (1 - 0.5 * (d / radius))), attacker, kind);
+      // Thrown away from the middle, harder the closer it went off.
+      const flat = Math.hypot(k.x - x, k.y - y) || 1;
+      const push = KNOCK.blast * (radius / 95) * (1 - 0.6 * (d / radius));
+      this.damage(k, Math.round(maxDmg * (1 - 0.5 * (d / radius))), attacker, kind, [((k.x - x) / flat) * push, ((k.y - y) / flat) * push]);
     }
     this.boom(x, y, radius, kind, z);
   }
@@ -1114,7 +1132,8 @@ class KartBattle {
             s.used = true;
             break;
           }
-          this.damage(k, s.dmg, owner, s.kind === 'bullet' ? 'bullet' : s.kind);
+          const knock = shell ? [Math.cos(s.angle) * KNOCK.shell, Math.sin(s.angle) * KNOCK.shell] : null;
+          this.damage(k, s.dmg, owner, s.kind === 'bullet' ? 'bullet' : s.kind, knock);
           if (shell) this.boom(s.x, s.y, 40, s.kind, s.z);
           break;
         }
