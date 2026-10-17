@@ -13,6 +13,7 @@ import { MOBILE, THEMES, tex, part, buildArena, loadMoonlit } from './kart3d/wor
 import { buildRace } from './kart3d/track.js';
 import { ItemFX, shieldMaterial, shieldGeometry, ghostMaterial, starVariant } from './kart3d/items3d.js';
 import { buildDriver } from './kart3d/driver.js';
+import { loadModel, fitted, partsOf } from './kart3d/models.js';
 
 const K = window.KartCore;
 
@@ -331,12 +332,48 @@ function buildKart(meta, teamColor, isMe, night) {
     label.sprite.visible = false;
     group.add(label.sprite);
   }
-  return {
+  const kart = {
     group, chassis, wheels, flames, shield, label, meshes, details, near: true, ghosted: false, starred: false, halo: driver.halo, hitAt: -99, lastHp: 100,
     steer: 0, lastAngle: null, smoke: 0, slide: 0, hop: 0, wasSpin: false, wasDead: false,
     hint: null, pitch: 0, roll: 0, lastY: null, vy: 0, prevAir: 0, squash: 0, trickT: -1, trickDir: 1, wasTrick: false, falling: false, fallT: 0,
-    color: meta.color, fade: 1, look: 'solid', tagAlpha: 0, tagLift: 0, tagOn: false,
+    color: meta.color, fade: 1, look: 'solid', tagAlpha: 0, tagLift: 0, tagOn: false, pickupWheels: null,
   };
+  const pickup = /^pickup-(red|green|yellow|purple)$/.exec(meta.body || '');
+  if (pickup) attachPickup(kart, pickup[1]);
+  return kart;
+}
+
+// A little pickup (Kenney's CC0 racing kit) in place of the kart: once the model has loaded, the
+// kart's own body, wheels and driver make way. The truck's body rides the suspension like a kart
+// body does; its wheels stay on the ground, spin and steer.
+const PICKUP_WHEELS = ['wheel-front-left', 'wheel-front-right', 'wheel-back-left', 'wheel-back-right'];
+function attachPickup(kart, color) {
+  loadModel(`/models/kenney-racing/vehicle-truck-${color}.glb`).then((scene) => {
+    if (kart.disposed) return;
+    const truck = fitted(scene, { length: 56 });
+    kart.group.add(truck);
+    truck.updateMatrixWorld(true);
+    const parts = partsOf(truck, ['body', 'underside', ...PICKUP_WHEELS]);
+    for (const m of kart.meshes) m.parent?.remove(m);
+    for (const w of kart.wheels) w.pivot.parent?.remove(w.pivot);
+    kart.meshes.length = 0;
+    kart.details.length = 0;
+    kart.wheels = [];
+    kart.halo = null;
+    for (const name of ['body', 'underside']) if (parts[name]) kart.chassis.attach(parts[name]);
+    kart.pickupWheels = PICKUP_WHEELS.filter((n) => parts[n]).map((n) => {
+      parts[n].rotation.order = 'YXZ'; // steer about the up axis, then roll about the axle
+      return { node: parts[n], front: n.includes('front'), r: 9.5 };
+    });
+    truck.traverse((m) => {
+      if (!m.isMesh) return;
+      m.userData.mat = m.material;
+      m.userData.shadow = true;
+      kart.meshes.push(m);
+    });
+    kart.look = null; // re-apply ghost / star looks to the new meshes
+    applyLook(kart);
+  }).catch(() => {}); // it stays a kart
 }
 
 // A kart is drawn solid, as a ghost (ghost item), in rainbow versions of its own materials (star
@@ -543,7 +580,7 @@ export class Kart3D {
   }
 
   setKarts(list, myIdx, teamColorOf) {
-    for (const k of this.karts.values()) { this.items.releaseKart(k); this.scene.remove(k.group); k.label?.dispose(); k.fadeMat?.dispose(); }
+    for (const k of this.karts.values()) { k.disposed = true; this.items.releaseKart(k); this.scene.remove(k.group); k.label?.dispose(); k.fadeMat?.dispose(); }
     this.karts.clear();
     for (const meta of list) {
       const kart = buildKart(meta, teamColorOf(meta), meta.idx === myIdx, this.theme.night);
@@ -989,6 +1026,7 @@ export class Kart3D {
       // Touchdown: squash and a puff of dust (sparkles when a trick pays out).
       if (!airborne && kart.prevAir > 10) {
         kart.squash = 1;
+        if (kart.susp) kart.susp.vy -= Math.min(150, 25 + kart.prevAir * 1.4); // the body slams down on its springs
         this.landFx(k.x, k.y, ground, Math.min(1, kart.prevAir / 80), kart.tricked);
         kart.tricked = false;
       }
@@ -1040,8 +1078,36 @@ export class Kart3D {
       const spinning = k.flags & 1;
       const targetSteer = spinning ? 0 : Math.max(-1, Math.min(1, turnRate / 2.5));
       kart.steer += (targetSteer - kart.steer) * Math.min(1, dt * 10);
-      kart.chassis.rotation.x = -kart.steer * 0.12 * Math.min(1, Math.abs(k.speed) / 300);
-      kart.chassis.position.y = airborne ? 0 : Math.sin(t * 18 + k.idx) * 0.35 * Math.min(1, Math.abs(k.speed) / 200);
+      // Suspension: the body squats under throttle and dives under braking, leans out of turns and
+      // bounces on landings and bumps, on springs (so it overshoots a little); the wheels stay put.
+      const S = kart.susp || (kart.susp = { y: 0, vy: 0, p: 0, vp: 0, r: 0, vr: 0, speed: k.speed, gvy: 0 });
+      if (dt > 0) {
+        const step = Math.min(dt, 1 / 30);
+        const aLong = Math.max(-3000, Math.min(3000, (k.speed - S.speed) / dt));
+        S.speed = k.speed;
+        const aVert = Math.max(-9000, Math.min(9000, (kart.vy - S.gvy) / dt)); // the ground lifting or dropping under the wheels
+        S.gvy = kart.vy;
+        const grip = airborne || spinning ? 0 : 1;
+        const tP = grip * Math.max(-0.1, Math.min(0.09, aLong * 0.00011));
+        const tR = grip * -kart.steer * 0.13 * Math.min(1, Math.abs(k.speed) / 300);
+        const w = 14;
+        const z = 0.3;
+        S.vp += (-(w * w) * (S.p - tP) - 2 * z * w * S.vp) * step;
+        S.p += S.vp * step;
+        S.vr += (-(w * w) * (S.r - tR) - 2 * z * w * S.vr) * step;
+        S.r += S.vr * step;
+        S.vy += (-(w * w) * S.y - 2 * z * w * S.vy - grip * aVert * 0.003) * step;
+        S.y = Math.max(-5, Math.min(3.5, S.y + S.vy * step));
+      }
+      kart.chassis.rotation.x = S.r;
+      kart.chassis.rotation.z += S.p; // on top of a spin-out flip (set above)
+      kart.chassis.position.y = S.y + (airborne ? 0 : Math.sin(t * 18 + k.idx) * 0.35 * Math.min(1, Math.abs(k.speed) / 200));
+      if (kart.pickupWheels) {
+        for (const w of kart.pickupWheels) {
+          w.node.rotation.x += (k.speed * dt) / w.r;
+          if (w.front) w.node.rotation.y = kart.steer * 0.45;
+        }
+      }
       for (const w of kart.wheels) {
         w.spin.rotation.z -= (k.speed * dt) / w.r;
         if (w.front) w.pivot.rotation.y = -kart.steer * 0.45;

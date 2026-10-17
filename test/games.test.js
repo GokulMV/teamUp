@@ -1920,7 +1920,11 @@ test('spin spikes: rivals that touch them spin out (race) or get hurt and flung 
   ar.place(1, 1040, 400);
   step(ar.game, 1);
   assert.strictEqual(y.hp, 75, 'once per touch');
-  x.spikes = 0;
+  // The spikes snap off after their third victim.
+  Object.assign(x, { spikes: 3, spikeHits: 2 });
+  Object.assign(y, { spikedBy: null, hp: 100, invuln: 0 });
+  ar.game.spikeHit(x, y);
+  assert.strictEqual(x.spikes, 0, 'spikes gone after three hits');
   ar.room.destroy();
 });
 

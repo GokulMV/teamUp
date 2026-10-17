@@ -34,13 +34,26 @@ const SNOW = { speed: 920, life: 1.3, shatterSpin: 1.4, shatterMul: 1.5 };
 // one) and goes off on whoever carries it when the fuse runs out. Bump someone to pass it on.
 const STICKY = { speed: 620, flight: 0.55, ground: 10, radius: 95, passGap: 0.5, ownerGrace: 0.8 };
 // Spin spikes: a spiked ring round your kart for a few seconds; touching it spins rivals out.
-const SPIKES = { reach: 14, gap: 0.8 };
+const SPIKES = { reach: 12, gap: 0.8, hits: 3 }; // the spikes snap off after `hits` karts
 const DECOY = { life: 25, trigger: 34 };
 const STAR_RAM_GAP = 0.8; // seconds before the same star kart can ram the same victim again
 // Kart-kart bumps trade momentum. Boosting karts are heavier, shrunk ones lighter. A hit closing
 // faster than ramSpeed is a ram: the victim gets shoved harder (and in the arena takes a little damage).
 const BUMP = { restitution: 0.35, boostMass: 1.5, shrunkMass: 0.55, ramSpeed: 260, ramShove: 1.35, ramGap: 0.5, eventSpeed: 90 };
 const SHOCK_RADIUS = 360;
+const PICKUPS = { red: 0, yellow: 50, green: 125, purple: 275 }; // paint job -> hue
+function pickupFor(color) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(color || '');
+  if (!m) return 'red';
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const d = max - Math.min(r, g, b);
+  if (!d) return 'purple';
+  let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h = (h * 60 + 360) % 360;
+  const gap = (a) => Math.min(Math.abs(a - h), 360 - Math.abs(a - h));
+  return Object.keys(PICKUPS).sort((a, b) => gap(PICKUPS[a]) - gap(PICKUPS[b]))[0];
+}
 const GUN_TIME = 2;
 const BANANA_LIFE = 40;
 const { roulette: ROULETTE_TIME, starTime: STAR_TIME, shrinkTime: SHRINK_TIME, inkTime: INK_TIME } = K.ITEM_FX;
@@ -70,7 +83,7 @@ const ARENA_ODDS = {
 };
 const RACE_ODDS_FRONT = {
   banana: 24, mine: 14, shield: 14, rocket: 10, minigun: 8, boost: 8, bomb: 5, ghost: 0, triple: 0, shock: 0,
-  bouncer: 16, comet: 0, star: 0, ink: 4, thunder: 0, snowball: 7, sticky: 5, spikes: 4, decoy: 12,
+  bouncer: 16, comet: 0, star: 0, ink: 4, thunder: 0, snowball: 7, sticky: 5, spikes: 2, decoy: 12,
 };
 const RACE_ODDS_BACK = {
   boost: 22, rocket: 12, triple: 13, shock: 10, ghost: 8, minigun: 6, bomb: 6, shield: 3, banana: 1, mine: 0,
@@ -194,6 +207,9 @@ class KartBattle {
       id: player.id,
       name: player.name, color: player.color, avatar: player.avatar || 0, team: player.team || 0,
       bot, skill: bot ? player.skill : null,
+      // CPU drivers sometimes ride a little pickup instead of a kart (Kenney's CC0 models; cosmetic),
+      // in whichever of its four paint jobs is closest to their colour.
+      body: bot && Math.random() < 0.35 ? `pickup-${pickupFor(player.color)}` : 'kart',
       speedMul: this.speedMul * (bot ? Bots.SKILLS[player.skill].speed : 1),
       x: g.x, y: g.y, angle: g.angle, speed: 0,
       trackIndex: g.index,
@@ -234,6 +250,7 @@ class KartBattle {
         const src = (!k.bot && this.room.players.get(id)) || k;
         const meta = { idx, id, name: src.name || '?', color: src.color || '#888', avatar: src.avatar || 0, team: src.team || 0 };
         if (k.bot) meta.bot = true;
+        if (k.body !== 'kart') meta.body = k.body;
         return meta;
       }),
     };
@@ -400,7 +417,7 @@ class KartBattle {
       case 'shock': this.shock(kart); break;
       case 'snowball': this.fire('snowball', kart); break;
       case 'sticky': this.fire('sticky', kart); break;
-      case 'spikes': kart.spikes = K.ITEM_FX.spikesTime; break;
+      case 'spikes': kart.spikes = K.ITEM_FX.spikesTime; kart.spikeHits = 0; break;
       case 'decoy': {
         const [x, y] = [kart.x - cos * 38, kart.y - sin * 38];
         if (this.solidGround(x, y, kart)) this.decoys.push({ id: this.nextId++, x, y, owner: kart.id, life: DECOY.life });
@@ -869,6 +886,7 @@ class KartBattle {
     victim.spikedBy = spiky.id;
     victim.spikedAt = this.time;
     if (!this.damage(victim, DAMAGE.spikes, spiky, 'spikes')) return;
+    if (++spiky.spikeHits >= SPIKES.hits) spiky.spikes = 0;
     // Flung off the spikes.
     const d = Math.hypot(victim.x - spiky.x, victim.y - spiky.y) || 1;
     victim.kx = (victim.kx || 0) + ((victim.x - spiky.x) / d) * 260;
