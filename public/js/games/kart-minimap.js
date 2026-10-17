@@ -1,7 +1,9 @@
-// Kart Battle minimap: a north-up course map that floats over the 3D view (no panel, no frame).
-// Race tracks are a white road with an ink outline and the world's curb colour; arenas are a
-// floor plan in their own palette. Rivals are badges in their kart colour that point where they
-// are heading; you are the chevron inside the site's accent-gradient ring.
+// Kart Battle minimap: a north-up radar in a bold frame (a white rim, a dark bezel, a soft
+// shadow): round for race tracks and sculpted bowls, a rounded square for square arenas. Race
+// tracks are a white road with an ink outline and the world's curb colour; arenas are a clean
+// floor plan in their own palette (a sculpted bowl as smooth shapes: grass, cliffs, the lava lake,
+// the viaduct; no scenery clutter). Rivals are pins in their kart colour pointing where they
+// head; you are the white puck with your arrow in it, a ring pulsing round it.
 //   const mm = KartMinimap.create(canvas, map, { theme, cssSize, dpr, curb, night });
 //   mm.draw({ karts: [{ x, y, angle, color, me, dead, place }], boxes, deaths: [{ x, y, color, age }], comets: [{ x, y }], time });
 // The static art is drawn once into an offscreen layer; draw() is one blit plus the markers.
@@ -98,14 +100,24 @@
         minX = Math.min(minX, x - h); maxX = Math.max(maxX, x + h);
         minY = Math.min(minY, y - h); maxY = Math.max(maxY, y + h);
       }
+    } else if (map.layered && map.terrain && map.terrain.style === 'lowpoly' && map.terrain.bowl) {
+      // A sculpted bowl: the playable bowl and a band of cliff, round.
+      const b = map.terrain.bowl;
+      const r = b.r + 170;
+      minX = b.x - r; minY = b.y - r; maxX = b.x + r; maxY = b.y + r;
     } else if (map.layered) {
       minX = 0; minY = 0; maxX = map.size; maxY = map.size;
     } else {
       minX = 40; minY = 40; maxX = map.size - 40; maxY = map.size - 40;
     }
-    // Arenas are a square floor plan: kept a little smaller so they never dominate the corner.
-    const margin = race ? 9 * k : css * 0.075;
-    const s = (css - margin * 2) / Math.max(maxX - minX, maxY - minY, 1);
+    // The frame: round for races and sculpted bowls, a rounded square for square arenas.
+    const sculpted = !race && !!(map.layered && map.terrain && map.terrain.style === 'lowpoly' && map.terrain.bowl);
+    const round = race || sculpted;
+    const rim = 3.2 * k; // white rim + bezel
+    // A round frame fits a race's bounding box's corners too: the road can reach them.
+    const margin = round ? rim + 2 * k + (race ? css * 0.05 : 0) : css * 0.075;
+    const fitSpan = race ? Math.hypot(maxX - minX, maxY - minY) * 0.82 : Math.max(maxX - minX, maxY - minY);
+    const s = (css - margin * 2) / Math.max(fitSpan, 1);
     const ox = (css - (maxX - minX) * s) / 2 - minX * s;
     const oy = (css - (maxY - minY) * s) / 2 - minY * s;
     const X = (x) => ox + x * s;
@@ -120,9 +132,118 @@
     g.lineJoin = 'round';
     g.lineCap = 'round';
     let roadW = 0;
+    const R0 = css / 2 - rim / 2 - 1.5 * k; // the round frame's radius
+    if (round) {
+      // The disc behind it all (a dark glassy navy for a race, the cliffs' earth for a bowl).
+      g.save();
+      g.shadowColor = 'rgba(0,0,0,0.55)'; g.shadowBlur = 10 * dpr * k; g.shadowOffsetY = 3 * dpr * k;
+      g.fillStyle = race ? 'rgba(16,14,40,0.9)' : '#7a5636';
+      g.beginPath(); g.arc(css / 2, css / 2, R0, 0, TAU); g.fill();
+      g.restore();
+      g.save();
+      g.beginPath(); g.arc(css / 2, css / 2, R0 - rim / 2, 0, TAU); g.clip();
+    }
     if (race) roadW = drawRace(g);
+    else if (sculpted) drawSculpted(g);
     else if (map.layered) drawLayered(g);
     else drawArena(g);
+    if (round) {
+      g.restore();
+      frameRound(g);
+    }
+
+    // The frame: a white rim with a thin dark bezel inside it.
+    function frameRound(c) {
+      c.save();
+      c.strokeStyle = 'rgba(12,10,30,0.55)'; c.lineWidth = 1.3 * k;
+      c.beginPath(); c.arc(css / 2, css / 2, R0 - rim / 2 - 0.6 * k, 0, TAU); c.stroke();
+      c.strokeStyle = '#f7f5ff'; c.lineWidth = rim;
+      c.beginPath(); c.arc(css / 2, css / 2, R0, 0, TAU); c.stroke();
+      c.restore();
+    }
+    function frameSquare(c, fx, fy, fw, rad) {
+      c.save();
+      c.strokeStyle = 'rgba(12,10,30,0.55)'; c.lineWidth = 1.3 * k;
+      roundRectPath(c, fx + rim / 2 + 0.6 * k, fy + rim / 2 + 0.6 * k, fw - rim - 1.2 * k, fw - rim - 1.2 * k, Math.max(1, rad - rim / 2)); c.stroke();
+      c.strokeStyle = '#f7f5ff'; c.lineWidth = rim;
+      roundRectPath(c, fx, fy, fw, fw, rad); c.stroke();
+      c.restore();
+    }
+
+    // A sculpted bowl, as smooth shapes: grass inside the bowl, its plateaus, the lava lake in its
+    // rocky crater, the viaduct with its white kerbs and the jump pads.
+    function drawSculpted(c) {
+      const t = map.terrain;
+      const b = t.bowl;
+      const bx = X(b.x); const by = Y(b.y);
+      // Cliffs: rings of earth darkening outwards.
+      const cliff = c.createRadialGradient(bx, by, (b.r + 40) * s, bx, by, (b.r + 200) * s);
+      cliff.addColorStop(0, '#9b7048'); cliff.addColorStop(1, '#5e4128');
+      c.fillStyle = cliff; c.fillRect(0, 0, css, css);
+      // The bowl's grass, with a darker edge where it starts to climb.
+      const grass = c.createRadialGradient(bx, by, b.r * 0.2 * s, bx, by, (b.r + 70) * s);
+      grass.addColorStop(0, '#6fd36b'); grass.addColorStop(0.8, '#5ec962'); grass.addColorStop(1, '#3f9a4b');
+      c.fillStyle = grass;
+      c.beginPath(); c.arc(bx, by, (b.r + 70) * s, 0, TAU); c.fill();
+      // Plateaus: lighter discs with a soft rim.
+      for (const f of t.flats || []) {
+        const pl = c.createRadialGradient(X(f.x), Y(f.y), 0, X(f.x), Y(f.y), f.r * s);
+        pl.addColorStop(0, 'rgba(190,250,170,0.4)'); pl.addColorStop(0.7, 'rgba(190,250,170,0.28)'); pl.addColorStop(1, 'rgba(190,250,170,0)');
+        c.fillStyle = pl;
+        c.beginPath(); c.arc(X(f.x), Y(f.y), f.r * s, 0, TAU); c.fill();
+      }
+      // Craters: a ring of rock, the lava lake glowing in it.
+      for (const cr of t.craters || []) {
+        const x = X(cr.x); const y = Y(cr.y);
+        let shore = 0;
+        if (map.liquid && map.land) for (let r = 0; r < cr.r; r += 8) if (map.land.at(cr.x + r, cr.y) < map.liquid.z) shore = r;
+        c.save();
+        c.shadowColor = 'rgba(0,0,0,0.45)'; c.shadowBlur = 4 * dpr * k;
+        c.fillStyle = '#857a74';
+        c.beginPath(); c.arc(x, y, cr.r * 1.02 * s, 0, TAU); c.fill();
+        c.restore();
+        c.fillStyle = '#4a3e3a';
+        c.beginPath(); c.arc(x, y, cr.r * 0.9 * s, 0, TAU); c.fill();
+        if (shore) {
+          const lv = c.createRadialGradient(x - shore * 0.25 * s, y - shore * 0.3 * s, 0, x, y, shore * s);
+          lv.addColorStop(0, '#ffe08a'); lv.addColorStop(0.45, '#ff9a2e'); lv.addColorStop(1, '#e2420f');
+          c.fillStyle = lv;
+          c.beginPath(); c.arc(x, y, shore * s, 0, TAU); c.fill();
+        }
+      }
+      // The viaduct: kerbs (white), deck (dark), a dashed centre line; a soft shadow under it.
+      for (const road of map.roads || []) {
+        const path = new Path2D();
+        road.samples.forEach((o, i) => (i ? path.lineTo(X(o.x), Y(o.y)) : path.moveTo(X(o.x), Y(o.y))));
+        const w = road.w * s;
+        c.save();
+        c.lineCap = 'butt'; c.lineJoin = 'round';
+        c.shadowColor = 'rgba(0,0,0,0.5)'; c.shadowBlur = 5 * dpr * k; c.shadowOffsetY = 2 * dpr * k;
+        c.strokeStyle = '#f4f1ea'; c.lineWidth = w; c.stroke(path);
+        c.restore();
+        c.save();
+        c.lineCap = 'butt'; c.lineJoin = 'round';
+        c.strokeStyle = '#e5383b'; c.lineWidth = w; c.setLineDash([2.4 * k, 2.4 * k]); c.stroke(path);
+        c.setLineDash([]);
+        c.strokeStyle = '#3a3e4a'; c.lineWidth = Math.max(2, w - 2.6 * k); c.stroke(path);
+        c.strokeStyle = 'rgba(255,255,255,0.75)'; c.lineWidth = 0.7 * k; c.setLineDash([1.6 * k, 2 * k]); c.stroke(path);
+        c.restore();
+      }
+      // Jump pads: cyan discs with a dotted line to where they land.
+      c.lineCap = 'round';
+      for (const p of map.pads) {
+        const x = X(p.x); const y = Y(p.y);
+        c.strokeStyle = 'rgba(125,211,252,0.7)'; c.lineWidth = 1 * k; c.setLineDash([1.4 * k, 2 * k]);
+        c.beginPath(); c.moveTo(x, y); c.lineTo(X(p.tx), Y(p.ty)); c.stroke();
+        c.setLineDash([]);
+        c.fillStyle = '#7dd3fc'; c.strokeStyle = '#0c4a6e'; c.lineWidth = 1 * k;
+        c.beginPath(); c.arc(x, y, Math.max(2.4 * k, p.r * s), 0, TAU); c.fill(); c.stroke();
+      }
+      // A soft vignette round the inside of the frame.
+      const vig = c.createRadialGradient(css / 2, css / 2, R0 * 0.62, css / 2, css / 2, R0);
+      vig.addColorStop(0, 'rgba(0,0,0,0)'); vig.addColorStop(1, 'rgba(0,0,0,0.28)');
+      c.fillStyle = vig; c.fillRect(0, 0, css, css);
+    }
 
     function drawRace(c) {
       const th = RACE[theme] || { curb: opts.curb || RACE_NEUTRAL.curb, glow: opts.night ? rgba(opts.curb || RACE_NEUTRAL.curb, 0.55) : null };
@@ -254,8 +375,7 @@
       map.hazards.forEach((h, i) => lava(c, X(h.x), Y(h.y), h.r * s, 31 + i * 7));
       map.obstacles.forEach((o, i) => obstacle(c, o, X(o.x), Y(o.y), i));
       c.restore();
-      c.strokeStyle = th.line; c.lineWidth = 1.2 * k;
-      roundRectPath(c, fx + 0.6 * k, fy + 0.6 * k, fw - 1.2 * k, fw - 1.2 * k, rad - 0.6 * k); c.stroke();
+      frameSquare(c, fx, fy, fw, rad);
     }
 
     // A layered arena: the moat (or the void), then every solid by height, lowest first, each with
@@ -319,7 +439,8 @@
           c.closePath();
         } else c.rect(X(sd.x0), Y(sd.y0), (sd.x1 - sd.x0) * s, (sd.y1 - sd.y0) * s);
       };
-      const solids = map.solids.filter((sd) => sd.kind !== 'bumper' && sd.kind !== 'hub').sort((a, b) => a.z1 - b.z1);
+      const CLUTTER = new Set(['bumper', 'hub', 'trunk', 'boulder', 'deadtree', 'kerb']);
+      const solids = map.solids.filter((sd) => !CLUTTER.has(sd.kind)).sort((a, b) => a.z1 - b.z1);
       for (const sd of solids) {
         if (sd.z1 > lo + 20) {
           c.save();
@@ -372,8 +493,7 @@
       }
       for (const p of map.boostPads) padChevron(c, X(p.x), Y(p.y), p.angle, 2.2 * k);
       c.restore();
-      c.strokeStyle = 'rgba(255,240,220,0.28)'; c.lineWidth = 1.2 * k;
-      roundRectPath(c, fx + 0.6 * k, fy + 0.6 * k, fw - 1.2 * k, fw - 1.2 * k, 6.4 * k); c.stroke();
+      frameSquare(c, fx, fy, fw, 7 * k);
     }
 
     function lava(c, x, y, r, seed) {
@@ -520,26 +640,27 @@
     }
     let ringGrad = null;
     const meR = 7.2 * k;
-    function meMarker(kt) {
+    // You: a white puck with your arrow in your colour, a ring pulsing out round it.
+    function meMarker(kt, time) {
       if (!ringGrad) {
         ringGrad = ctx.createLinearGradient(-meR, -meR, meR, meR);
         ringGrad.addColorStop(0, ACCENT[0]); ringGrad.addColorStop(0.5, ACCENT[1]); ringGrad.addColorStop(1, ACCENT[2]);
       }
       const alive = !kt.dead && Number.isFinite(kt.angle);
       ctx.globalAlpha = kt.dead ? 0.45 : 1;
-      ctx.save();
-      ctx.shadowColor = 'rgba(255,79,163,0.8)'; ctx.shadowBlur = 6 * k * dpr;
-      ctx.strokeStyle = ringGrad; ctx.lineWidth = 2.2 * k;
-      ctx.beginPath(); ctx.arc(0, 0, meR, 0, TAU); ctx.stroke();
-      ctx.restore();
-      ctx.fillStyle = 'rgba(12,9,30,0.8)';
-      ctx.beginPath(); ctx.arc(0, 0, meR - 1.1 * k, 0, TAU); ctx.fill();
       if (alive) {
-        ctx.save();
-        ctx.translate(Math.cos(kt.angle) * 0.6 * k, Math.sin(kt.angle) * 0.6 * k);
-        chevron(10.5 * k, kt.angle, kt.color, '#fff', 1.4 * k);
-        ctx.restore();
+        const p = (time * 0.9) % 1;
+        ctx.strokeStyle = `rgba(255,255,255,${0.55 * (1 - p)})`; ctx.lineWidth = 1.4 * k;
+        ctx.beginPath(); ctx.arc(0, 0, meR + p * 7 * k, 0, TAU); ctx.stroke();
       }
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = 4 * k * dpr; ctx.shadowOffsetY = 1 * k * dpr;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.arc(0, 0, meR, 0, TAU); ctx.fill();
+      ctx.restore();
+      ctx.strokeStyle = ringGrad; ctx.lineWidth = 1.6 * k;
+      ctx.beginPath(); ctx.arc(0, 0, meR - 0.8 * k, 0, TAU); ctx.stroke();
+      if (alive) chevron(10 * k, kt.angle, kt.color, INK, 1.2 * k);
       ctx.globalAlpha = 1;
     }
     function viewCone(a) {
@@ -597,9 +718,13 @@
       }
       if (!race && state.boxes) {
         // Item boxes: small pale-gold squares, a colour no kart uses.
-        ctx.fillStyle = 'rgba(255,236,170,0.7)';
-        const b = 1.5 * k;
-        map.itemBoxes.forEach((box, i) => { if (state.boxes[i]) ctx.fillRect(X(box.x) - b, Y(box.y) - b, b * 2, b * 2); });
+        ctx.fillStyle = 'rgba(255,226,120,0.85)';
+        ctx.strokeStyle = 'rgba(20,14,40,0.55)'; ctx.lineWidth = 0.7 * k;
+        const b = 1.35 * k;
+        map.itemBoxes.forEach((box, i) => {
+          if (!state.boxes[i]) return;
+          ctx.beginPath(); ctx.rect(X(box.x) - b, Y(box.y) - b, b * 2, b * 2); ctx.fill(); ctx.stroke();
+        });
       }
       if (!race && state.deaths) {
         // Where someone just got smashed: a fading X in their colour.
@@ -634,16 +759,24 @@
         const x0 = X(kt.x); const y0 = Y(kt.y);
         rivals.push({ kt, x0, y0, sx: x0, sy: y0 });
       }
-      spread(rivals, (race ? badgeR * 2 : 6.5 * k) + 0.8 * k, 3 * k);
-      // Arena markers stay on the floor plan, even for a kart pressed against the outer wall.
-      const lo = race ? -Infinity : X(40);
-      const hi = race ? Infinity : X(map.size - 40);
+      spread(rivals, badgeR * 2 + 0.8 * k, 3 * k);
+      // Markers stay inside the frame (a square arena's floor plan, or the round radar's disc), even
+      // for a kart pressed against the outer wall.
+      const lo = race || round ? -Infinity : X(40);
+      const hi = race || round ? Infinity : X(map.size - 40);
       const keep = (v, r) => Math.max(lo + r, Math.min(hi - r, v));
-      for (const p of rivals) { p.sx = keep(p.sx, 5 * k); p.sy = keep(p.sy, 5 * k); }
+      const inDisc = (x, y, r) => {
+        if (!round) return [keep(x, r), keep(y, r)];
+        const dx = x - css / 2;
+        const dy = y - css / 2;
+        const d = Math.hypot(dx, dy);
+        const max = R0 - rim - r;
+        return d <= max ? [x, y] : [css / 2 + (dx / d) * max, css / 2 + (dy / d) * max];
+      };
+      for (const p of rivals) [p.sx, p.sy] = inDisc(p.sx, p.sy, 5 * k);
       // Back of the field first so the leaders sit on top.
       rivals.sort((a, b) => (b.kt.place || 99) - (a.kt.place || 99));
-      const meX = me ? keep(X(me.x), meR + 1.1 * k) : 0;
-      const meY = me ? keep(Y(me.y), meR + 1.1 * k) : 0;
+      const [meX, meY] = me ? inDisc(X(me.x), Y(me.y), meR + 1.1 * k) : [0, 0];
       if (me && !me.dead && !race && Number.isFinite(me.x)) {
         ctx.save(); ctx.translate(meX, meY); viewCone(me.angle); ctx.restore();
       }
@@ -652,14 +785,13 @@
         ctx.translate(p.sx, p.sy);
         // Layered arenas: a rival on another floor (above or below you) is drawn faint.
         if (me && Number.isFinite(me.z) && Number.isFinite(p.kt.z) && Math.abs(p.kt.z - me.z) > 45) ctx.globalAlpha = 0.5;
-        if (race) raceBadge(p.kt);
-        else chevron(9 * k, p.kt.angle, p.kt.color, 'rgba(10,8,25,0.92)', 1.6 * k);
+        raceBadge(p.kt);
         ctx.restore();
       }
       const leader = race && rivals.find((p) => p.kt.place === 1);
       if (leader) { ctx.save(); ctx.translate(leader.sx, leader.sy - badgeR - 3.6 * k); crown(); ctx.restore(); }
       if (me && Number.isFinite(me.x) && Number.isFinite(me.y)) {
-        ctx.save(); ctx.translate(meX, meY); meMarker(me); ctx.restore();
+        ctx.save(); ctx.translate(meX, meY); meMarker(me, t); ctx.restore();
         if (race && me.place === 1 && !me.dead) { ctx.save(); ctx.translate(meX, meY - meR - 3.4 * k); crown(); ctx.restore(); }
       }
     }
