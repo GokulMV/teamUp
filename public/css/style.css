@@ -381,6 +381,7 @@ textarea { resize: vertical; min-height: 70px; }
 .results { position: relative; max-width: 760px; margin: 0 auto; padding: 26px; max-height: 100%; overflow-y: auto; text-align: center; }
 .results h2 { font-size: 2rem; margin-bottom: 18px; }
 .results-teams { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 18px; }
+.team-score small { display: block; font-size: 0.7rem; font-weight: 600; opacity: 0.7; }
 .team-score { flex: 1; min-width: 130px; border-radius: 18px; padding: 14px; background: rgba(0, 0, 0, 0.2); border-top: 4px solid var(--team); }
 .team-score b { display: block; font-family: var(--font-display); font-size: 2rem; }
 .results-label { width: 100%; text-align: center; font-weight: 700; margin-bottom: 6px; }
@@ -427,6 +428,8 @@ textarea { resize: vertical; min-height: 70px; }
 .word-tiles { flex: 1; display: flex; justify-content: center; flex-wrap: wrap; gap: 5px; min-width: 0; }
 .word-tiles i { font-style: normal; width: 30px; height: 40px; border-radius: 9px; background: rgba(255, 255, 255, 0.08); border-bottom: 3px solid rgba(255, 255, 255, 0.25); display: grid; place-items: center; font-family: var(--font-display); font-weight: 800; font-size: 1.3rem; text-transform: uppercase; }
 .word-tiles i.space { width: 14px; background: none; border: 0; }
+.word-tiles .tile-word { display: inline-flex; flex-wrap: nowrap; gap: 5px; }
+.word-tiles i.punct { width: auto; min-width: 10px; background: none; border: 0; }
 .word-tiles i.shown { background: rgba(52, 211, 153, 0.2); border-color: var(--good); animation: rise 0.3s; }
 .word-tiles .plain { font-family: var(--font-display); font-size: 1.35rem; font-weight: 800; }
 .word-tiles .count { align-self: flex-end; color: var(--muted); font-size: 0.8rem; margin-left: 6px; }
@@ -885,6 +888,21 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
   .start-bar #lobby-wait { flex: 1; text-align: center; }
   .topbar .brand, .copy-hint, #player-count { display: none; }
 }
+@media (max-width: 980px) {
+  /* Pictionary on a phone or tablet: the word, the drawing and the guess box fit one screen (the
+     player list moves out of the way; scores show on the reveal and the results). */
+  body.pict-playing #screen-room.active { height: 100vh; height: 100dvh; min-height: 0; }
+  body.pict-playing .topbar { padding-top: 8px; padding-bottom: 8px; }
+  body.pict-playing .room-body { flex: 1; min-height: 0; gap: 8px; }
+  body.pict-playing #main { flex: 1; min-height: 0; }
+  body.pict-playing #view-game.active { height: 100%; min-height: 0; }
+  body.pict-playing .game-wrap { gap: 8px; }
+  body.pict-playing .side-players { display: none; }
+  body.pict-playing #side { flex: none; }
+  body.pict-playing .chat { flex: none; min-height: 0; max-height: 30vh; max-height: 30dvh; }
+  body.pict-playing .chat-log { min-height: 48px; }
+  body.pict-playing .stage { padding: 8px !important; }
+}
 @media (max-width: 980px), (pointer: coarse) {
   body.kart-playing { overflow: hidden; }
   body.kart-playing #screen-room.active { height: 100%; height: 100dvh; min-height: 0; }
@@ -921,14 +939,22 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
   .game-card:last-child:nth-child(odd) { flex-direction: row; align-items: center; gap: 12px; }
   .word-tiles i { width: 22px; height: 32px; font-size: 1rem; }
   .game-bar .info { display: none; }
+  /* Pictionary: the timer and the 👍/👎 on top, the word gets the whole width below them, with
+     tiles small enough for a long word to fit on one line. */
+  .pict-bar { flex-wrap: wrap; justify-content: space-between; row-gap: 8px; padding: 8px 12px; }
+  .pict-bar .timer-ring { width: 44px; height: 44px; }
+  .pict-bar .word-tiles { order: 3; flex: 1 1 100%; gap: 3px; row-gap: 6px; }
+  .pict-bar .word-tiles .tile-word { gap: 3px; }
+  .pict-bar .word-tiles i { width: clamp(13px, 5.4vw, 22px); height: 30px; font-size: 0.95rem; border-radius: 7px; }
+  .pict-bar .word-tiles i.space { width: 8px; }
   .tel-title { font-size: 1.05rem; line-height: 1.25; }
   .tel-title.long { font-size: 0.92rem; }
   /* Drawing on a phone: the paper takes the full width (4:3) and the page grows to fit the tools,
      which shrink to two compact rows: a strip of colours, then sizes and tools as icons. */
-  #view-game.active:has(.board.editable) { height: auto; min-height: 0; }
-  .stage:has(.board.editable) { flex: none; overflow: visible; }
-  .stage:has(.board.editable) .tel-board, .board.editable { height: auto; }
-  .board.editable .board-canvas-wrap { flex: none; width: 100%; aspect-ratio: 4 / 3; }
+  #view-game.active:has(.tel-board .board.editable) { height: auto; min-height: 0; }
+  .tel-stage:has(.board.editable) { flex: none; overflow: visible; }
+  .tel-stage:has(.board.editable) .tel-board, .tel-board .board.editable { height: auto; }
+  .tel-board .board.editable .board-canvas-wrap { flex: none; width: 100%; aspect-ratio: 4 / 3; }
   .board-tools { gap: 8px; padding: 8px; border-radius: 16px; }
   .tool-group.colors, .tool-group.extra { flex: 1 1 100%; }
   .tool-group.colors { max-width: none; flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; padding: 5px 4px 7px; scrollbar-width: none; }

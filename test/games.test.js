@@ -231,6 +231,83 @@ test('telephone chain length: 1 steps over to 2 going up and to "everyone" going
   room.destroy();
 });
 
+test('pictionary: a drawer who drops out keeps the turn; accents and punctuation; fair turns; undo by id', async () => {
+  const { code, host, players, room } = await makeRoom(3);
+  await call(host, 'lobby:settings', { mode: 'pictionary', pictEveryone: true, pictRounds: 10, customWords: 'pokémon, straße, t-rex, a, 猫', customOnly: true, wordChoices: 2 });
+  await call(host, 'game:start');
+  const game = room.game;
+  assert.deepStrictEqual(game.custom.sort(), ['pokémon', 'straße', 't-rex', '猫'].sort(), 'a lone "a" is not a word');
+  // Nobody draws twice running, round after round.
+  const order = [];
+  for (let i = 0; i < 24; i++) {
+    order.push(game.drawerId);
+    game.chooseWord(game.options[0]);
+    game.endTurn();
+    game.nextTurn();
+  }
+  assert.ok(order.every((id, i) => i === 0 || id !== order[i - 1]), 'nobody draws twice in a row');
+  // Accents, ß and punctuation don't matter in a guess; punctuation shows in the mask.
+  const drawer = players.find((p) => p.id === game.drawerId);
+  const guesser = players.find((p) => p.id !== game.drawerId);
+  game.options = ['t-rex', 'straße'];
+  game.chooseWord('t-rex');
+  assert.strictEqual(game.mask(), '_-___');
+  room.handle(room.players.get(guesser.id), 'chat', { text: 'T Rex!' });
+  assert.ok(game.guessed.has(guesser.id), '"T Rex!" guesses "t-rex"');
+  game.endTurn();
+  game.nextTurn();
+  game.options = ['straße', 'pokémon'];
+  game.chooseWord('pokémon');
+  const g2 = players.find((p) => p.id !== game.drawerId);
+  room.handle(room.players.get(g2.id), 'chat', { text: 'pokemon' });
+  assert.ok(game.guessed.has(g2.id), '"pokemon" guesses "pokémon"');
+  // The drawer's connection drops for a moment: the turn waits for them.
+  const d = players.find((p) => p.id === game.drawerId);
+  d.socket.close();
+  await new Promise((r) => setTimeout(r, 150));
+  assert.strictEqual(game.phase, 'drawing');
+  assert.ok(game.awayTimer, 'waiting for the drawer');
+  const back = client();
+  assert.ok((await call(back, 'room:join', { code, token: d.token })).ok);
+  assert.strictEqual(game.awayTimer, null);
+  assert.strictEqual(game.phase, 'drawing');
+  // Undo names the stroke; the drawer's own board already did it, so only the others get a redraw.
+  const redraws = [];
+  for (const p of players.filter((x) => x.id !== d.id)) p.socket.on('game:pict:redraw', (m) => redraws.push(m));
+  let mine = 0;
+  back.on('game:pict:redraw', () => mine++);
+  const stroke = (id) => ({ id, color: '#000000', size: 7, pts: [0.1, 0.1, 0.2, 0.2] });
+  back.emit('game:stroke', stroke('s1'));
+  back.emit('game:stroke', stroke('s2'));
+  back.emit('game:undo', { id: 's1' });
+  await new Promise((r) => setTimeout(r, 150));
+  assert.deepStrictEqual(game.strokes.map((x) => x.id), ['s2']);
+  assert.strictEqual(redraws.length, 2);
+  assert.strictEqual(mine, 0);
+  room.destroy();
+  void drawer;
+});
+
+test('pictionary results: teams are scored per player, and players who left keep their points', async () => {
+  const { host, players, room } = await makeRoom(3);
+  await call(host, 'lobby:settings', { mode: 'pictionary', teamMode: true, teamCount: 2 });
+  room.players.get(players[0].id).team = 0;
+  room.players.get(players[1].id).team = 0;
+  room.players.get(players[2].id).team = 1;
+  await call(host, 'game:start');
+  const game = room.game;
+  game.scores.set(players[0].id, 300);
+  game.scores.set(players[1].id, 300);
+  game.scores.set(players[2].id, 400);
+  await call(players[1].socket, 'room:leave');
+  const results = once(host, 'room:state', (s) => s.state === 'results');
+  game.finish();
+  const r = (await results).results;
+  assert.ok(r.players.some((p) => p.id === players[1].id && p.score === 300), 'the player who left is still listed');
+  assert.deepStrictEqual(r.teams.map((t) => [t.id, t.score]), [[1, 400], [0, 300]]);
+  room.destroy();
+});
+
 test('kart battle: 30 karts race, inputs move karts, items and laps tracked', async () => {
   const { host, players, room } = await makeRoom(30);
   await call(host, 'lobby:settings', { mode: 'kart', kartLaps: 1 });

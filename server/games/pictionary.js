@@ -4,10 +4,15 @@ const CHOOSE_TIME = 15;
 const REVEAL_TIME = 6;
 const MAX_STROKES = 6000;
 const LIKE_POINTS = 10;
+const DRAWER_AWAY_MS = 10000; // a drawer who drops out (a reload, an app switch) keeps the turn this long
 
+// Guesses are compared on letters and digits only, in any alphabet, without accents:
+// "Pokémon" = "pokemon", "Straße" = "strasse", "T-Rex" = "trex".
 function normalize(s) {
-  return String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+  return String(s).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/ß/g, 'ss').replace(/[^\p{L}\p{N}]/gu, '');
 }
+// A character the word tiles stand for (letters and digits); the rest shows as it is.
+const isLetter = (c) => /[\p{L}\p{N}]/u.test(c);
 
 function levenshtein(a, b) {
   if (Math.abs(a.length - b.length) > 2) return 3;
@@ -41,10 +46,13 @@ function sanitizeStroke(data) {
   return { id, color, size, pts, erase: !!data.erase };
 }
 
-// Custom words from the lobby: comma or newline separated, 1-30 characters each.
+// Custom words from the lobby: comma or newline separated, up to 30 characters each, any alphabet.
+// At least 2 letters (a lone "a" would hide every chat line with an "a" in it), except a single
+// Chinese, Japanese or Korean character, which is a word on its own.
+const CJK = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]$/u;
 function parseCustomWords(text) {
   return [...new Set(String(text || '').split(/[,\n]/).map((w) => w.trim().toLowerCase().replace(/\s+/g, ' '))
-    .filter((w) => w.length >= 1 && w.length <= 30 && /[a-z0-9]/.test(w)))];
+    .filter((w) => w.length <= 30 && (normalize(w).length >= 2 || CJK.test(normalize(w)))))];
 }
 
 function shuffle(list) {
@@ -69,7 +77,8 @@ class Pictionary {
     this.hintCount = s.hints;
     this.wordMode = s.wordMode;
     this.custom = parseCustomWords(s.customWords);
-    this.customOnly = s.customOnly && this.custom.length >= this.choices;
+    // Combos are made of two words each.
+    this.customOnly = s.customOnly && this.custom.length >= this.choices * (this.wordMode === 'combo' ? 2 : 1);
     // With "everyone draws", the turn count is worked out per round as people join or leave.
     this.totalTurns = this.everyone ? this.rounds * room.connectedPlayers.length : s.pictionaryTurns;
     this.turn = 0;
@@ -88,15 +97,25 @@ class Pictionary {
     this.revealed = new Set();
     this.votes = new Map(); // playerId -> 1 (like) | -1 (dislike)
     this.timer = null;
+    this.awayTimer = null; // the drawer dropped out: their turn waits a little
     this.deadline = 0;
+    this.optionSources = new Map(); // combo option -> the two bank entries it was made from
+    this.people = new Map(); // everyone who played: results keep those who left
+    this.told = new Set(); // drawers told that only players who guessed can read their chat
   }
 
   start() {
+    for (const p of this.room.connectedPlayers) this.remember(p);
     this.nextTurn();
+  }
+
+  remember(p) {
+    this.people.set(p.id, { id: p.id, name: p.name, color: p.color, avatar: p.avatar, team: p.team });
   }
 
   stop() {
     clearTimeout(this.timer);
+    clearTimeout(this.awayTimer);
     clearInterval(this.hintTimer);
   }
 
@@ -106,18 +125,22 @@ class Pictionary {
     this.timer = setTimeout(fn, seconds * 1000);
   }
 
-  // Next drawer in a team-interleaved order (A1, B1, A2, B2, ...).
+  // Next drawer in a team-interleaved order (A1, B1, A2, B2, ...), never the one who just drew.
   orderForRound() {
     const players = shuffle(this.room.connectedPlayers);
-    if (!this.room.settings.teamMode) return players.map((p) => p.id);
-    const byTeam = new Map();
-    for (const p of players) {
-      if (!byTeam.has(p.team)) byTeam.set(p.team, []);
-      byTeam.get(p.team).push(p.id);
+    let out;
+    if (!this.room.settings.teamMode) out = players.map((p) => p.id);
+    else {
+      const byTeam = new Map();
+      for (const p of players) {
+        if (!byTeam.has(p.team)) byTeam.set(p.team, []);
+        byTeam.get(p.team).push(p.id);
+      }
+      const lists = [...byTeam.values()];
+      out = [];
+      for (let i = 0; lists.some((l) => l.length > i); i++) for (const l of lists) if (l[i]) out.push(l[i]);
     }
-    const lists = [...byTeam.values()];
-    const out = [];
-    for (let i = 0; lists.some((l) => l.length > i); i++) for (const l of lists) if (l[i]) out.push(l[i]);
+    if (out.length > 1 && out[0] === this.drawerId) [out[0], out[1]] = [out[1], out[0]];
     return out;
   }
 
@@ -138,19 +161,20 @@ class Pictionary {
     }
     const players = this.room.connectedPlayers;
     if (!players.length) return null;
-    let candidates = players;
-    if (this.room.settings.teamMode) {
-      // Alternate teams so every team gets turns drawing.
-      const teams = [...new Set(players.map((p) => p.team))].sort((a, b) => a - b);
-      const nextTeam = teams.find((t) => t > this.lastTeam) ?? teams[0];
-      candidates = players.filter((p) => p.team === nextTeam);
-    }
-    const min = Math.min(...candidates.map((p) => this.drawnCount.get(p.id) || 0));
-    const pool = candidates.filter((p) => (this.drawnCount.get(p.id) || 0) === min);
+    // Whoever has drawn least goes next (so a lone team member doesn't draw every other turn); in
+    // teams, a tie goes to another team than last time; never the same drawer twice running.
+    const min = Math.min(...players.map((p) => this.drawnCount.get(p.id) || 0));
+    let pool = players.filter((p) => (this.drawnCount.get(p.id) || 0) === min);
+    if (this.room.settings.teamMode && pool.some((p) => p.team !== this.lastTeam)) pool = pool.filter((p) => p.team !== this.lastTeam);
+    if (pool.length > 1) pool = pool.filter((p) => p.id !== this.drawerId);
+    else if (pool[0]?.id === this.drawerId && players.length > 1) pool = players.filter((p) => p.id !== this.drawerId);
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
   wordOptions() {
+    // A long game can use up the bank: start it over (except the word just drawn).
+    const left = this.custom.filter((w) => !this.usedWords.has(w)).length + pickWords(10_000, this.usedWords).length;
+    if (left < this.choices * 2) this.usedWords = new Set(this.word ? [this.word] : []);
     const fromCustom = (n) => shuffle(this.custom.filter((w) => !this.usedWords.has(w))).slice(0, n);
     const pick = (n) => {
       if (this.customOnly) {
@@ -166,13 +190,21 @@ class Pictionary {
     };
     if (this.wordMode === 'combo') {
       const a = pick(this.choices * 2);
-      return Array.from({ length: this.choices }, (_, i) => `${a[i * 2]} ${a[i * 2 + 1] || a[0]}`);
+      this.optionSources = new Map();
+      return Array.from({ length: this.choices }, (_, i) => {
+        const parts = [a[i * 2], a[i * 2 + 1] || a[0]];
+        const combo = parts.join(' ');
+        this.optionSources.set(combo, parts);
+        return combo;
+      });
     }
     return pick(this.choices);
   }
 
   nextTurn() {
     clearInterval(this.hintTimer);
+    clearTimeout(this.awayTimer);
+    this.awayTimer = null;
     const enoughPlayers = this.room.connectedPlayers.length >= 2;
     const turnsLeft = this.everyone ? true : this.turn < this.totalTurns;
     const drawer = enoughPlayers && turnsLeft ? this.pickDrawer() : null;
@@ -199,11 +231,13 @@ class Pictionary {
     this.word = word;
     this.usedWords.add(word);
     for (const w of word.split(' ')) this.usedWords.add(w);
+    // A combo retires the bank entries it was made of ("roller coaster", not just "roller").
+    for (const w of this.optionSources.get(word) || []) this.usedWords.add(w);
     this.phase = 'drawing';
     this.turnStart = Date.now();
     this.setTimer(this.drawTime, () => this.endTurn());
-    // Reveal hint letters over time (never in hidden mode, never the whole word).
-    const letters = [...word].map((c, i) => (c === ' ' ? -1 : i)).filter((i) => i >= 0);
+    // Reveal hint letters over time (never in hidden mode, never the whole word, never punctuation).
+    const letters = [...word].map((c, i) => (isLetter(c) ? i : -1)).filter((i) => i >= 0);
     const hints = this.wordMode === 'hidden' ? 0 : Math.min(this.hintCount, Math.max(0, letters.length - 2));
     let given = 0;
     if (hints > 0) {
@@ -222,7 +256,7 @@ class Pictionary {
   mask() {
     if (!this.word) return '';
     if (this.wordMode === 'hidden') return '? ? ?';
-    return [...this.word].map((c, i) => (c === ' ' ? ' ' : this.revealed.has(i) ? c : '_')).join('');
+    return [...this.word].map((c, i) => (!isLetter(c) || this.revealed.has(i) ? c : '_')).join('');
   }
 
   phasePayload(forPlayer) {
@@ -288,17 +322,19 @@ class Pictionary {
         return;
       }
       case 'undo': {
+        // The drawer's board has already undone it (by id, so a stroke drawn straight after the
+        // undo isn't wiped by a redraw coming back from here).
         if (!isDrawer || this.phase !== 'drawing') return;
-        const last = this.strokes[this.strokes.length - 1];
-        if (!last) return;
-        this.strokes = this.strokes.filter((s) => s.id !== last.id);
-        this.room.emit('game:pict:redraw', { strokes: this.strokes });
+        const id = typeof data?.id === 'string' ? data.id : this.strokes[this.strokes.length - 1]?.id;
+        if (!id) return;
+        this.strokes = this.strokes.filter((s) => s.id !== id);
+        this.room.emitExcept(player.id, 'game:pict:redraw', { strokes: this.strokes });
         return;
       }
       case 'clear':
         if (!isDrawer || this.phase !== 'drawing') return;
         this.strokes = [];
-        this.room.emit('game:pict:redraw', { strokes: [] });
+        this.room.emitExcept(player.id, 'game:pict:redraw', { strokes: [] });
         return;
       case 'rate': {
         // 👍 / 👎 on the current drawing; likes give the drawer a few points.
@@ -327,10 +363,17 @@ class Pictionary {
 
     if (knows) {
       // People who know the word can only chat among themselves, and never say it.
-      if (guess.includes(answer)) return true;
+      if (guess.includes(answer)) {
+        this.room.emitTo(player.id, 'chat', { system: true, text: '🤫 That gives the word away, so nobody else saw it' });
+        return true;
+      }
       const recipients = [this.drawerId, ...this.guessed];
       for (const id of recipients) {
         this.room.emitTo(id, 'chat', { from: player.name, color: player.color, avatar: player.avatar, team: player.team, text, secret: true });
+      }
+      if (recipients.length === 1 && !this.told.has(player.id)) {
+        this.told.add(player.id);
+        this.room.emitTo(player.id, 'chat', { system: true, text: 'Only players who have guessed the word can read your messages' });
       }
       return true;
     }
@@ -353,7 +396,8 @@ class Pictionary {
     }
 
     if (answer.length > 3 && levenshtein(guess, answer) === 1) {
-      this.room.emitTo(player.id, 'chat', { system: true, text: `"${text}" is very close!` });
+      // After the room has shown the guess itself.
+      setTimeout(() => this.room.emitTo(player.id, 'chat', { system: true, text: `"${text}" is very close!` }), 0);
     }
     return false;
   }
@@ -361,6 +405,8 @@ class Pictionary {
   endTurn() {
     if (this.phase !== 'drawing') return;
     clearInterval(this.hintTimer);
+    clearTimeout(this.awayTimer);
+    this.awayTimer = null;
     this.phase = 'reveal';
     this.setTimer(REVEAL_TIME, () => this.nextTurn());
     this.room.systemMessage(`The word was "${this.word}"`);
@@ -368,23 +414,37 @@ class Pictionary {
   }
 
   onPlayerJoin(player) {
+    this.remember(player);
     this.room.emitTo(player.id, 'game:snapshot', this.snapshotFor(player));
   }
 
   onPlayerDisconnect(player) {
+    // The drawer's turn waits a little for them (their drawing and word come back with them).
+    if (player.id === this.drawerId && (this.phase === 'choosing' || this.phase === 'drawing')) {
+      clearTimeout(this.awayTimer);
+      this.awayTimer = setTimeout(() => { this.awayTimer = null; this.handleGone(player); }, DRAWER_AWAY_MS);
+      return;
+    }
     this.handleGone(player);
   }
 
+  onPlayerReconnect(player) {
+    if (player.id === this.drawerId) { clearTimeout(this.awayTimer); this.awayTimer = null; }
+  }
+
   onPlayerLeave(player) {
+    if (player.id === this.drawerId) { clearTimeout(this.awayTimer); this.awayTimer = null; }
     this.handleGone(player);
   }
 
   handleGone(player) {
     if (player.id !== this.drawerId) {
+      // Everyone left to guess has guessed (or nobody is left): the turn is over.
       const guessers = this.room.connectedPlayers.filter((p) => p.id !== this.drawerId);
-      if (this.phase === 'drawing' && guessers.length && guessers.every((p) => this.guessed.has(p.id))) this.endTurn();
+      if (this.phase === 'drawing' && guessers.every((p) => this.guessed.has(p.id))) this.endTurn();
       return;
     }
+    if (this.room.players.get(player.id)?.connected) return; // back already
     if (this.phase === 'choosing') {
       this.room.systemMessage('The drawer left, skipping turn');
       this.nextTurn();
@@ -397,7 +457,16 @@ class Pictionary {
   finish() {
     this.stop();
     this.phase = 'done';
-    this.room.finishGame(this, this.room.buildResults(this.scores));
+    // Players who left keep their points; teams are scored per member, so a team of 1 can win
+    // against a team of 2.
+    const gone = [...this.people.values()].filter((p) => !this.room.players.has(p.id) && this.scores.get(p.id));
+    const results = this.room.buildResults(this.scores, gone);
+    if (results.teams) {
+      for (const t of results.teams) t.score = t.members ? Math.round(t.score / t.members) : 0;
+      results.teams.sort((a, b) => b.score - a.score);
+      results.teamScore = 'average';
+    }
+    this.room.finishGame(this, results);
   }
 }
 

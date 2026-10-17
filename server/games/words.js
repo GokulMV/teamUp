@@ -1,6 +1,6 @@
 // Word bank for Pictionary. Kept simple and family friendly.
 const WORDS = `
-apple banana pizza burger donut cake cookie icecream sandwich taco popcorn carrot pineapple watermelon cheese egg
+apple banana pizza burger donut cake cookie sandwich taco popcorn carrot pineapple watermelon cheese egg
 cat dog fish bird horse cow pig sheep lion tiger elephant giraffe monkey penguin shark whale octopus snake frog turtle
 rabbit bear owl bee butterfly spider snail crab dolphin kangaroo zebra camel duck chicken dinosaur unicorn dragon
 house castle bridge tower lighthouse tent igloo pyramid windmill skyscraper church barn school hospital

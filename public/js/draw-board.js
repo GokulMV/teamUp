@@ -58,6 +58,8 @@
     }
 
     setEditable(editable) {
+      // Rebuilding the tools mid-tap would swallow the tap (and close the colour picker).
+      if (editable === this.editable) return;
       this.editable = editable;
       this.el.classList.toggle('editable', editable);
       this.tools.style.display = editable ? '' : 'none';
@@ -263,15 +265,23 @@
       });
     }
 
+    // Undo and clear happen here at once; onUndo / onClear tell everyone else.
     undo() {
-      if (this.opts.onUndo) { this.opts.onUndo(); return; }
       const last = this.strokes[this.strokes.length - 1];
-      if (last) this.setStrokes(this.strokes.filter((s) => s.id !== last.id));
+      if (!last) return;
+      this.setStrokes(this.strokes.filter((s) => s.id !== last.id));
+      this.opts.onUndo?.(last.id);
     }
 
     clear() {
-      if (this.opts.onClear) { this.opts.onClear(); return; }
       this.setStrokes([]);
+      this.opts.onClear?.();
+    }
+
+    // Back to the pen (a new turn shouldn't start with the fill bucket that floods the page).
+    resetTool() {
+      this.tool = 'pen';
+      if (this.editable) this.renderTools();
     }
 
     toDataURL() {

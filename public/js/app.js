@@ -348,6 +348,8 @@
     const kartPlaying = room.state === 'playing' && (room.settings.mode === 'kart' || room.settings.mode === 'ballchain');
     if (kartPlaying && !document.body.classList.contains('kart-playing') && matchMedia('(pointer: coarse), (max-width: 980px)').matches) window.scrollTo(0, 0);
     document.body.classList.toggle('kart-playing', kartPlaying);
+    // Pictionary on a phone: the drawing, the word and the guess box share the screen.
+    document.body.classList.toggle('pict-playing', room.state === 'playing' && room.settings.mode === 'pictionary');
     if (!kartPlaying) { toggleChat(false); closeMenu(); setUnread(0); $('chat-ticker').innerHTML = ''; }
     $('chat-input').placeholder = room.state === 'playing' && room.settings.mode === 'pictionary' ? 'Chat or type your guess…' : 'Chat…';
 
@@ -777,7 +779,7 @@
       $('results-title').textContent = `${MODE_ICONS[r.mode]} ${MODE_NAMES[r.mode]} results`;
     }
     $('results-teams').innerHTML = (r.teams || []).map((t, i) => `
-      <div class="team-score" style="--team:${t.color}">${i === 0 ? '🏆 ' : ''}${t.name}<b>${t.score}</b></div>`).join('');
+      <div class="team-score" style="--team:${t.color}">${i === 0 ? '🏆 ' : ''}${t.name}<b>${t.score}</b>${r.teamScore === 'average' ? '<small>per player</small>' : ''}</div>`).join('');
 
     // Kart players who joined mid-round only watched: they have no race or battle details.
     const watched = (p) => r.mode === 'kart' && p.place === undefined;
@@ -832,6 +834,7 @@
     document.body.classList.toggle('chat-unread', n > 0);
   }
   function toggleChat(open = !document.body.classList.contains('chat-open'), focus = false) {
+    const wasOpen = document.body.classList.contains('chat-open');
     document.body.classList.toggle('chat-open', open);
     if (open) {
       closeMenu();
@@ -839,7 +842,9 @@
       $('chat-ticker').innerHTML = '';
       setTimeout(() => $('chat-log').scrollTo(0, $('chat-log').scrollHeight), 0);
       if (focus) $('chat-input').focus();
-    } else if (document.activeElement === $('chat-input')) {
+    } else if (wasOpen && document.activeElement === $('chat-input')) {
+      // Closing the chat sheet puts the keyboard away; a room update with no sheet open leaves a
+      // half-typed guess alone.
       $('chat-input').blur();
     }
   }
