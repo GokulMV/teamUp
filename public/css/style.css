@@ -126,10 +126,13 @@ textarea { resize: vertical; min-height: 70px; }
 .hero h1 { font-size: clamp(2.6rem, 6vw, 4.8rem); line-height: 0.98; font-weight: 800; }
 .hero h1 em { font-style: normal; background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .lede { color: var(--muted); font-size: 1.12rem; line-height: 1.55; max-width: 540px; margin: 20px 0 28px; }
-.game-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; max-width: 600px; }
-.game-tile { position: relative; padding: 16px; border-radius: 20px; border: 1px solid var(--line); overflow: hidden; display: flex; flex-direction: column; gap: 2px; min-height: 140px; justify-content: flex-end; animation: rise 0.6s both; }
+.game-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; max-width: 600px; }
+.game-tile { position: relative; padding: 16px; border-radius: 20px; border: 1px solid var(--line); overflow: hidden; display: flex; flex-direction: column; gap: 2px; min-height: 116px; justify-content: flex-end; animation: rise 0.6s both; }
+.game-tile:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .game-tile:nth-child(2) { animation-delay: 0.08s; }
 .game-tile:nth-child(3) { animation-delay: 0.16s; }
+.game-tile:nth-child(4) { animation-delay: 0.24s; }
+.game-tile:nth-child(5) { animation-delay: 0.32s; }
 .game-tile .tile-art { position: absolute; top: 10px; right: 12px; font-size: 2.6rem; filter: drop-shadow(0 8px 14px rgba(0, 0, 0, 0.35)); transition: transform 0.3s; }
 .game-tile:hover .tile-art { transform: rotate(-8deg) scale(1.1); }
 .game-tile small { color: rgba(255, 255, 255, 0.75); }
@@ -206,9 +209,10 @@ textarea { resize: vertical; min-height: 70px; }
 .lobby .panel { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
 .panel-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 20px; -webkit-mask-image: linear-gradient(transparent, #000 16px, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(transparent, #000 16px, #000 calc(100% - 16px), transparent); }
 .panel h2 { font-size: 1.35rem; }
-.game-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 18px; }
+.game-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
+.game-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
 .game-card {
-  position: relative; display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 14px; min-height: 128px; border-radius: 18px;
+  position: relative; display: flex; flex-direction: row; align-items: center; gap: 12px; text-align: left; padding: 12px 40px 12px 14px; min-height: 84px; border-radius: 18px;
   border: 1px solid var(--line); background: var(--surface); transition: transform 0.2s, border 0.2s, background 0.2s; overflow: hidden;
 }
 .game-card:hover:not(:disabled) { transform: translateY(-3px); }
@@ -791,8 +795,7 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1100px) {
-  .game-cards { grid-template-columns: 1fr; }
-  .game-card { min-height: 0; flex-direction: row; align-items: center; gap: 12px; }
+  .game-card { min-height: 0; }
 }
 @media (max-width: 980px) {
   body { overflow: auto; }
@@ -839,6 +842,11 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
 }
 @media (max-width: 560px) {
   .game-tiles { grid-template-columns: 1fr; }
+  .game-cards { gap: 8px; }
+  .game-card { padding: 10px 30px 10px 10px; gap: 8px; min-height: 58px; }
+  .game-card .gc-art { font-size: 1.6rem; }
+  .game-card b { font-size: 0.98rem; }
+  .game-card small { display: none; }
   .game-tile { min-height: 0; padding: 14px 70px 14px 14px; }
   .word-tiles i { width: 22px; height: 32px; font-size: 1rem; }
   .game-bar .info { display: none; }

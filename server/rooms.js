@@ -3,6 +3,7 @@ const KartCore = require('../public/js/shared/kart-core');
 const { Pictionary } = require('./games/pictionary');
 const { KartBattle } = require('./games/kart');
 const { Telephone } = require('./games/telephone');
+const { BallChain } = require('./games/ballchain');
 
 const MAX_PLAYERS = 30;
 const AVATAR_COUNT = 24; // public/js/avatars.js
@@ -13,6 +14,7 @@ const TEAMS = [
   { id: 1, name: 'Blue', color: '#3b82f6' },
   { id: 2, name: 'Green', color: '#22c55e' },
   { id: 3, name: 'Yellow', color: '#eab308' },
+  { id: 4, name: 'Purple', color: '#a855f7' },
 ];
 
 const PLAYER_COLORS = [
@@ -24,6 +26,7 @@ const GAMES = {
   pictionary: Pictionary,
   kart: KartBattle,
   telephone: Telephone,
+  ballchain: BallChain,
 };
 
 const DEFAULT_SETTINGS = {
@@ -61,6 +64,11 @@ const DEFAULT_SETTINGS = {
   telMode: 'normal', // normal | speedrun | knockoff | complement | secret
   telPace: 'normal', // slow | normal | fast
   telReveal: 'host', // host | auto
+  // Ball & Chain
+  bcCourses: 3, // 1 | 3 | 5 courses per match
+  bcLength: 'normal', // short | normal | long (4 / 6 / 8 obstacle sections)
+  bcRope: 'normal', // short | normal | long
+  bcSabotage: true, // first team to a checkpoint drops a trap on the teams behind
 };
 
 const WORD_MODES = ['normal', 'hidden', 'combo'];
@@ -74,6 +82,8 @@ const ARENA_KILL_LIMITS = [0, 5, 10, 15, 25];
 const ARENA_RESPAWNS = ['fast', 'normal', 'slow'];
 const ARENA_HEALTHS = ['low', 'normal', 'high'];
 const MAX_KART_BOTS = 15;
+const BC_COURSES = [1, 3, 5];
+const BC_SIZES = ['short', 'normal', 'long'];
 
 function makeCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -265,6 +275,8 @@ class Room {
     if (this.connectedPlayers.length < min) {
       return { ok: false, error: `Need at least ${min} players for this mode` };
     }
+    const why = GameClass.canStart?.(this);
+    if (why) return { ok: false, error: why };
     this.game?.stop();
     this.state = 'playing';
     this.lastResults = null;
@@ -400,6 +412,14 @@ class Room {
         }
         if (ARENA_RESPAWNS.includes(data?.arenaRespawn)) s.arenaRespawn = data.arenaRespawn;
         if (ARENA_HEALTHS.includes(data?.arenaHealth)) s.arenaHealth = data.arenaHealth;
+        // Ball & Chain options
+        if (data?.bcCourses !== undefined) {
+          const n = strictInt(data.bcCourses, 1, 5);
+          if (n !== null && BC_COURSES.includes(n)) s.bcCourses = n;
+        }
+        if (BC_SIZES.includes(data?.bcLength)) s.bcLength = data.bcLength;
+        if (BC_SIZES.includes(data?.bcRope)) s.bcRope = data.bcRope;
+        if (typeof data?.bcSabotage === 'boolean') s.bcSabotage = data.bcSabotage;
         this.broadcastState();
         return reply({ ok: true });
       }

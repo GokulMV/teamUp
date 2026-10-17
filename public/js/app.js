@@ -14,8 +14,8 @@
 
   const socket = io({ transports: ['websocket', 'polling'] });
 
-  const MODE_NAMES = { pictionary: 'Pictionary', kart: 'Kart Battle', telephone: 'Telephone' };
-  const MODE_ICONS = { pictionary: '🎨', kart: '🏎️', telephone: '📞' };
+  const MODE_NAMES = { pictionary: 'Pictionary', kart: 'Kart Battle', telephone: 'Telephone', ballchain: 'Ball & Chain' };
+  const MODE_ICONS = { pictionary: '🎨', kart: '🏎️', telephone: '📞', ballchain: '⛓️' };
 
   // Settings shown in the lobby for each game, rendered by renderSettings().
   //   type: toggle | stepper | seg | slider | cards | maps | items | text
@@ -70,6 +70,18 @@
       { key: 'kartReverse', type: 'toggle', label: 'Reverse direction', hint: 'Drive the circuit backwards', def: false, adv: true, show: (s) => s.kartMode === 'race' },
       { key: 'arenaRespawn', type: 'seg', label: 'Respawn', def: 'normal', adv: true, options: [['fast', 'Fast'], ['normal', 'Normal'], ['slow', 'Slow']], show: (s) => s.kartMode === 'arena' },
       { key: 'arenaHealth', type: 'seg', label: 'Health', def: 'normal', adv: true, options: [['low', 'Glass'], ['normal', 'Normal'], ['high', 'Tank']], show: (s) => s.kartMode === 'arena' },
+    ],
+    ballchain: [
+      {
+        key: 'bcLength', type: 'cards', label: 'Course length', block: true, def: 'normal', options: [
+          ['short', '⚡', 'Short', '4 obstacles · about 1½ min'],
+          ['normal', '⛓️', 'Normal', '6 obstacles · about 2½ min'],
+          ['long', '🏔️', 'Long', '8 obstacles · about 3½ min'],
+        ],
+      },
+      { key: 'bcCourses', type: 'seg', label: 'Courses', hint: 'Per match', def: 3, options: [[1, '1'], [3, '3'], [5, '5']] },
+      { key: 'bcRope', type: 'seg', label: 'Rope length', def: 'normal', options: [['short', 'Short'], ['normal', 'Normal'], ['long', 'Long']] },
+      { key: 'bcSabotage', type: 'toggle', label: 'Sabotage', hint: 'First team to a checkpoint drops a trap on the teams behind', def: true },
     ],
   };
 
@@ -291,8 +303,8 @@
     $('side-count').textContent = `${online}`;
     $('btn-stop').classList.toggle('hidden', !(isHost() && room.state === 'playing'));
     document.body.classList.toggle('in-lobby', room.state === 'lobby');
-    // Kart games take over the screen: on phones the page jumps back to the top and chat becomes a sheet.
-    const kartPlaying = room.state === 'playing' && room.settings.mode === 'kart';
+    // Kart games (and Ball & Chain) take over the screen: on phones the page jumps back to the top and chat becomes a sheet.
+    const kartPlaying = room.state === 'playing' && (room.settings.mode === 'kart' || room.settings.mode === 'ballchain');
     if (kartPlaying && !document.body.classList.contains('kart-playing') && matchMedia('(pointer: coarse), (max-width: 980px)').matches) window.scrollTo(0, 0);
     document.body.classList.toggle('kart-playing', kartPlaying);
     if (!kartPlaying) { toggleChat(false); closeMenu(); setUnread(0); $('chat-ticker').innerHTML = ''; }
@@ -367,7 +379,7 @@
     renderMe();
     renderPeople(room);
   }
-  $('team-count').innerHTML = [2, 3, 4].map((n) => `<button data-n="${n}">${n} teams</button>`).join('');
+  $('team-count').innerHTML = [2, 3, 4, 5].map((n) => `<button data-n="${n}">${n} teams</button>`).join('');
 
   const valueOf = (def, s) => (s[def.key] !== undefined ? s[def.key] : def.def);
 
@@ -671,6 +683,10 @@
         ? `<div class="muted" style="width:100%">Most loved albums</div>${r.favorites.map((f, i) => `<div class="step ${['first', 'second', 'third'][i]}">${avatarHtml(f.avatar)}<span class="nm">${escapeHtml(f.owner)}</span><span class="pts">${f.reactions} reactions</span></div>`).join('')}`
         : '';
       $('results-players').innerHTML = '';
+      return;
+    }
+    if (Games[r.mode]?.renderResults) {
+      Games[r.mode].renderResults(r, { $, avatarHtml, escapeHtml, teamById });
       return;
     }
     const arena = r.mode === 'kart' && r.map === 'arena';

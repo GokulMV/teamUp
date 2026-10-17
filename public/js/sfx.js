@@ -191,6 +191,30 @@
     } catch { /* already stopped */ }
   }
 
+  // Short CC0 samples (Kenney starter kits) layered under some Ball & Chain sounds.
+  const BC_SAMPLES = { impact: '/audio/ballchain/impact.mp3', coin: '/audio/ballchain/coin.mp3', jump: '/audio/ballchain/jump.mp3' };
+  const samples = {};
+  let bcRumble = null;
+  function loadSample(url) {
+    if (samples[url] || !ctx) return;
+    samples[url] = { buf: null };
+    fetch(url).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)).then((buf) => { samples[url].buf = buf; }).catch(() => {});
+  }
+  function sample(url, vol = 0.5, rate = 1) {
+    if (!ready()) return;
+    loadSample(url);
+    const buf = samples[url]?.buf;
+    if (!buf) return;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    const g = ctx.createGain();
+    g.gain.value = vol;
+    src.connect(g);
+    g.connect(master);
+    src.start();
+  }
+
   // Star power: a bright looping arpeggio over a bass pulse while it lasts.
   let starNodes = [];
   function starStop() {
@@ -350,6 +374,76 @@
     block() {
       tone(1250, { type: 'triangle', dur: 0.18, vol: 0.16, slide: 0.55 });
       noise({ dur: 0.15, vol: 0.2, filter: 'highpass', from: 3000, to: 1200 });
+    },
+
+    // ---------- Ball & Chain ----------
+    bcPreload() { if (ctx) Object.values(BC_SAMPLES).forEach(loadSample); },
+    bcHeave() {
+      sample(BC_SAMPLES.jump, 0.35, 0.8 + Math.random() * 0.15);
+      noise({ dur: 0.22, vol: 0.28, filter: 'bandpass', from: 500, to: 1800, q: 1.2 });
+      tone(150, { type: 'triangle', dur: 0.2, vol: 0.25, slide: 1.6 });
+    },
+    // A chord that stacks up with every extra teammate in sync.
+    bcSync(k) {
+      const notes = [523, 659, 784, 1046, 1319, 1568];
+      for (let i = 0; i < Math.min(k, notes.length); i++) tone(notes[i], { type: 'triangle', dur: 0.5, vol: 0.13, delay: i * 0.045 });
+      if (k >= 3) tone(notes[Math.min(k, notes.length) - 1] * 2, { type: 'sine', dur: 0.6, vol: 0.07, delay: 0.2 });
+    },
+    bcCreak(v = 0.5) {
+      noise({ dur: 0.18 + v * 0.15, vol: 0.12 + v * 0.12, filter: 'bandpass', from: 380 + Math.random() * 200, to: 900, q: 9 });
+      tone(90 + Math.random() * 30, { type: 'sawtooth', dur: 0.2, vol: 0.05 * v, slide: 1.3 });
+    },
+    // Continuous rolling rumble for your team's ball (level 0..1).
+    bcRumble(level) {
+      if (!ready()) { Sfx.bcRumbleStop(); return; }
+      const t = ctx.currentTime;
+      if (!bcRumble) {
+        const src = ctx.createBufferSource();
+        src.buffer = noiseBuf; src.loop = true;
+        const f = ctx.createBiquadFilter();
+        f.type = 'lowpass'; f.frequency.value = 160; f.Q.value = 0.9;
+        const g = ctx.createGain();
+        g.gain.value = 0;
+        src.connect(f); f.connect(g); g.connect(master);
+        src.start();
+        bcRumble = { src, f, g };
+      }
+      bcRumble.g.gain.setTargetAtTime(level * 0.32, t, 0.12);
+      bcRumble.f.frequency.setTargetAtTime(110 + level * 260, t, 0.15);
+    },
+    bcRumbleStop() {
+      if (!bcRumble) return;
+      const r = bcRumble;
+      bcRumble = null;
+      try { r.g.gain.setTargetAtTime(0, ctx.currentTime, 0.08); setTimeout(() => r.src.stop(), 400); } catch { /* already stopped */ }
+    },
+    bcCheckpoint() {
+      sample(BC_SAMPLES.coin, 0.4);
+      [659, 784, 988, 1319].forEach((f, i) => tone(f, { type: 'square', dur: 0.14, vol: 0.09, delay: 0.05 + i * 0.07 }));
+      tone(1319, { type: 'triangle', dur: 0.6, vol: 0.1, delay: 0.33 });
+    },
+    // A falling whistle, then a soft cloud poof.
+    bcFall(big) {
+      tone(big ? 1100 : 1400, { type: 'sine', dur: big ? 0.9 : 0.6, vol: 0.16, slide: 0.25, attack: 0.02 });
+      noise({ dur: 0.8, vol: big ? 0.3 : 0.15, filter: 'lowpass', from: 900, to: 120, delay: big ? 0.8 : 0.55 });
+    },
+    bcLaunch() {
+      tone(180, { type: 'sine', dur: 0.55, vol: 0.3, slide: 4 });
+      noise({ dur: 0.6, vol: 0.3, filter: 'bandpass', from: 400, to: 4000, q: 0.8 });
+      [1046, 1319, 1568].forEach((f, i) => tone(f, { type: 'triangle', dur: 0.25, vol: 0.08, delay: 0.25 + i * 0.06 }));
+    },
+    bcBoing(v = 1) {
+      const p = Math.max(0.3, Math.min(1, v));
+      tone(420, { type: 'sine', dur: 0.35, vol: 0.28 * p, slide: 0.45 });
+      tone(840, { type: 'triangle', dur: 0.22, vol: 0.08 * p, slide: 0.6 });
+    },
+    bcThump(v = 1) {
+      const p = Math.max(0.2, Math.min(1, v));
+      sample(BC_SAMPLES.impact, 0.5 * p, 0.9 + Math.random() * 0.2);
+      tone(80, { type: 'sine', dur: 0.25, vol: 0.3 * p, slide: 0.5 });
+    },
+    bcAlarm() {
+      [0, 0.28].forEach((d) => tone(880, { type: 'square', dur: 0.22, vol: 0.1, slide: 0.6, delay: d }));
     },
   };
   window.Sfx = Sfx;
