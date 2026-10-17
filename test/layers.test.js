@@ -315,3 +315,56 @@ test('layers: snapshots carry every height; respawns use the spawn point height'
   assert.ok(spawn, 'respawned on a spawn point');
   assert.strictEqual(b.z, spawn.z);
 });
+
+test('layers: CPU drivers on The Keep collect boxes, use the jump pads and keep out of the moat', () => {
+  const Bots = require('../server/games/kart-bots');
+  const events = [];
+  const room = {
+    settings: { kartMode: 'arena', kartMap: 'keep', arenaTime: 600, kartItems: 'none', kartBots: 6, kartBotSkill: 'normal' },
+    players: new Map(), connectedPlayers: [], emit: (e, d) => events.push([e, d]), emitTo() {}, teamList: () => [], systemMessage() {},
+    buildResults: () => ({ players: [] }), finishGame() {},
+  };
+  const game = new KartBattle(room);
+  assert.strictEqual(game.map.id, 'keep');
+  assert.ok(game.layered);
+  Bots.makeBots(6, { skill: 'normal' }).forEach((b, i) => game.addKart(b, i));
+  game.items = ['rocket']; // boxes to chase, nothing that knocks anyone in
+  game.boxes = game.map.itemBoxes.map(() => 0);
+  game.rollItem = () => null;
+  game.phase = 'racing';
+  game.raceStart = 0;
+  let boxes = 0;
+  let high = 0;
+  for (let i = 0; i < 60 * 30; i++) {
+    game.time += 1 / 30;
+    const before = game.boxes.filter((b) => b > 0).length;
+    game.simulate(1 / 30);
+    boxes += Math.max(0, game.boxes.filter((b) => b > 0).length - before);
+    for (const k of game.karts.values()) if (k.dead <= 0 && k.z > 50) high += 1 / 30;
+  }
+  assert.strictEqual(game.botError, false);
+  const drowned = events.filter(([e, d]) => e === 'game:kart:hit' && d.kill && d.by < 0).length;
+  const pads = events.filter(([e]) => e === 'game:kart:pad').length;
+  assert.ok(boxes >= 20, `${boxes} boxes picked up`);
+  assert.ok(pads >= 1, `${pads} jump pad launches`);
+  assert.ok(high > 5, `${high.toFixed(0)} kart-seconds up on the walls, the roof or a tower`);
+  assert.ok(drowned <= 5, `${drowned} karts drove into the moat by themselves`);
+});
+
+test('layers: The Keep: every spawn and box stands on its floor, and each is reachable from every other', () => {
+  const map = K.getMap('keep', 'arena');
+  assert.ok(map.layered);
+  const nav = map.nav;
+  const home = nav.nodeAt(map.spawns[0].x, map.spawns[0].y, map.spawns[0].z);
+  const there = nav.reach(home);
+  const back = nav.reach(home, true);
+  for (const [what, list] of [['spawn', map.spawns], ['box', map.itemBoxes]]) {
+    list.forEach((p, i) => {
+      assert.strictEqual(map.floorAt(p.x, p.y, p.z + L.STEP, 0), p.z, `${what} ${i} on its floor`);
+      if (what === 'spawn') assert.strictEqual(map.walls(p.x, p.y, p.z, L.KART_R, null), 0, `spawn ${i} clear of walls`);
+      const id = nav.nodeAt(p.x, p.y, p.z);
+      assert.ok(id >= 0 && there[id] && back[id], `${what} ${i} at (${p.x}, ${p.y}, ${p.z}) reachable both ways`);
+    });
+  }
+  assert.ok(map.spawns.length >= 24 && map.itemBoxes.length >= 20);
+});

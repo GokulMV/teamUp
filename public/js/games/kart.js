@@ -294,11 +294,13 @@ window.Games.kart = {
       if (!row) return;
       const [, x, y, a1000, speed, , , , , flags, , , , air = 0, fx = 0] = row;
       const angle = a1000 / 1000;
+      // Layered arenas send the kart's height (20); elsewhere the physics finds it from the ground.
+      const z = map?.layered ? row[20] : null;
       if (!local || flags & F.dead) {
-        local = { x, y, angle, heading: angle, speed, boost: 0, spin: 0, trackIndex: null, dead: !!(flags & F.dead), air: 0, z: null };
+        local = { x, y, angle, heading: angle, speed, boost: 0, spin: 0, trackIndex: null, dead: !!(flags & F.dead), air: 0, z };
         return;
       }
-      if (local.dead) { local.dead = false; Object.assign(local, { x, y, angle, heading: angle, speed, air: 0, z: null }); snapCamera = true; return; }
+      if (local.dead) { local.dead = false; Object.assign(local, { x, y, angle, heading: angle, speed, air: 0, z, vz: 0, gz: null, kx: 0, ky: 0 }); snapCamera = true; return; }
       // Falls into water/lava/gaps are the server's call: freeze on its position until we are fished out.
       if (fx & 1) { Object.assign(local, { x, y, angle, heading: angle, speed: 0, falling: true, air: 0, z: null, drift: 0 }); return; }
       if (local.falling) {
@@ -317,9 +319,11 @@ window.Games.kart = {
       if (spinning) local.spin = Math.max(local.spin, 0.15);
       if (flags & F.boost) local.boost = Math.max(local.boost, 0.15);
       local.flags = flags; // star / shrink change the top speed in prediction too
-      if (err > 140 || spinning || s.phase !== 'racing') {
+      // Layered arenas: on a different floor from the server (both on the ground), it's a real miss.
+      const level = map?.layered && Math.abs((local.z ?? z) - z) > 45 && !(local.air > 0) && !air;
+      if (err > 140 || level || spinning || s.phase !== 'racing') {
         Object.assign(local, { x: sx, y: sy, angle, heading: angle, speed });
-        if (err > 140) Object.assign(local, { air, z: null, vz: 0, trackIndex: null });
+        if (err > 140 || level || (map?.layered && s.phase !== 'racing')) Object.assign(local, { air, z, vz: 0, gz: null, trackIndex: null });
         predPrev = null;
       } else {
         let da = angle - local.angle;
@@ -359,6 +363,7 @@ window.Games.kart = {
           angle: p[3] / 1000 + da * ff, speed: r[4], flags: r[9], hp: r[12],
           air: (p[13] || 0) + ((r[13] || 0) - (p[13] || 0)) * ff, fx: r[14] || 0,
           item: r[7], ammo: r[8], roulette: r[15] || 0, sticky: r[19] || 0,
+          z: r[20] === undefined ? undefined : p[20] + (r[20] - p[20]) * ff, // layered arenas
         };
       });
       // Shots: [id, kind, x, y, angle, progress/altitude, ...kind-specific extras]
@@ -370,11 +375,14 @@ window.Games.kart = {
         da = Math.atan2(Math.sin(da), Math.cos(da));
         // Bouncers turn sharply at a wall: snap the angle instead of sweeping through it.
         const ang = Math.abs(da) > 0.6 ? r[4] / 1000 : p[4] / 1000 + da * f;
-        return [r[0], r[1], p[2] + (r[2] - p[2]) * f, p[3] + (r[3] - p[3]) * f, ang, p[5] + (r[5] - p[5]) * f, ...r.slice(6)];
+        const out = [r[0], r[1], p[2] + (r[2] - p[2]) * f, p[3] + (r[3] - p[3]) * f, ang, p[5] + (r[5] - p[5]) * f, ...r.slice(6)];
+        // Layered arenas: the height at the end of the row glides too.
+        if (map?.layered) out[out.length - 1] = p[p.length - 1] + (r[r.length - 1] - p[p.length - 1]) * f;
+        return out;
       });
       // Decoys show red to their owner's team: [id, x, y, owner idx, ours].
       const ours = (idx) => idx === myIdx || (teamMode() && kartsByIdx.get(idx)?.team === kartsByIdx.get(myIdx)?.team);
-      const decoys = (b.data.d || []).map((r) => [r[0], r[1], r[2], r[3], ours(r[3])]);
+      const decoys = (b.data.d || []).map((r) => [r[0], r[1], r[2], r[3], ours(r[3]), r[4]]);
       return { karts, shots, mines: b.data.m || [], bananas: b.data.b || [], boxes: b.data.x, stickies: b.data.g || [], decoys };
     }
 
@@ -609,7 +617,7 @@ window.Games.kart = {
       while (deathMarks.length && now - deathMarks[0].t > 2000) deathMarks.shift();
       const placeOf = new Map(latest.k.map((r) => [r[0], r[6]]));
       minimap.draw({
-        karts: karts.map((k) => ({ x: k.x, y: k.y, angle: k.angle, color: colorOf(kartsByIdx.get(k.idx)), me: k.idx === myIdx, dead: !!(k.flags & F.dead), place: placeOf.get(k.idx) })),
+        karts: karts.map((k) => ({ x: k.x, y: k.y, z: k.z, angle: k.angle, color: colorOf(kartsByIdx.get(k.idx)), me: k.idx === myIdx, dead: !!(k.flags & F.dead), place: placeOf.get(k.idx) })),
         boxes: latest?.x,
         deaths: deathMarks.map((d) => ({ x: d.x, y: d.y, color: d.color, age: (now - d.t) / 1000 })),
         comets: (latest?.s || []).filter((sh) => sh[1] === 5).map((sh) => ({ x: sh[2], y: sh[3] })), // comets in flight
@@ -680,13 +688,22 @@ window.Games.kart = {
       // Predict my kart locally so steering feels instant, in fixed server-sized steps
       // (with the same item speed factors as the server).
       const myRow = latest?.k.find((r) => r[0] === myIdx);
+      // The game clock the moving obstacles run on: the server's, plus the half round trip my
+      // predicted kart is ahead of it (so they line up with my kart; everyone else is a little behind).
+      const mapTime = clockOffset === null ? 0 : (now - clockOffset + rtt / 2) / 1000;
       if (local && !local.dead && !local.falling && latest?.phase === 'racing') {
         predictAcc = Math.min(predictAcc + dt, STEP * 4);
+        let stepT = mapTime - predictAcc;
         while (predictAcc >= STEP) {
           predictAcc -= STEP;
-          predPrev = { x: local.x, y: local.y, angle: local.angle, air: local.air || 0 };
+          stepT += STEP;
+          predPrev = { x: local.x, y: local.y, angle: local.angle, air: local.air || 0, z: local.z };
           const fl = local.flags || 0;
-          K.stepKart(local, input, STEP, map, { speed: (info.speedMul || 1) * K.itemSpeed(fl & F.star, fl & F.shrunk), noFall: true, frozen: !!(fl & F.frozen) });
+          K.stepKart(local, input, STEP, map, { speed: (info.speedMul || 1) * K.itemSpeed(fl & F.star, fl & F.shrunk), noFall: true, frozen: !!(fl & F.frozen), t: stepT });
+          // Layered arenas: my own jump pads and bumpers sound right away (the server sends the rest).
+          if (local.padded) { local.padded = 0; Sfx.pad?.(1); }
+          if (local.bumper) { local.bumper = 0; Sfx.boing?.(1); }
+          if (local.whacked) { local.whacked = 0; Sfx.bump?.(1); }
           // Hops, tricks and landings feel instant for your own kart.
           if (local.hopping && !prev.hopping) Sfx.hop?.();
           prev.hopping = !!local.hopping;
@@ -727,6 +744,7 @@ window.Games.kart = {
         me.angle = local.angle + da * f;
         me.speed = local.speed;
         me.air = Math.max(0, (local.air || 0) + ((local.air || 0) - pp.air) * f);
+        if (map.layered && Number.isFinite(local.z)) me.z = local.z + (local.z - (Number.isFinite(pp.z) ? pp.z : local.z)) * f;
         me.fx = (me.fx & ~2) | (local.trick > 0 ? 2 : 0);
       }
       // Aiming a bomb: the ring shows where it comes down (ahead of where I'll be by then).
@@ -734,7 +752,12 @@ window.Games.kart = {
         if (!bombReady() || !me || me.flags & F.dead || me.fx & 1) releaseFire(true);
         else {
           const lead = 26 + Math.max(0, local ? local.speed : me.speed) * K.ITEM_FX.bomb.flight + K.bombLead(aimPower(now));
-          view3d?.setAim?.({ x: me.x + Math.cos(me.angle) * lead, z: me.y + Math.sin(me.angle) * lead, fromX: me.x, fromZ: me.y, t: now / 1000 });
+          const ax = me.x + Math.cos(me.angle) * lead;
+          const az = me.y + Math.sin(me.angle) * lead;
+          // Layered arenas: the floor it comes down on (a deck a little above me, or anything below).
+          let y;
+          if (map.layered) { const f = map.floorAt(ax, az, (me.z || 0) + 60, mapTime); y = Number.isFinite(f) ? f : map.deathZ; }
+          view3d?.setAim?.({ x: ax, z: az, y, fromX: me.x, fromZ: me.y, fromY: map.layered ? me.z : undefined, t: now / 1000 });
         }
       }
 
@@ -783,10 +806,11 @@ window.Games.kart = {
           karts,
           myIdx,
           countdown: grid,
+          mapTime,
           focus: focusKart ? {
-            idx: focusKart.idx, x: focusKart.x, y: focusKart.y, angle: focusKart.angle, air: focusKart.air || 0, grid,
+            idx: focusKart.idx, x: focusKart.x, y: focusKart.y, z: focusKart.z, angle: focusKart.angle, air: focusKart.air || 0, grid,
             spinning: !!(focusKart.flags & F.spin) || !!(focusKart.fx & 1), boost: !!(focusKart.flags & F.boost), star: !!(focusKart.flags & F.star), snap: snapCamera,
-          } : mode === 'orbit' ? { idx: -1, x: myRow[1], y: myRow[2], angle: orbitAngle, snap: snapCamera } : null,
+          } : mode === 'orbit' ? { idx: -1, x: myRow[1], y: myRow[2], z: myRow[20], angle: orbitAngle, snap: snapCamera } : null,
         }, dt, now);
         if (mode) snapCamera = false;
       }
@@ -796,7 +820,7 @@ window.Games.kart = {
 
     const ITEM_SOUND = { rocket: 'rocket', triple: 'rocket', bomb: 'rocket', banana: 'banana', mine: 'banana', shield: 'shield', ghost: 'shield', bouncer: 'bouncer', ink: 'ink',
       snowball: 'snowThrow', sticky: 'banana', spikes: 'spikes', decoy: 'banana' };
-    const QUIET_HITS = ['mine', 'bomb', 'shock', 'lava', 'comet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy']; // their own effect covers it
+    const QUIET_HITS = ['mine', 'bomb', 'shock', 'lava', 'water', 'void', 'comet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy']; // their own effect covers it
     const nameOf = (idx) => api.escapeHtml(kartsByIdx.get(idx)?.name || 'Someone');
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -822,23 +846,36 @@ window.Games.kart = {
             local.ky = (local.ky || 0) + mine[3];
           }
           Sfx.bump(Math.min(1, 0.2 + data.p) * (mine ? 1 : volumeAt(data.x, data.y)));
-          view3d?.bumpFx?.(data.x, data.y, data.p, data.ram >= 0);
+          view3d?.bumpFx?.(data.x, data.y, data.p, data.ram >= 0, data.z);
           if (mine && data.ram >= 0) hud.callout(data.ram === myIdx ? 'RAM!' : 'RAMMED!', { kind: 'small', hold: 650 });
         } else if (event === 'game:kart:swap') {
           if (data.idx === myIdx) Sfx.swap?.();
+        } else if (event === 'game:kart:pad') {
+          // Layered arenas: a jump pad fired (my own kart's whoosh already played in prediction).
+          view3d?.padFx?.(data.i);
+          const k = latest?.k.find((r) => r[0] === data.idx);
+          if (data.idx !== myIdx && k) Sfx.pad?.(volumeAt(k[1], k[2]) * 0.7);
+        } else if (event === 'game:kart:bumper') {
+          const k = latest?.k.find((r) => r[0] === data.idx);
+          const b = map?.bumpers?.[data.i];
+          view3d?.bumperFx?.(data.i, b?.x, b?.y, b ? b.z + b.h * 0.6 : undefined);
+          if (data.idx !== myIdx && k) Sfx.boing?.(volumeAt(k[1], k[2]));
+        } else if (event === 'game:kart:whack') {
+          view3d?.bumpFx?.(data.x, data.y, 1, true, data.z);
+          if (data.idx !== myIdx) Sfx.bump(volumeAt(data.x, data.y));
         } else if (event === 'game:kart:use') {
           if (data.idx === myIdx && ITEM_SOUND[data.item]) Sfx[ITEM_SOUND[data.item]]?.();
           if (data.idx === myIdx && data.item === 'minigun') Sfx.minigun?.();
           if (data.item === 'comet') Sfx.comet?.();
           view3d?.itemUsed?.(data.idx, data.item);
         } else if (event === 'game:kart:boom') {
-          view3d?.explode(data.x, data.y, data.kind, data.r);
+          view3d?.explode(data.x, data.y, data.kind, data.r, null, data.z);
           const v = volumeAt(data.x, data.y);
           if (data.kind === 'bouncer') Sfx.bump(v * 0.5);
           else Sfx.explosion(v * (data.kind === 'rocket' ? 0.5 : 1));
           if (data.kind === 'comet') Sfx.thunder?.(v * 0.6);
         } else if (event === 'game:kart:shock') {
-          view3d?.shock(data.x, data.y, data.r);
+          view3d?.shock(data.x, data.y, data.r, data.z);
           Sfx.shock?.(volumeAt(data.x, data.y));
         } else if (event === 'game:kart:thunder') {
           // Bolts on every victim (where their kart is drawn); everyone's screen flashes.
@@ -854,7 +891,7 @@ window.Games.kart = {
           view3d?.inkBurst?.(data.idx, data.hit);
         } else if (event === 'game:kart:block') {
           const k = latest?.k.find((r) => r[0] === data.idx);
-          if (k) view3d?.block(k[1], k[2], data.kind);
+          if (k) view3d?.block(k[1], k[2], data.kind, k[20]);
           if (data.idx === myIdx) {
             Sfx.block?.();
             hud.callout('BLOCKED', { kind: 'small', hold: 700, sub: data.kind === 'trail' ? 'Your item took the hit' : '' });
@@ -862,12 +899,16 @@ window.Games.kart = {
         } else if (event === 'game:kart:hit') {
           const kind = data.kill ? 'kill' : data.kind === 'bullet' ? 'bullet' : 'hit';
           const victim = kartsByIdx.get(data.target);
-          if (!QUIET_HITS.includes(data.kind) || data.kill) view3d?.explode(data.x, data.y, kind, data.kill ? 90 : 50, colorOf(victim));
+          if (data.kind === 'water') {
+            // Into the moat: a splash where the kart went in.
+            view3d?.fallFx(data.x, data.y, 'water', data.z);
+            Sfx.splash?.(data.target === myIdx ? 1 : volumeAt(data.x, data.y));
+          } else if (!QUIET_HITS.includes(data.kind) || data.kill) view3d?.explode(data.x, data.y, kind, data.kill ? 90 : 50, colorOf(victim), data.z);
           if (!['bullet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy'].includes(data.kind) || data.kill) Sfx.explosion(volumeAt(data.x, data.y) * (data.kill ? 1 : 0.4));
           if (data.kind === 'snowball') Sfx.freeze?.(data.target === myIdx ? 1 : volumeAt(data.x, data.y));
-          if (data.kind === 'spikes') view3d?.bumpFx?.(data.x, data.y, 1, true);
+          if (data.kind === 'spikes') view3d?.bumpFx?.(data.x, data.y, 1, true, data.z);
           if (data.shatter) {
-            view3d?.shatter?.(data.x, data.y);
+            view3d?.shatter?.(data.x, data.y, data.z);
             Sfx.shatter?.(data.target === myIdx || data.by === myIdx ? 1 : volumeAt(data.x, data.y));
             if (data.by === myIdx) hud.callout('SHATTER!', { kind: 'small gold', hold: 900 });
           }

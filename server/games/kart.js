@@ -1365,12 +1365,13 @@ class KartBattle {
       ], k.z)),
       // shots: [id, kind (1 rocket, 2 bullet, 3 bomb, 4 bouncer, 5 comet, 6 snowball, 7 sticky), x, y, angle*1000,
       //   flight progress 0-100 (bombs, stickies)]
-      //   bombs add [landing x, landing y]; comets send their altitude as the 6th field and add [target kart idx]
+      //   bombs add [landing x, landing y] (layered arenas: and landing z); comets send their altitude as the
+      //   6th field and add [target kart idx]
       s: this.shots.map((s) => {
         const row = [s.id, SHOT_CODE[s.kind], Math.round(s.x), Math.round(s.y), Math.round(s.angle * 1000),
           s.kind === 'bomb' ? Math.round((s.age / BOMB.flight) * 100) : s.kind === 'comet' ? Math.round(s.alt)
             : s.kind === 'sticky' ? Math.round((s.age / STICKY.flight) * 100) : 0];
-        if (s.kind === 'bomb') row.push(Math.round(s.lx), Math.round(s.ly));
+        if (s.kind === 'bomb') row.push(Math.round(s.lx), Math.round(s.ly), ...(this.layered ? [Math.round(s.lz)] : []));
         else if (s.kind === 'comet') row.push(s.target ? this.karts.get(s.target).idx : -1);
         return this.zRow(row, s.z);
       }),

@@ -264,6 +264,15 @@
     }
     const floorAt = (x, y, zMax, t) => floorInfo(x, y, zMax, t).z;
 
+    // Is the point (x, y, z) inside something solid? (The camera keeps out of walls.)
+    function inside(x, y, z) {
+      for (const s of near(x, y)) {
+        if (z <= s.z0 || z >= s.z1 || !contains(s, x, y)) continue;
+        if (z < topAt(s, x, y)) return true;
+      }
+      return false;
+    }
+
     // Lowest underside above zFrom over (x, y) (Infinity: open sky).
     function ceilingAt(x, y, zFrom) {
       let best = Infinity;
@@ -505,7 +514,7 @@
       center: [S / 2, S / 2], bounds: { minX: 0, minY: 0, maxX: S, maxY: S },
       solids, movers, bumpers, pads, hazards, itemBoxes, spawns, boostPads,
       obstacles: [], // the flat arenas' round obstacles (none here: everything is a solid)
-      floorInfo, floorAt, ceilingAt, walls, collide, blocked, hazardAt, padAt, heightAt,
+      floorInfo, floorAt, ceilingAt, walls, collide, blocked, hazardAt, padAt, heightAt, inside,
       sliderAt, pendulumAt, bridgeAt, bridgeFrame,
     };
     let nav = null;
@@ -555,6 +564,24 @@
     }
     const count = xs.length;
     const adj = Array.from({ length: count }, () => []);
+    // Spots worth avoiding unless they're the way: jump pads (you'd be flown off somewhere) and the
+    // reach of sweeper arms and pendulums. Driving into them costs extra.
+    const cost = new Float32Array(count).fill(1);
+    const padOf = new Int16Array(count).fill(-1);
+    for (let id = 0; id < count; id++) {
+      for (const p of map.pads) {
+        if (Math.abs(zs[id] - p.z) <= 8 && (xs[id] - p.x) ** 2 + (ys[id] - p.y) ** 2 < (p.r + KART_R) ** 2) { cost[id] = 4; padOf[id] = p.i; }
+      }
+      for (const m of map.movers) {
+        if (m.type === 'sweeper' && Math.abs(zs[id] - m.z) < 20 && (xs[id] - m.x) ** 2 + (ys[id] - m.y) ** 2 < (m.len + 30) ** 2) cost[id] = Math.max(cost[id], 3);
+        if (m.type === 'pendulum') {
+          const reach = m.len * Math.sin(m.amp) + m.r + KART_R;
+          const along = m.axis === 'y' ? Math.abs(ys[id] - m.y) : Math.abs(xs[id] - m.x);
+          const across = m.axis === 'y' ? Math.abs(xs[id] - m.x) : Math.abs(ys[id] - m.y);
+          if (along < reach && across < m.r + KART_R + 10 && zs[id] < m.z && zs[id] > m.z - m.len - m.r - 10) cost[id] = Math.max(cost[id], 3);
+        }
+      }
+    }
     // Drive from node a towards (bx, by), following the floor: DRIVE, DROP (went down a ledge) or -1.
     const walk = (a, bx, by, bz) => {
       const ax = xs[a];
@@ -562,18 +589,33 @@
       let z = zs[a];
       const d = Math.hypot(bx - ax, by - ay);
       const steps = Math.max(2, Math.ceil(d / 8));
+      const stepLen = d / steps;
       let dropped = false;
+      let airZ = z; // just off a ledge the kart is still up in the air, clear of the side it fell from
+      let air = 0;
       for (let s = 1; s <= steps; s++) {
         const u = s / steps;
         const x = ax + (bx - ax) * u;
         const y = ay + (by - ay) * u;
         const f = map.floorAt(x, y, z + STEP, null);
         if (!Number.isFinite(f) || map.hazardAt(x, y, f)) return -1;
-        if (f < z - STEP) dropped = true;
+        if (f < z - STEP) { dropped = true; airZ = z; air = KART_R * 2; }
         z = f;
-        if (map.walls(x, y, z, KART_R - 4, null) > 0) return -1;
+        const wz = air > 0 ? airZ : z;
+        air -= stepLen;
+        if (map.walls(x, y, wz, KART_R - 4, null) > 0) return -1;
       }
-      return Math.abs(z - bz) <= 2 ? (dropped ? DROP : DRIVE) : -1;
+      if (Math.abs(z - bz) > 2) return -1;
+      if (dropped) {
+        // Coming off a ledge the kart carries on a way after it lands: that must be safe ground too.
+        const ux = (bx - ax) / (d || 1);
+        const uy = (by - ay) / (d || 1);
+        for (const run of [40, 80]) {
+          const f = map.floorAt(bx + ux * run, by + uy * run, z + STEP, null);
+          if (!Number.isFinite(f) || map.hazardAt(bx + ux * run, by + uy * run, f)) return -1;
+        }
+      }
+      return dropped ? DROP : DRIVE;
     };
     for (let j = 0; j < N; j++) {
       for (let i = 0; i < N; i++) {
@@ -591,7 +633,7 @@
               for (const b of there) {
                 const kind = walk(a, xs[b], ys[b], zs[b]);
                 if (kind < 0) continue;
-                const len = Math.hypot(xs[b] - xs[a], ys[b] - ys[a]);
+                const len = Math.hypot(xs[b] - xs[a], ys[b] - ys[a]) * cost[b];
                 adj[a].push([b, kind === DROP ? len * 1.15 : len, kind]);
               }
             }
@@ -711,10 +753,127 @@
       return seen;
     }
 
-    return { cell: NAV, n: N, count, xs, ys, zs, bridgeOf, adj, cellNodes, nodeAt, path, reach, DRIVE, DROP, FLY };
+    return { cell: NAV, n: N, count, xs, ys, zs, bridgeOf, padOf, cost, adj, cellNodes, nodeAt, path, reach, DRIVE, DROP, FLY };
   }
 
+  // ---------- symmetry helpers for map data ----------
+  // A quarter turn (clockwise on screen, y pointing down) of a piece of map data about the middle
+  // of a size-S arena: rectangles, points, ramp directions, drawbridge hinges, headings, pad
+  // targets, pendulum axes and slider offsets all turn with it.
+  const DIR_TURN = { 'x+': 'y+', 'y+': 'x-', 'x-': 'y-', 'y-': 'x+' };
+  const HINGE_TURN = { y1: 'x0', x0: 'y0', y0: 'x1', x1: 'y1' };
+  function turn(o, S, times = 1) {
+    let r = o;
+    for (let i = 0; i < times; i++) {
+      const q = { ...r };
+      if (r.x0 !== undefined) { q.x0 = S - r.y1; q.x1 = S - r.y0; q.y0 = r.x0; q.y1 = r.x1; }
+      if (r.x !== undefined) { q.x = S - r.y; q.y = r.x; }
+      if (r.to) q.to = [S - r.to[1], r.to[0], r.to[2]];
+      if (r.dir) q.dir = DIR_TURN[r.dir];
+      if (r.hinge) q.hinge = HINGE_TURN[r.hinge];
+      if (r.angle !== undefined) q.angle = r.angle + Math.PI / 2;
+      if (r.axis) q.axis = r.axis === 'x' ? 'y' : 'x';
+      if (r.dx !== undefined || r.dy !== undefined) { q.dx = -(r.dy || 0); q.dy = r.dx || 0; }
+      r = q;
+    }
+    return r;
+  }
+  // Every list in `part` four times (a quarter turn apart) or twice (half a turn apart), merged into `into`.
+  function symmetric(into, part, S, turns = [0, 1, 2, 3]) {
+    for (const [key, list] of Object.entries(part)) {
+      into[key] = into[key] || [];
+      for (const k of turns) for (const o of list) into[key].push(turn(o, S, k));
+    }
+    return into;
+  }
+
+  // ---------- the arenas ----------
+  // The Keep: a castle on an island in a moat. Siege camp all round the outside; four gates whose
+  // drawbridges rise in turn (north and south together, then east and west), each gate passage
+  // running under the wall walk; ramps up onto the walls; flying bridges from every gate over the
+  // courtyard to the keep's roof, with its hall underneath; corner towers you reach by jump pad;
+  // siege pads that fly you over the moat onto the walls; quintains and bumpers in the courtyard.
+  function theKeep() {
+    const S = 3200;
+    const WALK = 100;
+    const ROOF = 100;
+    const TOWER = 170;
+    const def = {
+      id: 'keep', name: 'The Keep', emoji: '🏰', theme: 'keep', size: S, hidden: true,
+      blurb: 'Storm the castle: drawbridges, wall walks, tower perches and a moat.',
+      edge: 'wall', deathZ: -320, liquid: { kind: 'water', z: -46 },
+      ground: { z: 0, depth: 60, kind: 'grass', holes: [{ x0: 560, y0: 560, x1: 2640, y1: 2640 }] },
+      blocks: [{ x0: 760, y0: 760, x1: 2440, y1: 2440, z0: -60, z1: 0, kind: 'courtyard' }],
+      deco: [{ kind: 'crown', x: S / 2, y: S / 2, z: ROOF }],
+    };
+    // The north side; the other three are the same, turned.
+    // Battlements: a parapet a kart can't climb (nor slip through), merlons standing on it.
+    const merlons = [{ x0: 960, y0: 760, x1: 2240, y1: 776, z0: WALK, z1: WALK + 13, kind: 'merlon' }];
+    for (let x = 975; x + 30 <= 2225; x += 60) merlons.push({ x0: x, y0: 760, x1: x + 30, y1: 782, z0: WALK, z1: WALK + 28, kind: 'merlon' });
+    // The tower top's rim: crenellated all round the moat side, open towards the courtyard.
+    const TX = 820;
+    for (let i = 0; i < 28; i++) {
+      const a = (i / 28) * Math.PI * 2;
+      const off = Math.abs(((a - Math.PI / 4 + Math.PI * 3) % (Math.PI * 2)) - Math.PI);
+      if (off < 0.95) continue; // the open side, facing the middle of the castle
+      const cx = TX + Math.cos(a) * 124;
+      const cy = TX + Math.sin(a) * 124;
+      const h = i % 2 ? 26 : 14;
+      merlons.push({ x0: cx - 13, y0: cy - 13, x1: cx + 13, y1: cy + 13, z0: TOWER, z1: TOWER + h, kind: 'merlon' });
+    }
+    symmetric(def, {
+      blocks: [
+        // Curtain wall either side of the gate, and the wall walk over the gate passage.
+        { x0: 760, y0: 760, x1: 1510, y1: 880, z0: -60, z1: WALK, kind: 'wall' },
+        { x0: 1690, y0: 760, x1: 2440, y1: 880, z0: -60, z1: WALK, kind: 'wall' },
+        { x0: 1510, y0: 760, x1: 1690, y1: 880, z0: 58, z1: WALK, kind: 'gate' },
+        ...merlons,
+        // A flying bridge from over the gate to the keep's roof (the courtyard road runs underneath).
+        { x0: 1545, y0: 880, x1: 1655, y1: 1400, z0: 82, z1: ROOF, kind: 'bridge' },
+        // The keep: its north wall either side of the door, and a quarter of its roof.
+        { x0: 1400, y0: 1400, x1: 1530, y1: 1430, z0: -60, z1: 76, kind: 'keep' },
+        { x0: 1670, y0: 1400, x1: 1800, y1: 1430, z0: -60, z1: 76, kind: 'keep' },
+        { x0: 1400, y0: 1400, x1: 1600, y1: 1600, z0: 76, z1: ROOF, kind: 'roof' },
+        // The siege camp: tents and crates to hide behind.
+        { x0: 880, y0: 230, x1: 1040, y1: 330, z0: 0, z1: 56, kind: 'tent' },
+        { x0: 2300, y0: 380, x1: 2380, y1: 460, z0: 0, z1: 46, kind: 'crate' },
+        { x0: 1240, y0: 110, x1: 1320, y1: 190, z0: 0, z1: 46, kind: 'crate' },
+      ],
+      ramps: [{ x0: 1000, y0: 880, x1: 1400, y1: 990, z0: 0, z1: WALK, dir: 'x+', base: -20, kind: 'stair' }],
+      cyls: [{ x: 820, y: 820, r: 140, z0: -60, z1: TOWER, kind: 'tower' }],
+      pads: [
+        { x: 960, y: 1080, z: 0, r: 40, to: [840, 840, TOWER], t: 1 }, // up the tower
+        { x: 2150, y: 300, z: 0, r: 44, to: [2150, 822, WALK], t: 1 }, // over the moat onto the wall
+      ],
+      boosts: [{ x: 1250, y: 300, z: 0, angle: 0 }, { x: 1100, y: 822, z: WALK, angle: 0 }],
+      boxes: [
+        { x: 1300, y: 420, z: 0 }, { x: 1900, y: 420, z: 0 }, // siege camp
+        { x: 1250, y: 822, z: WALK }, { x: 800, y: 800, z: TOWER }, // wall walk, tower top
+        { x: 1320, y: 1320, z: 0 }, { x: 1520, y: 1520, z: 0 }, { x: 1600, y: 1490, z: ROOF }, // courtyard, hall, roof
+      ],
+      spawns: [
+        { x: 720, y: 300, z: 0, angle: 0 }, { x: 2000, y: 200, z: 0, angle: Math.PI },
+        { x: 1400, y: 1050, z: 0, angle: Math.PI / 2 }, { x: 1600, y: 1480, z: 0, angle: Math.PI / 2 },
+        { x: 1950, y: 822, z: WALK, angle: Math.PI },
+      ],
+    }, S);
+    // Spawns: one more per side in the siege camp's corners.
+    symmetric(def, { spawns: [{ x: 300, y: 300, z: 0, angle: Math.PI / 4 }] }, S);
+    // Drawbridges: north and south rise together, then east and west, half a cycle later.
+    const bridge = { type: 'drawbridge', x0: 1510, y0: 560, x1: 1690, y1: 760, z: 0, thick: 14, hinge: 'y1', period: 40, at: 26, move: 1.8, hold: 8, max: 1.3 };
+    def.movers = [0, 1, 2, 3].map((k) => ({ ...turn(bridge, S, k), phase: (k % 2) * 0.5 }));
+    // Quintains (north-east, south-west) and bumper clusters (north-west, south-east): half-turn symmetry.
+    symmetric(def, {
+      movers: [{ type: 'sweeper', x: 2010, y: 1190, z: 0, len: 140, w: 12, lo: 5, hi: 21, arms: 2, speed: 1.15, phase: 0, hub: 30 }],
+      bumpers: [{ x: 1170, y: 1190, z: 0, r: 30 }, { x: 1260, y: 1215, z: 0, r: 30 }, { x: 1195, y: 1280, z: 0, r: 30 }],
+    }, S, [0, 2]);
+    def.cyls.push({ x: S / 2, y: S / 2, r: 34, z0: -60, z1: 76, kind: 'pillar' }); // holds up the keep's roof
+    return def;
+  }
+
+  const ARENAS = [theKeep()];
+
   return {
-    KART_R, KART_H, STEP, NAV, EDGE, makeLayeredArena, groundBlocks,
+    KART_R, KART_H, STEP, NAV, EDGE, ARENAS, makeLayeredArena, groundBlocks, turn, symmetric,
   };
 });

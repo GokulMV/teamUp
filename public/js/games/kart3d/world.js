@@ -457,6 +457,12 @@ export const THEMES = {
     ground: () => tex.ground('#2f2826', ['#29221f', '#382f2b', '#221c1a', '#433834']),
     deadTrees: ['almond', 'casuarina'], embers: true, volcanoCone: true, hills: 0x3a2722,
   },
+  // Layered arenas (kart3d/arena3d.js builds their geometry from the map's own materials kit).
+  keep: {
+    sky: [0x4a90d9, 0xd8ecfb], fog: [0xd2e6f5, 2200, 7800], hemi: [0xe4f1ff, 0x5b7a45, 1.2], sun: [0xfff0d4, 2.7],
+    ground: () => tex.ground('#5c9a43', ['#4f8c3a', '#6aab4e']),
+    trees: ['almond', 'casuarina'], bushes: ['grape'], grass: true, clouds: 26, hills: 0x5f8f55, water: 0x35706f,
+  },
 };
 
 // ---------- moonlit-cove trees ----------
@@ -769,12 +775,12 @@ function addVolcanoCone(scene, x, z) {
   return glow;
 }
 
-function boostPad(scene, p) {
+export function boostPad(scene, p) {
   const mat = new THREE.MeshBasicMaterial({ map: tex.chevron().clone(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
   mat.map.needsUpdate = true;
   mat.map.wrapT = THREE.RepeatWrapping;
   const pad = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), mat);
-  pad.position.set(p.x, 1.6, p.y);
+  pad.position.set(p.x, (p.z || 0) + 1.6, p.y); // p.z: the floor it is on (layered arenas)
   pad.rotation.y = -p.angle - Math.PI / 2;
   scene.add(pad);
   return pad;
@@ -968,7 +974,7 @@ export function buildArena(scene, map, theme, ctx) {
 
 // Trees, bushes, grass, cacti, buildings... around a map. `test(min, max)` gives a filter for
 // "this far from the playable area".
-function decorate(scene, map, theme, ctx, bounds, test, half) {
+export function decorate(scene, map, theme, ctx, bounds, test, half) {
   const treeCount = MOBILE ? 140 : 300;
   if (theme.trees) {
     const spots = scatter(treeCount, map, bounds, test(half + 300), 1234);

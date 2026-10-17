@@ -313,6 +313,24 @@
       tone(320, { type: 'sine', dur: 0.25, vol: 0.18 * v, slide: 0.4 });
       for (let i = 0; i < 4; i++) tone(500 + Math.random() * 600, { type: 'sine', dur: 0.08, vol: 0.06 * v, slide: 1.6, delay: 0.25 + i * 0.09 });
     },
+    // Layered arenas: a jump pad's launch (a spring and a rising whoosh), a pinball bumper's boing,
+    // and the bell that rings before a drawbridge goes up.
+    pad(volume = 1) {
+      const v = Math.max(0.05, Math.min(1, volume));
+      tone(150, { type: 'sine', dur: 0.3, vol: 0.4 * v, slide: 3.2 });
+      noise({ dur: 0.55, vol: 0.3 * v, filter: 'bandpass', from: 500, to: 3800, q: 0.9 });
+      tone(620, { type: 'triangle', dur: 0.22, vol: 0.1 * v, slide: 1.8, delay: 0.05 });
+    },
+    boing(volume = 1) {
+      const v = Math.max(0.05, Math.min(1, volume));
+      tone(260, { type: 'sine', dur: 0.28, vol: 0.32 * v, slide: 1.9 });
+      tone(390, { type: 'triangle', dur: 0.2, vol: 0.12 * v, slide: 1.7, delay: 0.03 });
+      noise({ dur: 0.08, vol: 0.2 * v, filter: 'lowpass', from: 1500, to: 300 });
+    },
+    bell(volume = 1) {
+      const v = Math.max(0.05, Math.min(1, volume));
+      for (const [f, k] of [[523, 0.22], [1046, 0.08], [1569, 0.05], [784, 0.06]]) tone(f, { type: 'sine', dur: 1.4, vol: k * v, attack: 0.002 });
+    },
     sizzle(volume = 1) {
       const v = Math.max(0.05, Math.min(1, volume));
       noise({ dur: 1.2, vol: 0.5 * v, filter: 'highpass', from: 5000, to: 1500 });

@@ -11,6 +11,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { MOBILE, THEMES, tex, part, buildArena, loadMoonlit } from './kart3d/world.js';
 import { buildRace } from './kart3d/track.js';
+import { buildLayered } from './kart3d/arena3d.js';
 import { ItemFX, shieldMaterial, shieldGeometry, ghostMaterial, starVariant } from './kart3d/items3d.js';
 import { buildDriver } from './kart3d/driver.js';
 import { loadModel, fitted, partsOf } from './kart3d/models.js';
@@ -415,6 +416,8 @@ export class Kart3D {
   constructor(container, opts) {
     this.map = K.getMap(opts.mapId, opts.type, { reverse: !!opts.reverse });
     this.arena = this.map.type === 'arena';
+    this.layered = !!this.map.layered; // floors at several heights: karts and effects come with their own height
+    this.mapTime = 0; // the game clock the moving obstacles run on
     this.theme = THEMES[this.map.theme] || THEMES.meadow;
     const theme = this.theme;
     this.container = container;
@@ -451,8 +454,8 @@ export class Kart3D {
     this.sun = sun;
     scene.add(sun, sun.target);
 
-    if (this.arena) {
-      // Arenas sit on a flat plain; race tracks build their own terrain.
+    if (this.arena && !this.layered) {
+      // Arenas sit on a flat plain; race tracks (and layered arenas) build their own terrain.
       const ground = new THREE.Mesh(new THREE.PlaneGeometry(16000, 16000), new THREE.MeshStandardMaterial({ map: theme.ground(), roughness: 1 }));
       ground.rotation.x = -Math.PI / 2;
       ground.position.set(this.map.center[0], 0, this.map.center[1]);
@@ -465,7 +468,8 @@ export class Kart3D {
       pads: [], lava: [], spinners: [], clouds: null, uniforms: { uTime: { value: 0 } }, volcanoGlow: null,
       water: [], beams: [], flags: [], vents: [], night: !!theme.night,
     };
-    if (this.arena) buildArena(scene, this.map, theme, this.ctx);
+    if (this.layered) this.layers = buildLayered(scene, this.map, theme, this.ctx);
+    else if (this.arena) buildArena(scene, this.map, theme, this.ctx);
     else buildRace(scene, this.map, theme, this.ctx);
 
     this.camera = new THREE.PerspectiveCamera(62, 1, 2, 20000);
@@ -570,6 +574,7 @@ export class Kart3D {
   // the nearest road sample so lookups stay cheap and never snap to a parallel stretch.
   // `road`: anything inside the walls follows the road (projectiles fly straight over gaps).
   groundAt(x, z, holder, road = false) {
+    if (this.layered) return this.map.heightAt(x, z); // the highest floor (things with a height of their own use floorUnder)
     if (this.arena) return 0;
     let q = this.map.nearestIndex(x, z, holder ? holder.hint : null);
     // A stale hint (the kart was teleported, e.g. fished out of the water) finds the wrong stretch.
@@ -577,6 +582,12 @@ export class Kart3D {
     if (holder) holder.hint = q.index;
     if (road && q.dist <= this.map.wallAt(q)) return q.h;
     return this.map.surfaceAt(x, z, q);
+  }
+
+  // Layered arenas: the floor under (x, z) for something at height y (a kerb's step above counts).
+  floorUnder(x, z, y) {
+    const f = this.map.floorAt(x, z, y + K.Layers.STEP, this.mapTime);
+    return Number.isFinite(f) ? f : y;
   }
 
   setKarts(list, myIdx, teamColorOf) {
@@ -595,16 +606,17 @@ export class Kart3D {
     this.shakeAmt = Math.max(this.shakeAmt, Math.max(0, 1 - d / 700) * amount);
   }
 
-  groundY(x, z) {
-    return this.items.ground(x, z) || 0;
+  // y: a known height (layered arenas send one with every event); otherwise the ground there.
+  groundY(x, z, y) {
+    return this.items.ground(x, z, y) || 0;
   }
 
   // kind: rocket | mine | bomb | kill | hit | bullet | bouncer | comet. `color` is the victim's kart colour (kills).
-  explode(x, z, kind = 'rocket', radius = 60, color = null) {
-    if (kind === 'comet' || kind === 'bouncer' || kind === 'snowball') { this.items.blast(kind, x, z, radius); return; }
-    if (kind === 'sticky' || kind === 'decoy') this.items.blast(kind, x, z, radius); // goo or box shards, then the fireball
-    const gy = this.groundY(x, z);
-    if (kind === 'kill') this.killBurst(x, z, radius, color);
+  explode(x, z, kind = 'rocket', radius = 60, color = null, y) {
+    if (kind === 'comet' || kind === 'bouncer' || kind === 'snowball') { this.items.blast(kind, x, z, radius, y); return; }
+    if (kind === 'sticky' || kind === 'decoy') this.items.blast(kind, x, z, radius, y); // goo or box shards, then the fireball
+    const gy = this.groundY(x, z, y);
+    if (kind === 'kill') this.killBurst(x, z, radius, color, gy);
     if (kind === 'bullet') {
       for (let i = 0; i < 6; i++) {
         const a = Math.random() * Math.PI * 2;
@@ -636,13 +648,13 @@ export class Kart3D {
       const sp = 250 + Math.random() * 200;
       this.fire.emit(x, gy + 10, z, Math.cos(a) * sp, 120 + Math.random() * 200, Math.sin(a) * sp, spark, 6, 0.6, { drag: 1.2, rise: -500 });
     }
-    if (big) this.ring(x, z, 0xffb347, radius * 1.6, 0.5);
+    if (big) this.ring(x, z, 0xffb347, radius * 1.6, 0.5, gy);
     this.shake(x, z, big ? 14 * Math.min(1.5, scale) : 6);
   }
 
   // A smashed kart: a hot core flash, confetti in its colour and a few tumbling body panels.
-  killBurst(x, z, radius, color) {
-    const y = this.groundY(x, z);
+  killBurst(x, z, radius, color, gy) {
+    const y = this.groundY(x, z, gy);
     const col = new THREE.Color(color || '#ffffff');
     const white = new THREE.Color(0xffffff);
     for (let i = 0; i < 36; i++) {
@@ -686,7 +698,7 @@ export class Kart3D {
       const v = D.vel[i];
       v.y -= 900 * dt;
       p.addScaledVector(v, dt);
-      const floor = this.groundY(p.x, p.z) + 2;
+      const floor = (this.layered ? this.floorUnder(p.x, p.z, p.y) : this.groundY(p.x, p.z)) + 2;
       if (p.y < floor) { p.y = floor; v.y *= -0.35; v.x *= 0.6; v.z *= 0.6; D.spin[i] *= 0.6; }
       this.tmpQ.setFromAxisAngle(D.axis[i], D.spin[i] * (1.2 - D.life[i]));
       const sc = D.life[i] > 0 ? Math.min(1, D.life[i] / 0.25) : 0;
@@ -701,10 +713,10 @@ export class Kart3D {
   }
 
   // The lightning ring and arcs carry the shock; a spray of small, fast sparks adds the crackle.
-  shock(x, z, radius) {
-    const gy = this.items.ground(x, z);
-    this.items.shock(x, z, radius);
-    this.ring(x, z, 0xffffff, radius * 0.7, 0.3);
+  shock(x, z, radius, y) {
+    const gy = this.items.ground(x, z, y);
+    this.items.shock(x, z, radius, gy);
+    this.ring(x, z, 0xffffff, radius * 0.7, 0.3, gy);
     for (let i = 0; i < (MOBILE ? 16 : 36); i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = radius * (2.2 + Math.random() * 1.4);
@@ -714,34 +726,42 @@ export class Kart3D {
   }
 
   // A shield (or the item trailing behind a kart, kind 'trail') soaked up a hit.
-  block(x, z, kind) {
-    const gy = this.items.ground(x, z);
+  block(x, z, kind, y) {
+    const gy = this.items.ground(x, z, y);
     const col = kind === 'trail' ? this.colOrange : this.colBlue;
     for (let i = 0; i < 26; i++) {
       const a = Math.random() * Math.PI * 2;
       const e = (Math.random() - 0.3) * Math.PI;
       this.fire.emit(x + Math.cos(a) * 28, gy + 14 + Math.sin(e) * 20, z + Math.sin(a) * 28, Math.cos(a) * 160, 40, Math.sin(a) * 160, col, 8, 0.4, { drag: 3 });
     }
-    this.ring(x, z, kind === 'trail' ? 0xffb347 : 0x93c5fd, 70, 0.3);
+    this.ring(x, z, kind === 'trail' ? 0xffb347 : 0x93c5fd, 70, 0.3, gy);
   }
 
   // A frozen kart got hit: the ice flies off it.
-  shatter(x, z) { this.items.shatter(x, z); this.shake(x, z, 8); }
+  shatter(x, z, y) { this.items.shatter(x, z, y); this.shake(x, z, 8); }
 
   // Aiming a bomb: show where it will land (null hides it).
   setAim(aim) { this.items?.setAim?.(aim); }
 
   // Two karts bumped: a burst of hot sparks where they touched (bigger and brighter for a ram).
-  bumpFx(x, z, power, ram) {
-    const gy = this.items.ground(x, z);
+  bumpFx(x, z, power, ram, y) {
+    const gy = this.items.ground(x, z, y);
     const n = Math.round((MOBILE ? 8 : 16) * (0.4 + power) * (ram ? 1.6 : 1));
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
       const sp = 120 + Math.random() * 220 * (0.5 + power);
       this.fire.emit(x, gy + 10 + Math.random() * 10, z, Math.cos(a) * sp, 60 + Math.random() * 140, Math.sin(a) * sp, i % 3 ? this.colOrange : this.colSnow, 3 + Math.random() * 2, 0.35, { drag: 3, rise: -400 });
     }
-    if (ram) this.ring(x, z, 0xffb347, 60, 0.25);
+    if (ram) this.ring(x, z, 0xffb347, 60, 0.25, gy);
     this.shake(x, z, ram ? 9 : 3 + 5 * power);
+  }
+
+  // Layered arenas: a jump pad fired (its flash; the kart's own whoosh is the client's), a bumper
+  // was hit, a moving obstacle clouted someone.
+  padFx(i) { this.layers?.padFx(i); }
+  bumperFx(i, x, z, y) {
+    this.layers?.bumperHit(i);
+    if (x !== undefined) this.bumpFx(x, z, 0.8, false, y);
   }
 
   sparkle(x, z, y) {
@@ -780,18 +800,18 @@ export class Kart3D {
     this.items.used(this.lastKarts.get(idx), item);
   }
 
-  ring(x, z, color, radius, life) {
+  ring(x, z, color, radius, life, y) {
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.8, 1, 48).rotateX(-Math.PI / 2),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
-    ring.position.set(x, this.groundY(x, z) + 3, z);
+    ring.position.set(x, this.groundY(x, z, y) + 3, z);
     this.scene.add(ring);
     this.effects.push({ mesh: ring, life, max: life, kind: 'ring', radius });
   }
 
-  respawnBeam(x, z) {
+  respawnBeam(x, z, gy) {
     // A ring on the ground, rising sparkles and a short glow column that stays below the chase
     // camera's eye and fades away when the camera is close, so it never whites out your own view.
-    const y = this.groundY(x, z);
+    const y = this.groundY(x, z, gy);
     if (!this.beamTex) {
       const c = document.createElement('canvas');
       c.width = 4; c.height = 64;
@@ -804,7 +824,7 @@ export class Kart3D {
     const beam = new THREE.Mesh(new THREE.CylinderGeometry(18, 24, 62, 24, 1, true),
       new THREE.MeshBasicMaterial({ color: 0x9be7ff, map: this.beamTex, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
     beam.position.set(x, y + 31, z);
-    this.ring(x, z, 0x9be7ff, 56, 0.6);
+    this.ring(x, z, 0x9be7ff, 56, 0.6, y);
     this.scene.add(beam);
     this.effects.push({ mesh: beam, life: 0.8, max: 0.8, kind: 'beam' });
     const col = new THREE.Color(0x9be7ff);
@@ -829,8 +849,8 @@ export class Kart3D {
         const a = Math.random() * Math.PI * 2;
         this.smoke.emit(x + Math.cos(a) * 20, gy + 6, z + Math.sin(a) * 20, Math.cos(a) * 70, 10, Math.sin(a) * 70, this.colSplash, 22, 1.1, { alpha: 0.22, grow: 2.4, drag: 2 });
       }
-      this.ring(x, z, 0xdff6ff, 170, 1.5);
-      this.ring(x, z, 0xffffff, 100, 1.2);
+      this.ring(x, z, 0xdff6ff, 170, 1.5, gy);
+      this.ring(x, z, 0xffffff, 100, 1.2, gy);
     } else if (kind === 'lava') {
       // A burst of flame and embers with a short, light orange-grey puff: never a big dark disc.
       for (let i = 0; i < 46; i++) {
@@ -839,7 +859,7 @@ export class Kart3D {
       }
       const puff = new THREE.Color(0x9a6a52);
       for (let i = 0; i < 10; i++) this.smoke.emit(x + (Math.random() - 0.5) * 40, gy + 12, z + (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 90, 120 + Math.random() * 80, (Math.random() - 0.5) * 90, puff, 15, 0.9, { alpha: 0.35, grow: 1.8, rise: 80 });
-      this.ring(x, z, 0xff8a3d, 120, 0.7);
+      this.ring(x, z, 0xff8a3d, 120, 0.7, gy);
     } else {
       // A gap: a puff of dust (desert canyon) or a burst of neon sparks (city).
       const col = this.theme.night ? new THREE.Color(0xff4fd8) : new THREE.Color(0xd9b68a);
@@ -953,6 +973,7 @@ export class Kart3D {
   //         focus: {idx,x,y,angle,air,spinning,boost,star,grid,snap} }
   update(view, dt, now) {
     const t = now / 1000;
+    if (Number.isFinite(view.mapTime)) this.mapTime = view.mapTime;
     const flameCol = [new THREE.Color(0xffe066), new THREE.Color(0xff8c1a), new THREE.Color(0xff4d00)];
     const smokeCol = new THREE.Color(this.theme.night ? 0x4a4560 : 0x9aa0aa);
     const dustCol = this.dustColor();
@@ -969,7 +990,7 @@ export class Kart3D {
       kart.group.visible = !dead && !blink;
       if (dead) { kart.lastAngle = null; kart.wasDead = true; this.items.releaseKart(kart); continue; }
       this.lastKarts.set(k.idx, k);
-      if (kart.wasDead) { kart.wasDead = false; this.respawnBeam(k.x, k.y); }
+      if (kart.wasDead) { kart.wasDead = false; this.respawnBeam(k.x, k.y, this.layered ? k.z : undefined); }
       // Fell off: sink into the water/lava (or drop into the gap), then wait to be fished out.
       if (fx & 1) {
         if (!kart.falling) {
@@ -1001,12 +1022,18 @@ export class Kart3D {
       // Height: the ground under the kart plus any air. Pitch and roll follow the slope under the
       // wheels; in the air the nose follows the flight path instead.
       const air = k.air || 0;
-      const ground = this.groundAt(k.x, k.y, kart);
-      const y = ground + air;
+      // Layered arenas send each kart's height; elsewhere it stands on the ground plus its air.
+      const ground = this.layered ? this.floorUnder(k.x, k.y, k.z) : this.groundAt(k.x, k.y, kart);
+      const y = this.layered ? k.z : ground + air;
       const airborne = air > 1;
       let pitch = 0;
       let roll = 0;
-      if (!this.arena) {
+      if (this.layered) {
+        // Tilt with ramps; a ledge under one end is ignored (the kart only tips once it's over it).
+        const h = (dx, dz) => { const f = this.floorUnder(k.x + dx, k.y + dz, k.z); return Math.abs(f - k.z) > K.Layers.STEP ? k.z : f; };
+        pitch = Math.atan2(h(cos * 18, sin * 18) - h(-cos * 18, -sin * 18), 36);
+        roll = Math.atan2(h(sin * 12, -cos * 12) - h(-sin * 12, cos * 12), 24);
+      } else if (!this.arena) {
         const hF = this.groundAt(k.x + cos * 18, k.y + sin * 18, kart);
         const hB = this.groundAt(k.x - cos * 18, k.y - sin * 18, kart);
         const hP = this.groundAt(k.x - sin * 12, k.y + cos * 12, kart);
@@ -1199,6 +1226,10 @@ export class Kart3D {
     this.updateEffects(dt);
     this.updateDebris(dt);
     this.updateCamera(view.focus, dt, t);
+    if (this.layers) {
+      const f = view.focus;
+      this.layers.update(this.mapTime, dt, f && f.idx >= 0 ? { x: f.x, y: f.y, z: f.z || 0 } : null, this.camera);
+    }
     this.updateLabels(view, dt, t);
     if (this.composer) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
@@ -1308,7 +1339,13 @@ export class Kart3D {
       // In the arena, pull the camera in when a wall or obstacle is behind the kart, and lift it
       // so it looks over the top instead of into the driver's head.
       let dist = back;
-      if (this.arena) {
+      if (this.layered) {
+        // Layered arenas: nothing solid between the kart and the camera, walls taller than it included.
+        const kz = (focus.z || 0) + 30;
+        for (let d = 24; d <= back; d += 12) {
+          if (this.map.inside(focus.x - ch * d, focus.y - sh * d, kz + (mix('up') - 30) * (d / back))) { dist = Math.max(40, d - 24); break; }
+        }
+      } else if (this.arena) {
         for (let d = 20; d <= back; d += 10) {
           if (this.map.blocked(focus.x - ch * d, focus.y - sh * d, 18)) { dist = Math.max(90, d - 25); break; }
         }
@@ -1324,7 +1361,7 @@ export class Kart3D {
         if (pitch > 0.05) ahead = Math.max(10, (camUp - mix('at')) / Math.tan(pitch) - this.camDist);
       }
       // Heights: the camera rides along with the kart, lagging a little on jumps so they feel big.
-      const fy = this.groundAt(focus.x, focus.y, this.camHint) + (focus.air || 0);
+      const fy = this.layered ? focus.z || 0 : this.groundAt(focus.x, focus.y, this.camHint) + (focus.air || 0);
       this.camY = this.camY === undefined || focus.snap ? fy : this.camY + (fy - this.camY) * Math.min(1, dt * 7);
       const desired = new THREE.Vector3(focus.x - ch * this.camDist, this.camY + camUp, focus.y - sh * this.camDist);
       const look = new THREE.Vector3(focus.x + ch * ahead, this.camY + mix('at') + (fy - this.camY) * 0.7, focus.y + sh * ahead);
@@ -1344,8 +1381,30 @@ export class Kart3D {
           this.camPos.z = focus.y + (dz / hd) * minD;
         }
       }
+      if (this.layered) {
+        // Under a deck, a gate or a roof, the camera ducks in under it too (never lower than just above
+        // the kart); whatever still gets in the way fades out (see arena3d's roofs).
+        const H = K.Layers.KART_H;
+        const ceil = Math.min(this.map.ceilingAt(focus.x, focus.y, fy + H - 1), this.map.ceilingAt(this.camPos.x, this.camPos.z, fy + H - 1));
+        if (Number.isFinite(ceil)) this.camPos.y = Math.min(this.camPos.y, Math.max(fy + 34, ceil - 10));
+        // The smoothed camera can swing through a wall corner as the kart turns: pull it in front.
+        const ax = focus.x;
+        const ay = fy + 30;
+        const az = focus.y;
+        for (let i = 1; i <= 10; i++) {
+          const f = i / 10;
+          const x = ax + (this.camPos.x - ax) * f;
+          const y = ay + (this.camPos.y - ay) * f;
+          const z = az + (this.camPos.z - az) * f;
+          if (!this.map.inside(x, z, y)) continue;
+          const g = Math.max(0.15, f - 0.12);
+          this.camPos.set(ax + (this.camPos.x - ax) * g, ay + (this.camPos.y - ay) * g, az + (this.camPos.z - az) * g);
+          break;
+        }
+      }
       // ...nor sink into the hillside behind it (grid cam, chase cam and death cam alike).
-      this.camGround = this.groundAt(this.camPos.x, this.camPos.z, this.camHint2 || (this.camHint2 = { hint: null }));
+      this.camGround = this.layered ? this.floorUnder(this.camPos.x, this.camPos.z, Math.min(this.camPos.y, fy + 40))
+        : this.groundAt(this.camPos.x, this.camPos.z, this.camHint2 || (this.camHint2 = { hint: null }));
       if (this.camPos.y < this.camGround + 28) this.camPos.y = this.camGround + 28;
       // Aim for about 74 degrees of horizontal view. Portrait phones can't have that without a
       // fish-eye, so their vertical view tops out at 100 degrees (about 60 across on a phone).
@@ -1366,7 +1425,7 @@ export class Kart3D {
       this.sun.target.position.set(focus.x, fy, focus.y);
     } else {
       const [cx, cz] = this.map.center;
-      if (this.topY === undefined) this.topY = this.arena ? 0 : Math.max(...this.map.heights);
+      if (this.topY === undefined) this.topY = this.layered ? Math.max(...this.map.solids.map((s) => s.z1)) : this.arena ? 0 : Math.max(...this.map.heights);
       this.camera.position.set(cx + Math.cos(t * 0.1) * 2600, this.topY + 1700, cz + Math.sin(t * 0.1) * 2600);
       this.camera.lookAt(cx, this.topY * 0.5, cz);
       this.camGround = this.topY;

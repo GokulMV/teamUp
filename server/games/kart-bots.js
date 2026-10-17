@@ -142,16 +142,21 @@ function threatened(game, k) {
 
 // Rivals relative to this kart: nearest in front (within aim cone), nearest
 // behind, nearest overall and how many are close by.
+// Layered arenas: `near` counts climbing (a rival up on the walls is further than it looks) and
+// front/behind/close only see rivals on the same level (shots and traps stay on their own floor).
 function scan(game, k, aimTol) {
   const res = { front: null, frontD: Infinity, frontErr: 0, behind: null, behindD: Infinity, near: null, nearD: Infinity, close: 0 };
   const cosA = Math.cos(k.angle);
   const sinA = Math.sin(k.angle);
+  const layered = !!game.layered;
   for (const r of game.karts.values()) {
     if (r === k || r.dead > 0 || r.finished || game.isFriendly(r.id, k.id)) continue;
     const dx = r.x - k.x;
     const dy = r.y - k.y;
     const d = Math.hypot(dx, dy);
-    if (d < res.nearD) { res.nearD = d; res.near = r; }
+    const dz = layered ? Math.abs((r.z || 0) - (k.z || 0)) : 0;
+    if (d + dz * 2.5 < res.nearD) { res.nearD = d + dz * 2.5; res.near = r; }
+    if (dz > 40) continue;
     if (d < 320) res.close++;
     if (d < 1) continue;
     const fwd = (dx * cosA + dy * sinA) / d;
@@ -512,6 +517,262 @@ function arenaDrive(game, k, ai, sk, input) {
   setSteer(input, err, 0.06);
 }
 
+// ---------- layered arenas ----------
+// The same goals as the flat arena (boxes, hunting, fleeing, roaming), but the way there is a path
+// over the map's navigation grid: up ramps, off ledges, over jump pads, across drawbridges only
+// while they're down for a while yet, never into the moat. The kart steers at a point a little way
+// along the path and swerves round bumpers, sweeper arms and pendulums.
+function layeredGoal(game, k, ai, sk) {
+  const map = game.map;
+  const s = scan(game, k, sk.aim);
+  const hpFrac = k.hp / (game.hpMax || 100);
+  const weapon = (it) => !!it && !['ghost', 'shield', 'boost'].includes(it);
+  const armed = weapon(k.item) || weapon(k.item2) || k.gun > 0;
+  const kz = k.z || 0;
+  const far = (p) => Math.hypot(p.x - k.x, p.y - k.y) + Math.abs((p.z || 0) - kz) * 2.5;
+  ai.target = null;
+  if (k.sticky && s.near) { ai.mode = 'hunt'; ai.target = s.near; return; }
+  if (hpFrac < 0.3 && s.near && s.nearD < 650) {
+    // Run for the spawn point furthest from the threat.
+    ai.mode = 'flee';
+    let best = map.spawns[0];
+    let bestD = -1;
+    for (const p of map.spawns) {
+      const d = Math.hypot(p.x - s.near.x, p.y - s.near.y) + Math.abs(p.z - (s.near.z || 0)) * 2;
+      if (d > bestD) { bestD = d; best = p; }
+    }
+    ai.goal = best;
+    return;
+  }
+  if (!armed && !(k.item && k.item2) && game.boxes.length) {
+    let best = -1;
+    let bestD = Infinity;
+    for (let i = 0; i < game.boxes.length; i++) {
+      if (game.boxes[i] > 0) continue;
+      const d = far(map.itemBoxes[i]);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best >= 0) { ai.mode = 'box'; ai.goal = map.itemBoxes[best]; return; }
+  }
+  if (s.near && (armed || !game.boxes.length || s.nearD < 500)) { ai.mode = 'hunt'; ai.target = s.near; return; }
+  if (ai.mode !== 'roam' || ai.roamClock <= 0 || !ai.goal || far(ai.goal) < 120) {
+    // Wander somewhere, up on the high ground as often as not (that's where the fun is).
+    const high = map.spawns.filter((p) => p.z > 40).concat(map.itemBoxes.filter((b) => b.z > 40));
+    ai.goal = high.length && Math.random() < 0.5 ? high[Math.floor(Math.random() * high.length)] : map.spawns[Math.floor(Math.random() * map.spawns.length)];
+    ai.roamClock = 6;
+  }
+  ai.mode = 'roam';
+}
+
+function planPath(game, k, ai, goal) {
+  const map = game.map;
+  const nav = map.nav;
+  const t = game.time;
+  const from = nav.nodeAt(k.x, k.y, k.z || 0);
+  const to = nav.nodeAt(goal.x, goal.y, goal.z || 0, 3);
+  // A drawbridge is only worth driving onto while it stays down for a good while yet (but a kart
+  // already on one can always drive off it).
+  const onBridge = from >= 0 ? nav.bridgeOf[from] : -1;
+  const avoid = (e, b) => {
+    const bi = nav.bridgeOf[b];
+    if (bi < 0 || bi === onBridge) return false;
+    const st = map.bridgeAt(map.movers[bi], t);
+    return !st.down || st.rise < 6;
+  };
+  ai.path = nav.path(from, to, avoid);
+  ai.pi = 0;
+  ai.planAt = t;
+  ai.planTo = to;
+  ai.offPath = 0;
+  return !!ai.path;
+}
+
+// Layered arenas: would a kart at height z go to its doom at (x, y)? (the void, the moat, lava)
+function deadly(map, x, y, z, t) {
+  const f = map.floorAt(x, y, z + K.Layers.STEP, t);
+  return !Number.isFinite(f) || !!map.hazardAt(x, y, f);
+}
+// Can a kart drive straight from where it is to (x, y) on its floor (no wall, no drop to its doom)?
+function clearLine(map, k, x, y, t) {
+  const kz = k.z || 0;
+  const d = Math.hypot(x - k.x, y - k.y);
+  const n = Math.ceil(d / 22);
+  for (let i = 1; i <= n; i++) {
+    const px = k.x + ((x - k.x) * i) / n;
+    const py = k.y + ((y - k.y) * i) / n;
+    if (deadly(map, px, py, kz, t) || map.blocked(px, py, 14, kz, t)) return false;
+  }
+  return true;
+}
+
+function layeredDrive(game, k, ai, sk, input) {
+  const map = game.map;
+  const nav = map.nav;
+  const t = game.time;
+  const kz = k.z || 0;
+  const tgt = ai.target;
+  if (ai.mode === 'hunt' && (!tgt || tgt.dead > 0)) { ai.mode = 'roam'; ai.goal = null; }
+  let goal = ai.goal;
+  if (ai.mode === 'hunt') {
+    // Lead the target a little (better bots lead more).
+    const lead = Math.min(0.8, Math.hypot(tgt.x - k.x, tgt.y - k.y) / 1000) * sk.lead;
+    goal = { x: tgt.x + Math.cos(tgt.angle) * tgt.speed * lead, y: tgt.y + Math.sin(tgt.angle) * tgt.speed * lead, z: tgt.z || 0 };
+  }
+  if (!goal) goal = { x: map.center[0], y: map.center[1], z: 0 };
+  const replan = ai.mode === 'hunt' ? 0.7 : 2.5;
+  if (!ai.path || t - ai.planAt > replan || ai.offPath > 0.5 || (ai.pi >= ai.path.length - 1 && t - ai.planAt > 0.3)) {
+    if (!planPath(game, k, ai, goal)) {
+      // No way there right now (the drawbridges are up): roam somewhere this side can reach.
+      for (let tries = 0; tries < 4 && !ai.path; tries++) {
+        ai.goal = map.spawns[Math.floor(Math.random() * map.spawns.length)];
+        goal = ai.goal;
+        planPath(game, k, ai, goal);
+      }
+      ai.mode = 'roam';
+      ai.roamClock = 4;
+    }
+  }
+  if (!ai.path) {
+    // Nowhere to go from here (yet): sit tight rather than drive off blind.
+    Object.assign(input, { up: false, down: false, left: false, right: false, drift: false });
+    return;
+  }
+
+  // Follow the path: drop the nodes we've passed, then aim a little way further along it.
+  let tx = goal.x;
+  let ty = goal.y;
+  const v = Math.max(0, k.speed);
+  if (ai.path && ai.path.length > 1) {
+    const P = ai.path;
+    while (ai.pi < P.length - 1) {
+      const id = P[ai.pi];
+      if (Math.hypot(nav.xs[id] - k.x, nav.ys[id] - k.y) < 56 && Math.abs(nav.zs[id] - kz) < 30) ai.pi++;
+      else break;
+    }
+    const cur = P[ai.pi];
+    const off = Math.hypot(nav.xs[cur] - k.x, nav.ys[cur] - k.y);
+    ai.offPath = off > 170 || Math.abs(nav.zs[cur] - kz) > 45 ? ai.offPath + 1 / 30 : 0;
+    const look = 70 + v * 0.22;
+    let j = ai.pi;
+    let along = Math.hypot(nav.xs[cur] - k.x, nav.ys[cur] - k.y);
+    while (j < P.length - 1 && along < look) {
+      // A jump pad ahead: drive right onto it (don't cut the corner past it). A level change ahead
+      // (ramp, drop): no further. And never cut a corner across the moat or into a wall.
+      if (nav.padOf[P[j]] >= 0) break;
+      const nx = nav.xs[P[j + 1]];
+      const ny = nav.ys[P[j + 1]];
+      if (Math.abs(nav.zs[P[j + 1]] - kz) > 30 && j > ai.pi) break;
+      if (!clearLine(map, k, nx, ny, t)) break;
+      along += Math.hypot(nx - nav.xs[P[j]], ny - nav.ys[P[j]]);
+      j++;
+    }
+    tx = nav.xs[P[j]];
+    ty = nav.ys[P[j]];
+    const pad = nav.padOf[P[j]];
+    if (pad >= 0) { tx = map.pads[pad].x; ty = map.pads[pad].y; }
+  }
+  // The last stretch on the same floor: straight for the box or the rival (if nothing's in between).
+  const dist = Math.hypot(goal.x - k.x, goal.y - k.y);
+  if (Math.abs((goal.z || 0) - kz) < 25 && dist < 170 && clearLine(map, k, goal.x, goal.y, t)) { tx = goal.x; ty = goal.y; }
+
+  let vx = tx - k.x;
+  let vy = ty - k.y;
+  const vl = Math.hypot(vx, vy) || 1;
+  vx /= vl;
+  vy /= vl;
+  // Keep clear of bumpers and moving obstacles on this floor.
+  const push = (x, y, r, w) => {
+    const dx = k.x - x;
+    const dy = k.y - y;
+    const d = Math.hypot(dx, dy) || 1;
+    if (d < r) { const f = ((r - d) / r) * w; vx += (dx / d) * f; vy += (dy / d) * f; }
+  };
+  for (const b of map.bumpers) if (Math.abs(b.z - kz) < 30) push(b.x, b.y, b.r + 90, 1.4);
+  for (const m of map.movers) {
+    if (m.type === 'sweeper' && Math.abs(m.z - kz) < 30) {
+      // Repelled by the arm that is coming round, not the hub: aim behind it.
+      const a = m.phase + m.speed * t;
+      for (let i = 0; i < m.arms; i++) {
+        const ang = a + (i * Math.PI * 2) / m.arms + 0.35 * Math.sign(m.speed);
+        const along = Math.max(m.hub, Math.min(m.len, (k.x - m.x) * Math.cos(ang) + (k.y - m.y) * Math.sin(ang)));
+        push(m.x + Math.cos(ang) * along, m.y + Math.sin(ang) * along, 120, 1.6);
+      }
+    } else if (m.type === 'pendulum') {
+      const b = map.pendulumAt(m, t + 0.3);
+      if (b.z - m.r < kz + 40 && b.z + m.r > kz) push(b.x, b.y, m.r + 110, 1.6);
+    }
+  }
+  let want = Math.atan2(vy, vx);
+  // Probe ahead: never drive into a wall, the moat, lava or off into the void.
+  const probe = 60 + v * 0.3;
+  const STEP = K.Layers.STEP;
+  const bad = (a) => {
+    for (const f of [0.35, 0.7, 1]) {
+      const px = k.x + Math.cos(a) * probe * f;
+      const py = k.y + Math.sin(a) * probe * f;
+      if (map.blocked(px, py, 20, kz, t) || deadly(map, px, py, kz, t)) return true;
+    }
+    return false;
+  };
+  // Backing up (to turn onto a rival, or out of a corner) is only safe with floor behind.
+  const behindSafe = () => !deadly(map, k.x - Math.cos(k.angle) * 70, k.y - Math.sin(k.angle) * 70, kz, t);
+  void STEP;
+  if (bad(want)) {
+    if (!bad(want + 0.7)) want += 0.7;
+    else if (!bad(want - 0.7)) want -= 0.7;
+    else if (!bad(want + 1.5)) want += 1.5;
+    else if (!bad(want - 1.5)) want -= 1.5;
+    else {
+      input.up = false;
+      input.down = behindSafe();
+      setSteer(input, wrap(want - k.angle), 0.06);
+      return;
+    }
+  }
+  let err = wrap(want + ai.wobble - k.angle);
+  const gunning = k.gun > 0 || k.item === 'minigun';
+  input.drift = false;
+  input.down = false;
+  input.up = true;
+  // Where the kart will actually go: a turn at speed is a wide arc (and so is going straight on).
+  // If that arc crosses the moat or the void, turn the other way round, or brake till it doesn't.
+  // (Checked for the turn as steered and a wider one, since the kart's heading lags its nose.)
+  const arcBad = (dir) => {
+    for (const rate of [1, 0.6]) {
+      let x = k.x;
+      let y = k.y;
+      let h = k.heading ?? k.angle;
+      const sp = Math.max(v, 90);
+      for (let i = 1; i <= 9; i++) {
+        h += dir * K.PHYS.turnRate * rate * 0.07;
+        x += Math.cos(h) * sp * 0.07;
+        y += Math.sin(h) * sp * 0.07;
+        if (deadly(map, x, y, kz, t)) return true;
+      }
+    }
+    return false;
+  };
+  const turn = Math.abs(err) > 0.25 ? Math.sign(err) : 0;
+  if (v > 50 && arcBad(turn)) {
+    if (turn && !arcBad(-turn) && Math.abs(err) > 1.6) err = -turn; // the long way round, on land
+    else if (!turn && !arcBad(1)) err = 1;
+    else if (!turn && !arcBad(-1)) err = -1;
+    else { input.up = false; input.down = true; }
+  }
+  if (ai.mode === 'hunt' && gunning && dist < 230 && v > 140) input.up = false;
+  if (ai.mode === 'box' && dist < 240 && Math.abs(err) > 0.9 && v > 170) { input.up = false; input.down = true; }
+  if (Math.abs(err) > 2 && v > 250) { input.up = false; input.down = true; }
+  if (ai.mode === 'hunt' && dist < 120 && Math.abs(err) > 0.6 && Math.abs((tgt.z || 0) - kz) < 25 && behindSafe()) {
+    input.up = false;
+    input.down = true;
+    setSteer(input, k.speed < 0 ? -err : err, 0.06);
+    return;
+  }
+  // Braking hard enough to roll backwards: only with floor behind.
+  if (input.down && k.speed < 60 && !behindSafe()) { input.down = false; input.up = true; }
+  setSteer(input, err, 0.06);
+}
+
 function arenaItems(game, k, ai, sk, item = k.item) {
   const s = scan(game, k, sk.aim);
   const hpFrac = k.hp / (game.hpMax || 100);
@@ -579,7 +840,8 @@ function think(game, k, dt) {
     // Ink on the windscreen makes even the best bots wobble.
     const noise = sk.noise + (k.ink > 0 ? 0.35 : 0);
     ai.wobble = noise ? (Math.random() - 0.5) * 2 * noise : 0;
-    if (game.arena) pickArenaGoal(game, k, ai, sk);
+    if (game.layered) layeredGoal(game, k, ai, sk);
+    else if (game.arena) pickArenaGoal(game, k, ai, sk);
   }
 
   // Unstick: back up and turn when pinned against something.
@@ -589,7 +851,8 @@ function think(game, k, dt) {
     return;
   }
   ai.hopNow = false;
-  if (game.arena) arenaDrive(game, k, ai, sk, input);
+  if (game.layered) layeredDrive(game, k, ai, sk, input);
+  else if (game.arena) arenaDrive(game, k, ai, sk, input);
   else {
     raceDrive(game, k, ai, sk, input);
     // Off a ramp: decide once per jump whether to do a trick (press drift at take-off).
@@ -603,8 +866,12 @@ function think(game, k, dt) {
     ai.stuck += dt;
     if (ai.stuck > 0.8) {
       ai.stuck = 0;
-      ai.reverse = 0.6 + Math.random() * 0.4;
-      ai.reverseSteer = input.left ? 1 : input.right ? -1 : (Math.random() < 0.5 ? -1 : 1);
+      const back = !game.layered || !deadly(game.map, k.x - Math.cos(k.angle) * 80, k.y - Math.sin(k.angle) * 80, k.z || 0, game.time);
+      if (back) {
+        ai.reverse = 0.6 + Math.random() * 0.4;
+        ai.reverseSteer = input.left ? 1 : input.right ? -1 : (Math.random() < 0.5 ? -1 : 1);
+      }
+      if (game.layered) ai.path = null; // and find the way again
     }
   } else {
     ai.stuck = Math.max(0, ai.stuck - dt * 2);

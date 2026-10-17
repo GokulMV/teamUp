@@ -627,7 +627,7 @@ class Debris {
       const o = i * 3;
       this.v[o + 1] -= 900 * dt;
       for (let k = 0; k < 3; k++) { this.p[o + k] += this.v[o + k] * dt; this.r[o + k] += this.w[o + k] * dt; }
-      const floor = this.ground(this.p[o], this.p[o + 2]) + this.s[i] * 0.5;
+      const floor = this.ground(this.p[o], this.p[o + 2], this.under ? this.under(this.p[o], this.p[o + 2], this.p[o + 1]) : undefined) + this.s[i] * 0.5;
       if (this.p[o + 1] < floor) {
         this.p[o + 1] = floor;
         this.v[o + 1] = Math.abs(this.v[o + 1]) * 0.35;
@@ -748,8 +748,13 @@ export class ItemFX {
     this.map = r.map;
     this.fire = r.fire;
     this.smoke = r.smoke;
-    // Ground height under (x, z). Flat maps return 0; maps with hills provide heightAt().
-    this.ground = (x, z) => (this.map.heightAt ? this.map.heightAt(x, z) : 0);
+    // Ground height under (x, z): y when it's known (layered arenas give everything its height),
+    // else 0 on flat maps or heightAt() on maps with hills.
+    this.ground = (x, z, y) => (Number.isFinite(y) ? y : this.map.heightAt ? this.map.heightAt(x, z) : 0);
+    // Layered arenas: every shot, trap and decoy row ends with its height.
+    this.layered = !!this.map.layered;
+    const ground = this.ground;
+    this.rowY = (row, x, z) => (this.layered ? row[row.length - 1] : ground(x, z));
     this.pools = {};
     this.shots = new Map(); // shot id -> { kind, obj, marker, last... }
     this.mines = new Map();
@@ -757,6 +762,11 @@ export class ItemFX {
     this.effects = [];
     this.bolts = [];
     this.debris = new Debris(this.scene, MOBILE ? 160 : 400, this.ground);
+    if (this.layered) {
+      // Debris bounces on whatever floor is under it at its own height (it can fall off a ledge).
+      const map = this.map;
+      this.debris.under = (x, z, y) => { const f = map.floorAt(x, z, y + window.KartCore.Layers.STEP, 0); return Number.isFinite(f) ? f : map.deathZ; };
+    }
     this.c = {
       rainbow: [0xff5d73, 0xffb347, 0xfde047, 0x4ade80, 0x38bdf8, 0xa78bfa].map((h) => new THREE.Color(h)),
       flame: [new THREE.Color(0xffe066), new THREE.Color(0xff8c1a), new THREE.Color(0xff4d00)],
@@ -794,9 +804,10 @@ export class ItemFX {
       q.renderOrder = 3;
       const g = new THREE.Group();
       g.add(mesh, q);
-      g.position.set(b.x, this.ground(b.x, b.y) + 22, b.y);
+      const gy = this.ground(b.x, b.y, this.layered ? b.z : undefined);
+      g.position.set(b.x, gy + 22, b.y);
       this.scene.add(g);
-      return { g, mesh, mat, x: b.x, z: b.y, phase: i * 0.7, state: 'on', t: 0 };
+      return { g, mesh, mat, x: b.x, z: b.y, gy, phase: i * 0.7, state: 'on', t: 0 };
     });
   }
 
@@ -851,7 +862,7 @@ export class ItemFX {
       return;
     }
     if (!this.aimMarker) this.aimMarker = this.get('aim');
-    const gy = this.ground(aim.x, aim.z);
+    const gy = this.ground(aim.x, aim.z, aim.y);
     this.aimMarker.position.set(aim.x, gy + 1.6, aim.z);
     this.aimMarker.scale.setScalar(140);
     this.aimMarker.rotation.y = aim.t * 1.5;
@@ -866,7 +877,7 @@ export class ItemFX {
     }
     this.aimDots.visible = true;
     // The same arc a thrown bomb flies (see the bomb shot above), dots marching along it.
-    const g0 = this.ground(aim.fromX, aim.fromZ);
+    const g0 = this.ground(aim.fromX, aim.fromZ, aim.fromY);
     const m4 = new THREE.Matrix4();
     for (let i = 0; i < N; i++) {
       const f = ((i + (aim.t * 2.5) % 1) / N);
@@ -1068,7 +1079,7 @@ export class ItemFX {
       fx.glow.visible = star;
       if (star) fx.glow.scale.setScalar(46 + Math.sin(t * 18) * 5);
     }
-    const gy = this.ground(k.x, k.y);
+    const gy = this.ground(k.x, k.y, this.layered ? k.z : undefined);
     if (star) {
       fx.sparkle -= dt;
       if (fx.sparkle <= 0) {
@@ -1169,7 +1180,7 @@ export class ItemFX {
     let tracers = 0;
     for (const row of list) {
       const [id, kind, x, z, a, p] = row;
-      const gy = this.ground(x, z);
+      const gy = this.rowY(row, x, z);
       const ca = Math.cos(a);
       const sa = Math.sin(a);
       if (kind === SHOT.bullet) {
@@ -1210,8 +1221,9 @@ export class ItemFX {
         trail('smoke', MOBILE ? 20 : 45, (tx, tz) => this.smoke.emit(tx - ca * 38, gy + 15, tz - sa * 38, rand(-8, 8), rand(6, 16), rand(-8, 8), this.c.puff, rand(8, 11), 0.8, { alpha: 0.42, grow: 2.4, drag: 1 }));
       } else if (kind === SHOT.bomb) {
         // Lobbed: arcs up and down, tumbling, fuse fizzing. The landing spot is marked on the ground.
+        // (Layered arenas send the bomb's height on its arc, and where it will land: [.. lx, ly, lz, z].)
         const prog = Math.min(1, (p || 0) / 100);
-        o.position.set(x, gy + 12 + Math.sin(prog * Math.PI) * 110, z);
+        o.position.set(x, this.layered ? gy + 12 : gy + 12 + Math.sin(prog * Math.PI) * 110, z);
         o.rotation.y = -a;
         o.userData.spin.rotation.z -= dt * 7;
         o.userData.spark.scale.setScalar(rand(9, 16));
@@ -1223,7 +1235,7 @@ export class ItemFX {
           const lx = row[6];
           const lz = row[7];
           const size = 140 * (1.25 - 0.25 * prog);
-          s.marker.position.set(lx, this.ground(lx, lz) + 1.5, lz);
+          s.marker.position.set(lx, this.ground(lx, lz, this.layered ? row[8] : undefined) + 1.5, lz);
           s.marker.scale.setScalar(size);
           s.marker.rotation.y = t * 2;
           s.marker.userData.mat.opacity = 0.45 + 0.4 * Math.abs(Math.sin(t * 10));
@@ -1272,7 +1284,7 @@ export class ItemFX {
         if (target && !(target.flags & FLAG.dead)) {
           if (!s.marker) s.marker = this.get('reticle');
           const near = Math.max(0, 1 - Math.hypot(target.x - x, target.y - z) / 2500);
-          s.marker.position.set(target.x, this.ground(target.x, target.y) + 1.6, target.y);
+          s.marker.position.set(target.x, this.ground(target.x, target.y, this.layered ? target.z : undefined) + 1.6, target.y);
           s.marker.scale.setScalar(60 + 50 * (1 - near) + Math.sin(t * 12) * 6);
           s.marker.rotation.y = -t * 3;
           s.marker.userData.mat.opacity = 0.5 + 0.45 * near;
@@ -1303,7 +1315,8 @@ export class ItemFX {
 
   updateMines(list, dt, now) {
     const live = new Set();
-    for (const [id, x, z, armed] of list) {
+    for (const row of list) {
+      const [id, x, z, armed] = row;
       live.add(id);
       let m = this.mines.get(id);
       if (!m) {
@@ -1312,7 +1325,7 @@ export class ItemFX {
         this.mines.set(id, m);
       }
       m.t += dt;
-      const gy = this.ground(x, z);
+      const gy = this.rowY(row, x, z);
       // Dropped: falls and bounces once, then sits flat.
       const drop = Math.max(0, 1 - m.t / 0.35);
       m.obj.position.set(x, gy + 0.3 + Math.abs(Math.cos(m.t * 9)) * 16 * drop * drop, z);
@@ -1338,7 +1351,8 @@ export class ItemFX {
 
   updateBananas(list, dt) {
     const live = new Set();
-    for (const [id, x, z] of list) {
+    for (const row of list) {
+      const [id, x, z] = row;
       live.add(id);
       let b = this.bananas.get(id);
       if (!b) {
@@ -1349,14 +1363,15 @@ export class ItemFX {
       b.t += dt;
       b.x = x;
       b.z = z;
+      b.gy = this.rowY(row, x, z);
       const pop = Math.min(1, b.t / 0.25);
       b.obj.scale.setScalar(0.3 + 0.7 * (1 - (1 - pop) ** 3) + Math.sin(pop * Math.PI) * 0.15);
-      b.obj.position.set(x, this.ground(x, z) + 0.2, z);
+      b.obj.position.set(x, b.gy + 0.2, z);
     }
     for (const [id, b] of this.bananas) {
       if (live.has(id)) continue;
       // Squashed or swept away: peel bits fly off.
-      const gy = this.ground(b.x, b.z);
+      const gy = b.gy ?? this.ground(b.x, b.z);
       for (let i = 0; i < 6; i++) {
         const a = rand(0, TAU);
         this.debris.emit(b.x, gy + 6, b.z, Math.cos(a) * rand(60, 140), rand(150, 300), Math.sin(a) * rand(60, 140), rand(2.5, 4.5), i % 3 ? 0xfacc15 : 0x8a5a1c, rand(0.8, 1.3));
@@ -1369,7 +1384,8 @@ export class ItemFX {
   // Sticky bombs lying on the ground, light blinking slowly: rows [id, x, z].
   updateStickies(list, dt, t) {
     const live = new Set();
-    for (const [id, x, z] of list) {
+    for (const row of list) {
+      const [id, x, z] = row;
       live.add(id);
       let g = this.stickyGround.get(id);
       if (!g) {
@@ -1380,7 +1396,7 @@ export class ItemFX {
       g.t += dt;
       const splat = Math.max(0, 1 - g.t / 0.3);
       g.obj.scale.set(1 + 0.3 * splat, 1 - 0.45 * splat, 1 + 0.3 * splat);
-      g.obj.position.set(x, this.ground(x, z) + 0.2, z);
+      g.obj.position.set(x, this.rowY(row, x, z) + 0.2, z);
       g.obj.userData.light.material = Math.floor(t * 3) % 2 ? models().goo.lightOn : models().goo.lightOff;
     }
     for (const [id, g] of this.stickyGround) {
@@ -1390,11 +1406,12 @@ export class ItemFX {
     }
   }
 
-  // Decoys: rows [id, x, z, owner idx, ours]. They bob like real boxes but spin the other way,
-  // and their "?" hangs upside down; to the owner's team they show red.
+  // Decoys: rows [id, x, z, owner idx, ours, (layered arenas) height]. They bob like real boxes but
+  // spin the other way, and their "?" hangs upside down; to the owner's team they show red.
   updateDecoys(list, dt, t) {
     const live = new Set();
-    for (const [id, x, z, , ours] of list) {
+    for (const row of list) {
+      const [id, x, z, , ours] = row;
       live.add(id);
       let d = this.decoyBoxes.get(id);
       if (!d) {
@@ -1409,7 +1426,7 @@ export class ItemFX {
       const pop = Math.min(1, d.t / 0.55);
       d.obj.scale.setScalar(Math.max(0.01, 1 - Math.cos(pop * Math.PI * 2.5) * Math.exp(-pop * 5)));
       mesh.rotation.set(-(t * 0.9 + d.phase), -(t * 1.3 + d.phase), 0);
-      d.obj.position.set(x, this.ground(x, z) + 22 + Math.sin(t * 2.5 + d.phase) * 4, z);
+      d.obj.position.set(x, this.ground(x, z, this.layered ? row[5] : undefined) + 22 + Math.sin(t * 2.5 + d.phase) * 4, z);
     }
     for (const [id, d] of this.decoyBoxes) {
       if (live.has(id)) continue;
@@ -1419,8 +1436,8 @@ export class ItemFX {
   }
 
   // Ice breaking off a frozen kart that got hit.
-  shatter(x, z) {
-    const gy = this.ground(x, z);
+  shatter(x, z, y) {
+    const gy = this.ground(x, z, y);
     for (let i = 0; i < (MOBILE ? 10 : 20); i++) {
       const a = rand(0, TAU);
       this.debris.emit(x, gy + rand(8, 26), z, Math.cos(a) * rand(120, 300), rand(150, 380), Math.sin(a) * rand(120, 300), rand(3, 7), i % 3 ? 0xc7e9ff : 0xffffff, rand(0.8, 1.3));
@@ -1429,7 +1446,7 @@ export class ItemFX {
       const a = rand(0, TAU);
       this.fire.emit(x, gy + 16, z, Math.cos(a) * rand(100, 260), rand(40, 200), Math.sin(a) * rand(100, 260), i % 2 ? this.c.white : this.c.ice, rand(5, 9), 0.45, { drag: 2.5, rise: -300 });
     }
-    this.r.ring(x, z, 0xbfe3ff, 70, 0.3);
+    this.r.ring(x, z, 0xbfe3ff, 70, 0.3, gy);
   }
 
   // Glossy rainbow "?" boxes: spin and bob; pop into shards when collected; grow back when they return.
@@ -1459,7 +1476,7 @@ export class ItemFX {
       if (!b.g.visible) return;
       b.g.scale.setScalar(Math.max(0.01, s));
       b.mesh.rotation.set(t * 0.9 + b.phase, t * 1.3 + b.phase, 0);
-      b.g.position.y = this.ground(b.x, b.z) + 22 + Math.sin(t * 2.5 + b.phase) * 4;
+      b.g.position.y = b.gy + 22 + Math.sin(t * 2.5 + b.phase) * 4;
     });
   }
 
@@ -1477,7 +1494,7 @@ export class ItemFX {
   }
 
   boxGrow(b) {
-    const y = this.ground(b.x, b.z) + 22;
+    const y = b.gy + 22;
     for (let i = 0; i < 12; i++) {
       const a = (i / 12) * TAU;
       this.fire.emit(b.x + Math.cos(a) * 20, y - 14, b.z + Math.sin(a) * 20, -Math.cos(a) * 30, rand(60, 120), -Math.sin(a) * 30, this.c.rainbow[i % 6], 7, 0.5, { drag: 1.5 });
@@ -1497,8 +1514,8 @@ export class ItemFX {
 
   // kind: comet | bouncer | snowball | sticky | decoy (others are drawn by Kart3D.explode; sticky
   // and decoy get its fireball too).
-  blast(kind, x, z, radius) {
-    const gy = this.ground(x, z);
+  blast(kind, x, z, radius, y) {
+    const gy = this.ground(x, z, y);
     if (kind === 'snowball') {
       for (let i = 0; i < (MOBILE ? 14 : 28); i++) {
         const a = rand(0, TAU);
@@ -1605,30 +1622,30 @@ export class ItemFX {
   }
 
   // Shock: a ring of lightning racing outwards plus bolts arcing to its edge.
-  shock(x, z, radius) {
-    const gy = this.ground(x, z);
+  shock(x, z, radius, y) {
+    const gy = this.ground(x, z, y);
     this.shockRing(x, gy, z, radius, 0.5);
     this.effects.push({ kind: 'arcs', life: 0.5, max: 0.5, x, z, gy, radius, zap: 0, bolts: [] });
   }
 
   // Thunder: a bolt out of the sky onto each victim, with a flash on the ground.
-  // list: [{ x, z, idx }]; each bolt keeps following kart idx (where it is drawn) while it flickers.
+  // list: [{ x, z, idx, y }]; each bolt keeps following kart idx (where it is drawn) while it flickers.
   thunder(list) {
-    for (const { x, z, idx } of list) {
-      const gy = this.ground(x, z);
+    for (const { x, z, idx, y } of list) {
+      const gy = this.ground(x, z, y);
       this.effects.push({ kind: 'strike', life: 0.55, max: 0.55, x, z, gy, idx, zap: 0, bolts: [] });
       for (let i = 0; i < (MOBILE ? 14 : 28); i++) {
         const a = rand(0, TAU);
         this.fire.emit(x, gy + 10, z, Math.cos(a) * rand(80, 260), rand(60, 260), Math.sin(a) * rand(80, 260), i % 3 ? this.c.electric : this.c.white, rand(5, 10), 0.45, { drag: 2, rise: -300 });
       }
-      this.r.ring(x, z, 0xbfd8ff, 90, 0.35);
+      this.r.ring(x, z, 0xbfd8ff, 90, 0.35, gy);
     }
   }
 
   // Ink: dark globs arc from the user to every victim.
   inkBurst(from, targets) {
     if (!from) return;
-    const gy = this.ground(from.x, from.y);
+    const gy = this.ground(from.x, from.y, this.layered ? from.z : undefined);
     for (let i = 0; i < 16; i++) {
       const a = rand(0, TAU);
       this.smoke.emit(from.x, gy + 30, from.y, Math.cos(a) * rand(60, 160), rand(80, 220), Math.sin(a) * rand(60, 160), i % 3 ? this.c.ink : this.c.inkHi, rand(8, 14), 0.8, { alpha: 0.95, rise: -500, drag: 0.6 });
@@ -1647,15 +1664,15 @@ export class ItemFX {
   // Boost/star/shield/ghost activation flourishes.
   used(k, item) {
     if (!k) return;
-    const gy = this.ground(k.x, k.y);
+    const gy = this.ground(k.x, k.y, this.layered ? k.z : undefined);
     if (item === 'star') {
       for (let i = 0; i < 40; i++) {
         const a = rand(0, TAU);
         this.fire.emit(k.x, gy + 16, k.y, Math.cos(a) * rand(100, 260), rand(40, 220), Math.sin(a) * rand(100, 260), this.c.rainbow[i % 6], rand(8, 13), 0.6, { drag: 2.2 });
       }
-      this.r.ring(k.x, k.y, 0xfff3a0, 120, 0.4);
+      this.r.ring(k.x, k.y, 0xfff3a0, 120, 0.4, gy);
     } else if (item === 'shield') {
-      this.r.ring(k.x, k.y, 0x60a5fa, 80, 0.35);
+      this.r.ring(k.x, k.y, 0x60a5fa, 80, 0.35, gy);
     } else if (item === 'ghost') {
       for (let i = 0; i < 20; i++) {
         const a = rand(0, TAU);
@@ -1702,7 +1719,7 @@ export class ItemFX {
         for (const bolt of e.bolts) bolt.mat.opacity = 1 - p;
       } else if (e.kind === 'strike') {
         const k = e.idx !== undefined && this.r.lastKarts.get(e.idx);
-        if (k) { e.x = k.x; e.z = k.y; e.gy = this.ground(k.x, k.y); }
+        if (k) { e.x = k.x; e.z = k.y; e.gy = this.ground(k.x, k.y, this.layered ? k.z : undefined); }
         e.zap -= dt;
         if (e.zap <= 0 && e.life > 0.1) {
           // The bolt flickers: re-drawn a few times, with a branch or two.

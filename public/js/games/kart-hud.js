@@ -198,7 +198,7 @@
         deathShown = true;
         const killer = d.by >= 0 ? ctx.metaOf(d.by) : null;
         const title = killer ? `<span class="kd-kicker">Smashed by</span><span class="kd-who">${tag(killer)}${weaponIcon(d.kind)}</span>`
-          : `<span class="kd-kicker">Wiped out</span><span class="kd-who">${weaponIcon(d.kind || 'boom')}<b>${d.kind === 'lava' ? 'Into the lava' : 'Destroyed'}</b></span>`;
+          : `<span class="kd-kicker">Wiped out</span><span class="kd-who">${weaponIcon(d.kind || 'boom')}<b>${{ lava: 'Into the lava', water: 'Into the moat', void: 'Into the void' }[d.kind] || 'Destroyed'}</b></span>`;
         el.dead.innerHTML = `<div class="kd-ring"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="19" class="bg"/><circle cx="22" cy="22" r="19" class="fg" pathLength="100"/></svg><b></b></div>
           <div class="kd-text">${title}<span class="kd-watch"></span></div>`;
         deathRing = { fg: el.dead.querySelector('.fg'), num: el.dead.querySelector('.kd-ring b'), watch: el.dead.querySelector('.kd-watch'), last: null, watching: undefined };

@@ -412,6 +412,7 @@
         <circle cx="${P(sx, sy).split(',')[0]}" cy="${P(sx, sy).split(',')[1]}" r="2.6" class="mo-start"/></svg>`;
     }
     const r = (v) => ((v / size) * 100).toFixed(2);
+    if (map.layered) return `<svg viewBox="0 0 100 100" class="map-outline" aria-hidden="true"><rect x="0" y="0" width="100" height="100" rx="2" class="mo-floor"/></svg>`;
     return `<svg viewBox="0 0 100 100" class="map-outline" aria-hidden="true">
       <rect x="${r(40)}" y="${r(40)}" width="${r(map.size - 80)}" height="${r(map.size - 80)}" rx="2" class="mo-floor"/>
       ${map.hazards.map((h) => `<circle cx="${r(h.x)}" cy="${r(h.y)}" r="${r(h.r)}" class="mo-lava"/>`).join('')}
@@ -454,6 +455,16 @@
       if (map.water !== null && map.water !== undefined) stats.push('🌊 Water');
       if ((map.liquids || []).some((l) => l.kind === 'lava')) stats.push('🔥 Lava');
       if (map.grip && map.grip < 1) stats.push('🧊 Slippery');
+    } else if (map.layered) {
+      // Layered arenas: how many floors, and what moves or launches you.
+      const levels = new Set(map.solids.filter((sd) => sd.z1 >= -1 && sd.kind !== 'merlon').map((sd) => Math.round(sd.z1 / 20)));
+      stats.push(`📐 ${Math.round(map.size / 20)} m arena`);
+      stats.push(`🏯 ${levels.size} levels`);
+      if (map.pads.length) stats.push(`🚀 ${map.pads.length} jump pads`);
+      const bridges = map.movers.filter((mv) => mv.type === 'drawbridge').length;
+      if (bridges) stats.push(`🌉 ${bridges} drawbridges`);
+      if (map.liquid) stats.push(map.liquid.kind === 'lava' ? '🔥 Lava moat' : '🌊 Moat');
+      else if (map.edge === 'void') stats.push('🕳️ Open edges');
     } else {
       stats.push(`📐 ${Math.round(map.size / 20)} m arena`);
       if (map.hazards.length) stats.push(`🌋 ${map.hazards.length} lava pools`);

@@ -1457,7 +1457,8 @@ test('race maps are built on first use, not when kart-core loads', () => {
     const info = K.mapInfo('coast');
     const after = K.mapsBuilt().length;
     const m = K.getMap('coast', 'race');
-    console.log(JSON.stringify({ before, after, n: list.length, info, built: K.mapsBuilt(), same: K.MAPS.coast === m, keys: Object.keys(K.MAPS).length }));
+    const hidden = Object.keys(K.MAPS).filter((id) => K.mapInfo(id).hidden).length;
+    console.log(JSON.stringify({ before, after, n: list.length, info, built: K.mapsBuilt(), same: K.MAPS.coast === m, keys: Object.keys(K.MAPS).length - hidden }));
   `]).toString();
   const r = JSON.parse(out);
   assert.strictEqual(r.before, 0, 'nothing built on load');

@@ -26,6 +26,13 @@
     volcano: { floor: ['#33271f', '#221a16'], line: 'rgba(255,200,170,0.22)', cracks: true },
   };
   const ARENA_NEUTRAL = { floor: ['#343852', '#25283c'], line: 'rgba(220,220,255,0.26)' };
+  // Layered arenas: each kind of solid in its own muted colour, lighter the higher it stands.
+  const LAYER_KINDS = {
+    grass: '#3d6a33', ground: '#3d6a33', courtyard: '#5b564e', wall: '#8b8576', merlon: '#a29c8c', gate: '#8b8576',
+    bridge: '#7a5432', keep: '#958c7b', roof: '#70737b', tent: '#a83430', crate: '#946030', stair: '#857c6c',
+    tower: '#a39885', pillar: '#958c7b', stone: '#7d7a72',
+  };
+  const LAYER_LIQUID = { water: '#25596a', lava: '#a2381a' };
 
   function rng(seed) {
     let s = seed >>> 0;
@@ -79,6 +86,8 @@
         minX = Math.min(minX, x - h); maxX = Math.max(maxX, x + h);
         minY = Math.min(minY, y - h); maxY = Math.max(maxY, y + h);
       }
+    } else if (map.layered) {
+      minX = 0; minY = 0; maxX = map.size; maxY = map.size;
     } else {
       minX = 40; minY = 40; maxX = map.size - 40; maxY = map.size - 40;
     }
@@ -100,6 +109,7 @@
     g.lineCap = 'round';
     let roadW = 0;
     if (race) roadW = drawRace(g);
+    else if (map.layered) drawLayered(g);
     else drawArena(g);
 
     function drawRace(c) {
@@ -234,6 +244,82 @@
       c.restore();
       c.strokeStyle = th.line; c.lineWidth = 1.2 * k;
       roundRectPath(c, fx + 0.6 * k, fy + 0.6 * k, fw - 1.2 * k, fw - 1.2 * k, rad - 0.6 * k); c.stroke();
+    }
+
+    // A layered arena: the moat (or the void), then every solid by height, lowest first, each with
+    // a soft drop shadow so decks, walls and towers read as standing above what's below them.
+    function drawLayered(c) {
+      const S = map.size;
+      const tops = map.solids.map((sd) => sd.z1);
+      const lo = Math.min(0, ...tops);
+      const hi = Math.max(...tops);
+      const fx = X(0); const fy = Y(0); const fw = S * s;
+      c.save();
+      c.shadowColor = 'rgba(0,0,0,0.5)'; c.shadowBlur = 10 * dpr * k; c.shadowOffsetY = 3 * dpr * k;
+      c.fillStyle = map.liquid ? LAYER_LIQUID[map.liquid.kind] || LAYER_LIQUID.water : '#0d0b1a';
+      roundRectPath(c, fx, fy, fw, fw, 7 * k); c.fill();
+      c.restore();
+      c.save();
+      roundRectPath(c, fx, fy, fw, fw, 7 * k); c.clip();
+      const colour = (kind, z) => {
+        const u = (z - lo) / (hi - lo || 1);
+        const [r, gg, b] = rgb(LAYER_KINDS[kind] || LAYER_KINDS.stone);
+        const f = 0.82 + 0.42 * u;
+        return `rgb(${Math.min(255, r * f) | 0},${Math.min(255, gg * f) | 0},${Math.min(255, b * f) | 0})`;
+      };
+      const shape = (sd) => {
+        c.beginPath();
+        if (sd.type === 2) c.arc(X(sd.x), Y(sd.y), Math.max(1, sd.r * s), 0, TAU);
+        else c.rect(X(sd.x0), Y(sd.y0), (sd.x1 - sd.x0) * s, (sd.y1 - sd.y0) * s);
+      };
+      const solids = map.solids.filter((sd) => sd.kind !== 'bumper' && sd.kind !== 'hub').sort((a, b) => a.z1 - b.z1);
+      for (const sd of solids) {
+        if (sd.z1 > lo + 20) {
+          c.save();
+          c.shadowColor = 'rgba(0,0,0,0.45)'; c.shadowBlur = 2.5 * dpr * k; c.shadowOffsetX = 0.8 * dpr * k; c.shadowOffsetY = 1.2 * dpr * k;
+          c.fillStyle = colour(sd.kind, sd.z1); shape(sd); c.fill();
+          c.restore();
+        }
+        if (sd.type === 1) {
+          // A ramp: shaded from its foot to its top.
+          const lowX = sd.axis ? 0 : sd.sign > 0 ? sd.x0 : sd.x1;
+          const lowY = sd.axis ? (sd.sign > 0 ? sd.y0 : sd.y1) : 0;
+          const gr = sd.axis ? c.createLinearGradient(0, Y(lowY), 0, Y(sd.sign > 0 ? sd.y1 : sd.y0)) : c.createLinearGradient(X(lowX), 0, X(sd.sign > 0 ? sd.x1 : sd.x0), 0);
+          gr.addColorStop(0, colour(sd.kind, sd.zl)); gr.addColorStop(1, colour(sd.kind, sd.zh));
+          c.fillStyle = gr;
+        } else {
+          c.fillStyle = colour(sd.kind, sd.z1);
+        }
+        shape(sd); c.fill();
+      }
+      // Drawbridges (drawn down), jump pads with a dash towards where they land, bumpers.
+      for (const m of map.movers) {
+        if (m.type !== 'drawbridge') continue;
+        c.fillStyle = colour('bridge', m.z);
+        c.fillRect(X(m.x0), Y(m.y0), (m.x1 - m.x0) * s, (m.y1 - m.y0) * s);
+      }
+      c.lineCap = 'round';
+      for (const p of map.pads) {
+        const x = X(p.x); const y = Y(p.y);
+        const a = Math.atan2(p.ty - p.y, p.tx - p.x);
+        c.strokeStyle = 'rgba(125,211,252,0.55)'; c.lineWidth = 1 * k; c.setLineDash([1.5 * k, 2 * k]);
+        c.beginPath(); c.moveTo(x, y); c.lineTo(X(p.tx), Y(p.ty)); c.stroke();
+        c.setLineDash([]);
+        c.fillStyle = '#7dd3fc';
+        c.beginPath(); c.arc(x, y, Math.max(2 * k, p.r * s), 0, TAU); c.fill();
+        c.fillStyle = '#0c4a6e';
+        c.save(); c.translate(x, y); c.rotate(a);
+        c.beginPath(); c.moveTo(2.2 * k, 0); c.lineTo(-1.4 * k, 1.6 * k); c.lineTo(-1.4 * k, -1.6 * k); c.closePath(); c.fill();
+        c.restore();
+      }
+      for (const b of map.bumpers) {
+        c.fillStyle = '#ff4fa3';
+        c.beginPath(); c.arc(X(b.x), Y(b.y), Math.max(1.6 * k, b.r * s), 0, TAU); c.fill();
+      }
+      for (const p of map.boostPads) padChevron(c, X(p.x), Y(p.y), p.angle, 2.2 * k);
+      c.restore();
+      c.strokeStyle = 'rgba(255,240,220,0.28)'; c.lineWidth = 1.2 * k;
+      roundRectPath(c, fx + 0.6 * k, fy + 0.6 * k, fw - 1.2 * k, fw - 1.2 * k, 6.4 * k); c.stroke();
     }
 
     function lava(c, x, y, r, seed) {
@@ -446,6 +532,7 @@
         ctx.save();
         ctx.globalCompositeOperation = 'lighter';
         for (const h of map.hazards) {
+          if (h.r === undefined) continue;
           const x = X(h.x); const y = Y(h.y); const r = h.r * s;
           const gl = ctx.createRadialGradient(x, y, r * 0.2, x, y, r + 5 * k);
           gl.addColorStop(0, `rgba(255,200,90,${a})`); gl.addColorStop(0.7, `rgba(255,110,30,${a * 0.8})`); gl.addColorStop(1, 'rgba(255,80,20,0)');
@@ -509,6 +596,8 @@
       for (const p of rivals) {
         ctx.save();
         ctx.translate(p.sx, p.sy);
+        // Layered arenas: a rival on another floor (above or below you) is drawn faint.
+        if (me && Number.isFinite(me.z) && Number.isFinite(p.kt.z) && Math.abs(p.kt.z - me.z) > 45) ctx.globalAlpha = 0.5;
         if (race) raceBadge(p.kt);
         else chevron(9 * k, p.kt.angle, p.kt.color, 'rgba(10,8,25,0.92)', 1.6 * k);
         ctx.restore();

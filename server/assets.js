@@ -24,6 +24,7 @@ const MODULE_IMPORTS = [
   '/js/games/kart3d/items3d.js',
   '/js/games/kart3d/driver.js',
   '/js/games/kart3d/models.js',
+  '/js/games/kart3d/arena3d.js',
   '/js/games/ballchain3d.js',
   '/js/games/ballchain3d/course.js',
   '/js/games/ballchain3d/figures.js',
