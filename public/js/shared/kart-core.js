@@ -19,6 +19,15 @@
   const SPACING = 32; // world units between centerline samples
   const CREST_TOL = 45; // units/s²: how much faster than gravity the road must drop away to take off
 
+  // The drivers (modelled by kart3d/gokart.js): everyone races one, the one that goes with their
+  // lobby avatar unless they pick another.
+  const CHARACTERS = [
+    { id: 'bunny', name: 'Bunny' }, { id: 'bear', name: 'Bear' }, { id: 'cat', name: 'Cat' }, { id: 'fox', name: 'Fox' },
+    { id: 'panda', name: 'Panda' }, { id: 'frog', name: 'Frog' }, { id: 'penguin', name: 'Penguin' }, { id: 'pig', name: 'Pig' },
+    { id: 'mouse', name: 'Mouse' }, { id: 'dog', name: 'Dog' }, { id: 'duck', name: 'Duck' }, { id: 'raccoon', name: 'Raccoon' },
+    { id: 'koala', name: 'Koala' }, { id: 'lion', name: 'Lion' }, { id: 'dino', name: 'Dino' },
+  ];
+
   const PHYS = {
     accel: 500,
     brake: 820,
@@ -1524,7 +1533,7 @@
   }
 
   return {
-    KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP, Layers, Weekly,
+    KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, CHARACTERS, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP, Layers, Weekly,
     getMap, mapList, mapInfo, mapsBuilt, weeklyMap, setWeeklyCheck, weeklyTries, stepKart, driftLevel, itemSpeed, bombLead, respawnOnTrack, makeRaceMap, timeToLand,
     noise: { vnoise, fbm, smoothstep, polyDist },
   };

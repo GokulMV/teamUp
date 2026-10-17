@@ -657,6 +657,9 @@ test('CPU drivers join the race and lap the grand prix at hard', async () => {
   const human = init.karts.find((k) => k.id === players[0].id);
   assert.ok(Number.isInteger(human.avatar), 'humans carry their avatar');
   assert.ok(!human.bot);
+  // Every kart has an animal driver: the one that goes with its avatar.
+  const K = require('../public/js/shared/kart-core');
+  for (const k of init.karts) assert.strictEqual(k.character, K.CHARACTERS[k.avatar % K.CHARACTERS.length].id, `${k.name} drives as their avatar's animal`);
   const botMeta = init.karts.filter((k) => k.bot);
   assert.strictEqual(botMeta.length, 5);
   for (const b of botMeta) {

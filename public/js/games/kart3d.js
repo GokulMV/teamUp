@@ -12,9 +12,9 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { MOBILE, THEMES, tex, part, buildArena, loadMoonlit } from './kart3d/world.js';
 import { buildRace } from './kart3d/track.js';
 import { buildLayered } from './kart3d/arena3d.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { ItemFX, shieldMaterial, shieldGeometry, ghostMaterial, starVariant } from './kart3d/items3d.js';
-import { buildDriver } from './kart3d/driver.js';
-import { loadModel, fitted, partsOf } from './kart3d/models.js';
+import { buildGoKart, setEnvironment, kartMaterials, EXHAUSTS } from './kart3d/gokart.js';
 
 const K = window.KartCore;
 
@@ -116,56 +116,17 @@ class Particles {
 }
 
 // ---------- kart model ----------
+// The karts and their drivers are modelled in kart3d/gokart.js; here, the parts every kart shares
+// for its effects (boost flames, shield, ghost).
 const SHARED = {};
 function sharedKartParts() {
   if (SHARED.ready) return SHARED;
-  SHARED.dark = new THREE.MeshStandardMaterial({ color: 0x23262e, roughness: 0.7, metalness: 0.3 });
-  SHARED.metal = new THREE.MeshStandardMaterial({ color: 0xc9ced8, roughness: 0.25, metalness: 0.9 });
-  SHARED.rubber = new THREE.MeshStandardMaterial({ color: 0x15161a, roughness: 0.95 });
-  SHARED.head = new THREE.MeshStandardMaterial({ color: 0xfff4d6, emissive: 0xfff1c2, emissiveIntensity: 1.6 });
-  SHARED.tail = new THREE.MeshStandardMaterial({ color: 0xff2a2a, emissive: 0xff1a1a, emissiveIntensity: 1.2 });
   SHARED.flame = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 0.85, 0.25), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
   SHARED.flameCore = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.3, 1.6), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
   SHARED.shield = shieldMaterial();
   SHARED.ghost = ghostMaterial();
-
-  const tire = new THREE.CylinderGeometry(1, 1, 1, 18).rotateX(Math.PI / 2);
-  const hub = new THREE.CylinderGeometry(0.55, 0.55, 1.08, 10).rotateX(Math.PI / 2);
-  SHARED.wheelGeo = (r, w) => tire.clone().scale(r, r, w);
-  SHARED.hubGeo = (r, w) => hub.clone().scale(r, r, w);
-
-  SHARED.bodyGeo = mergeGeometries([
-    part(new RoundedBoxGeometry(34, 7, 20, 3, 2.5), 0, 7, 0),
-    part(new RoundedBoxGeometry(14, 5, 15, 2, 2), 19, 6, 0, 0, 0, -0.22),
-    part(new RoundedBoxGeometry(16, 6, 5, 2, 2), -2, 7, 12.5),
-    part(new RoundedBoxGeometry(16, 6, 5, 2, 2), -2, 7, -12.5),
-  ]);
-  // Rear wing and hood stripe in a darker shade of the kart colour; in team mode the wing's
-  // end plates and a stripe along its top carry the team colour.
-  SHARED.accentGeo = mergeGeometries([
-    part(new THREE.BoxGeometry(5, 1.6, 27), -19, 18, 0),
-    part(new THREE.BoxGeometry(24, 0.6, 4), 6, 10.7, 0),
-  ]);
-  SHARED.plateGeo = mergeGeometries([13, -13].map((z) => part(new THREE.BoxGeometry(4, 6, 1.4), -19, 15, z)));
-  SHARED.teamStripeGeo = new THREE.BoxGeometry(2, 0.5, 27.2).translate(-19, 19, 0);
-  SHARED.darkGeo = mergeGeometries([
-    part(new THREE.BoxGeometry(40, 2, 18), 0, 3, 0),
-    part(new THREE.BoxGeometry(4, 3, 26), 24, 4, 0),
-    part(new THREE.BoxGeometry(3, 11, 13), -10, 14, 0),
-    part(new THREE.BoxGeometry(2, 6, 2), -19, 12, 0),
-    part(new THREE.TorusGeometry(3.2, 0.7, 6, 14), 6.5, 14.5, 0, 0, Math.PI / 2, 0.5),
-    part(new THREE.CylinderGeometry(0.6, 0.6, 7, 6), 4.5, 12.5, 0, 0, 0, 1.0),
-  ]);
-  SHARED.metalGeo = mergeGeometries([
-    part(new THREE.CylinderGeometry(1.6, 1.9, 7, 10), -21, 8, 5, 0, 0, Math.PI / 2),
-    part(new THREE.CylinderGeometry(1.6, 1.9, 7, 10), -21, 8, -5, 0, 0, Math.PI / 2),
-    part(new THREE.SphereGeometry(4.2, 12, 10), -14, 10, 0),
-  ]);
-  SHARED.headlightGeo = mergeGeometries([6.5, -6.5].map((z) => part(new THREE.BoxGeometry(1.2, 2.4, 4), 25.6, 6, z)));
-  SHARED.taillightGeo = mergeGeometries([8, -8].map((z) => part(new THREE.BoxGeometry(1, 2, 4), -17.6, 7, z)));
-  // The driver is the player's lobby avatar (kart3d/driver.js).
-  SHARED.flameGeo = new THREE.ConeGeometry(2.6, 12, 12, 1, true).rotateZ(Math.PI / 2);
-  SHARED.flameCoreGeo = new THREE.ConeGeometry(1.3, 7, 10, 1, true).rotateZ(Math.PI / 2).translate(2.2, 0, 0);
+  SHARED.flameGeo = new THREE.ConeGeometry(2.4, 12, 12, 1, true).rotateZ(Math.PI / 2);
+  SHARED.flameCoreGeo = new THREE.ConeGeometry(1.2, 7, 10, 1, true).rotateZ(Math.PI / 2).translate(2.2, 0, 0);
   SHARED.shieldGeo = shieldGeometry();
   SHARED.ready = true;
   return SHARED;
@@ -177,7 +138,7 @@ function sharedKartParts() {
 // overlap a nearer one is lifted above it or faded out.
 // The canvas is 256x88; without a health bar only its top 64 rows are shown.
 const LABEL_W = 58; // world units: the tag's natural width, before the on-screen limits
-const LABEL_TOP = 38; // the tag sits just above the driver's head
+const LABEL_GAP = 3; // the tag sits just above the driver's head (ears and hat included)
 const labelRedraws = new Set();
 let labelFont = 'system-ui, sans-serif';
 document.fonts?.load('700 30px Inter').then((faces) => {
@@ -207,7 +168,6 @@ function makeLabel(text, color, teamColor) {
   const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false, sizeAttenuation: false }));
   sprite.renderOrder = 10;
   sprite.frustumCulled = false; // updateLabels already hides tags that are off screen
-  sprite.position.y = LABEL_TOP;
   let shown = null;
   const label = { sprite, rows: 64, pill: 0.5 };
   // px: on-screen width in CSS pixels; unit: CSS pixels per sprite scale unit; lift: px above the head.
@@ -260,121 +220,65 @@ function makeLabel(text, color, teamColor) {
   return label;
 }
 
-function buildKart(meta, teamColor, isMe, night) {
+function buildKart(meta, teamColor, isMe) {
   const S = sharedKartParts();
   const group = new THREE.Group();
   const chassis = new THREE.Group(); // rolls/pitches; wheels stay on the ground
   group.add(chassis);
-  const meshes = [];
-
-  const bodyMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(meta.color), roughness: 0.32, metalness: 0.35 });
-  const accentMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(meta.color).multiplyScalar(0.8), roughness: 0.38, metalness: 0.3 });
+  // Team games paint every kart in its team's colour.
+  const model = buildGoKart(meta, teamColor || meta.color);
   // Only the big parts cast shadows; small details are hidden on far-away karts (see update()).
-  // `geo` can also be a ready-made mesh (the avatar driver's parts).
+  const meshes = [];
   const details = [];
-  const add = (geo, mat, parent = chassis, { shadow = true, detail = false } = {}) => {
-    const m = geo.isMesh ? geo : new THREE.Mesh(geo, mat);
-    const casts = shadow && !m.userData.noShadow;
-    m.castShadow = casts;
-    if (!casts) m.userData.noShadow = true; // applyLook() restores shadows from this
-    m.receiveShadow = true;
-    m.userData.mat = m.material; // restored after ghost mode
-    m.userData.shadow = casts;
-    parent.add(m);
-    meshes.push(m);
-    if (detail) details.push(m);
-    return m;
-  };
-  add(S.bodyGeo, bodyMat);
-  add(S.accentGeo, accentMat, chassis, { shadow: false });
-  // Team mode: the wing's end plates and a stripe along its top carry the team colour.
-  const teamMat = teamColor ? new THREE.MeshStandardMaterial({ color: new THREE.Color(teamColor), roughness: 0.4, metalness: 0.2 }) : null;
-  add(S.plateGeo, teamMat || accentMat, chassis, { shadow: false });
-  if (teamMat) add(S.teamStripeGeo, teamMat, chassis, { shadow: false });
-  add(S.darkGeo, S.dark);
-  add(S.metalGeo, S.metal, chassis, { shadow: false, detail: true });
+  for (const { mesh, shadow, detail } of model.parts) {
+    mesh.castShadow = shadow;
+    if (!shadow) mesh.userData.noShadow = true; // applyLook() restores shadows from this
+    mesh.receiveShadow = true;
+    mesh.userData.mat = mesh.material; // restored after ghost mode
+    meshes.push(mesh);
+    if (detail) details.push(mesh);
+  }
   // The driver rides in the chassis, so it tilts, flies, flips and shimmers with the kart.
-  const driver = buildDriver(meta.avatar);
-  driver.meshes.forEach((m, i) => add(m, null, chassis, { shadow: i === 0, detail: i > 0 }));
-  add(S.headlightGeo, S.head, chassis, { shadow: false, detail: true });
-  add(S.taillightGeo, S.tail, chassis, { shadow: false, detail: true });
-  S.head.emissiveIntensity = night ? 3 : 1.2;
-
-  const wheels = [];
-  for (const [x, z, r, w, front] of [[13, 13.5, 6, 5, true], [13, -13.5, 6, 5, true], [-12, 14.5, 7.5, 7, false], [-12, -14.5, 7.5, 7, false]]) {
-    const pivot = new THREE.Group();
-    pivot.position.set(x, r, z);
-    const spin = new THREE.Group();
-    pivot.add(spin);
-    add(S.wheelGeo(r, w), S.rubber, spin);
-    add(S.hubGeo(r * 0.55, w), S.metal, spin, { shadow: false, detail: true });
-    group.add(pivot);
-    wheels.push({ pivot, spin, r, front });
+  for (const m of model.chassis) chassis.add(m);
+  chassis.add(model.driver);
+  for (const w of model.wheels) {
+    w.mesh.userData.mat = w.mesh.material;
+    meshes.push(w.mesh);
+    group.add(w.pivot);
   }
 
-  const flames = [5, -5].map((z) => {
+  // Boost flames out of the exhausts (they point back and a little up).
+  const flames = EXHAUSTS.map(([x, y, z]) => {
     const f = new THREE.Mesh(S.flameGeo, S.flame);
     f.add(new THREE.Mesh(S.flameCoreGeo, S.flameCore));
-    f.position.set(-29, 8, z);
+    f.position.set(x - 4.6, y + 1.2, z);
+    f.rotation.z = -0.26;
     f.visible = false;
     chassis.add(f);
     return f;
   });
 
   const shield = new THREE.Mesh(S.shieldGeo, S.shield);
-  shield.position.y = 14;
+  shield.position.y = 17;
   shield.renderOrder = 6;
   shield.visible = false;
   group.add(shield);
 
+  const top = model.top + LABEL_GAP;
   let label = null;
   if (!isMe) {
     label = makeLabel(meta.name, meta.color, teamColor);
+    label.sprite.position.y = top;
     label.sprite.visible = false;
     group.add(label.sprite);
   }
-  const kart = {
-    group, chassis, wheels, flames, shield, label, meshes, details, near: true, ghosted: false, starred: false, halo: driver.halo, hitAt: -99, lastHp: 100,
+  return {
+    group, chassis, wheels: model.wheels, flames, shield, label, meshes, details, near: true, ghosted: false, starred: false, halo: model.halo, hitAt: -99, lastHp: 100,
     steer: 0, lastAngle: null, smoke: 0, slide: 0, hop: 0, wasSpin: false, wasDead: false,
     hint: null, pitch: 0, roll: 0, lastY: null, vy: 0, prevAir: 0, squash: 0, trickT: -1, trickDir: 1, wasTrick: false, falling: false, fallT: 0,
-    color: meta.color, fade: 1, look: 'solid', tagAlpha: 0, tagLift: 0, tagOn: false, pickupWheels: null,
+    color: meta.color, fade: 1, look: 'solid', tagAlpha: 0, tagLift: 0, tagOn: false,
+    rig: model.rig, top, model,
   };
-  const pickup = /^pickup-(red|green|yellow|purple)$/.exec(meta.body || '');
-  if (pickup) attachPickup(kart, pickup[1]);
-  return kart;
-}
-
-// A little pickup (Kenney's CC0 racing kit) in place of the kart: once the model has loaded, the
-// kart's own body, wheels and driver make way. The truck's body rides the suspension like a kart
-// body does; its wheels stay on the ground, spin and steer.
-const PICKUP_WHEELS = ['wheel-front-left', 'wheel-front-right', 'wheel-back-left', 'wheel-back-right'];
-function attachPickup(kart, color) {
-  loadModel(`/models/kenney-racing/vehicle-truck-${color}.glb`).then((scene) => {
-    if (kart.disposed) return;
-    const truck = fitted(scene, { length: 56 });
-    kart.group.add(truck);
-    truck.updateMatrixWorld(true);
-    const parts = partsOf(truck, ['body', 'underside', ...PICKUP_WHEELS]);
-    for (const m of kart.meshes) m.parent?.remove(m);
-    for (const w of kart.wheels) w.pivot.parent?.remove(w.pivot);
-    kart.meshes.length = 0;
-    kart.details.length = 0;
-    kart.wheels = [];
-    kart.halo = null;
-    for (const name of ['body', 'underside']) if (parts[name]) kart.chassis.attach(parts[name]);
-    kart.pickupWheels = PICKUP_WHEELS.filter((n) => parts[n]).map((n) => {
-      parts[n].rotation.order = 'YXZ'; // steer about the up axis, then roll about the axle
-      return { node: parts[n], front: n.includes('front'), r: 9.5 };
-    });
-    truck.traverse((m) => {
-      if (!m.isMesh) return;
-      m.userData.mat = m.material;
-      m.userData.shadow = true;
-      kart.meshes.push(m);
-    });
-    kart.look = null; // re-apply ghost / star looks to the new meshes
-    applyLook(kart);
-  }).catch(() => {}); // it stays a kart
 }
 
 // A kart is drawn solid, as a ghost (ghost item), in rainbow versions of its own materials (star
@@ -430,6 +334,11 @@ export class Kart3D {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.domElement.className = 'kart-canvas';
     container.prepend(this.renderer.domElement);
+    // A soft studio room for the karts to reflect (paint, chrome, glossy eyes).
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
+    setEnvironment(this.envTex, !!theme.night);
 
     const scene = new THREE.Scene();
     this.scene = scene;
@@ -537,12 +446,10 @@ export class Kart3D {
     this.karts = new Map();
     this.lastKarts = new Map(); // idx -> latest drawn position, for item effects aimed at karts
     this.items = new ItemFX(this, { items: opts.items !== false });
-    // Compile every item and aura shader with the first frame, not with a stutter mid-race.
-    // Star variants: plain kart parts, the drivers' vertex-coloured accessories and textured faces.
+    // Compile every item and aura shader with the first frame, not with a stutter mid-race:
+    // the karts' materials and their star versions too.
     const S = sharedKartParts();
-    const faceTex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
-    faceTex.needsUpdate = true;
-    const starMats = [S.dark, new THREE.MeshStandardMaterial({ vertexColors: true }), new THREE.MeshStandardMaterial({ map: faceTex })].map(starVariant);
+    const starMats = kartMaterials().map(starVariant);
     this.warm = this.items.warmUp([...starMats, S.ghost, S.shield]);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -594,10 +501,10 @@ export class Kart3D {
   }
 
   setKarts(list, myIdx, teamColorOf) {
-    for (const k of this.karts.values()) { k.disposed = true; this.items.releaseKart(k); this.scene.remove(k.group); k.label?.dispose(); k.fadeMat?.dispose(); }
+    for (const k of this.karts.values()) { k.disposed = true; this.items.releaseKart(k); this.scene.remove(k.group); k.label?.dispose(); k.fadeMat?.dispose(); k.model.dispose(); }
     this.karts.clear();
     for (const meta of list) {
-      const kart = buildKart(meta, teamColorOf(meta), meta.idx === myIdx, this.theme.night);
+      const kart = buildKart(meta, teamColorOf(meta), meta.idx === myIdx);
       this.scene.add(kart.group);
       this.karts.set(meta.idx, kart);
     }
@@ -1068,6 +975,7 @@ export class Kart3D {
       if (!airborne && kart.prevAir > 10) {
         kart.squash = 1;
         if (kart.susp) kart.susp.vy -= Math.min(150, 25 + kart.prevAir * 1.4); // the body slams down on its springs
+        kart.rig.jolt(Math.min(1, kart.prevAir / 60));
         this.landFx(k.x, k.y, ground, Math.min(1, kart.prevAir / 80), kart.tricked);
         kart.tricked = false;
       }
@@ -1075,7 +983,7 @@ export class Kart3D {
 
       // Getting hit in a race: the kart pops up and does a flip.
       const spinNow = !!(k.flags & 1);
-      if (spinNow && !kart.wasSpin) kart.hop = 0.8;
+      if (spinNow && !kart.wasSpin) { kart.hop = 0.8; kart.rig.jolt(1, true); }
       kart.wasSpin = spinNow;
       let hopY = 0;
       if (kart.hop > 0) {
@@ -1143,12 +1051,6 @@ export class Kart3D {
       kart.chassis.rotation.x = S.r;
       kart.chassis.rotation.z += S.p; // on top of a spin-out flip (set above)
       kart.chassis.position.y = S.y + (airborne ? 0 : Math.sin(t * 18 + k.idx) * 0.35 * Math.min(1, Math.abs(k.speed) / 200));
-      if (kart.pickupWheels) {
-        for (const w of kart.pickupWheels) {
-          w.node.rotation.x += (k.speed * dt) / w.r;
-          if (w.front) w.node.rotation.y = kart.steer * 0.45;
-        }
-      }
       for (const w of kart.wheels) {
         w.spin.rotation.z -= (k.speed * dt) / w.r;
         if (w.front) w.pivot.rotation.y = -kart.steer * 0.45;
@@ -1159,9 +1061,11 @@ export class Kart3D {
       const near = this.camera.position.distanceTo(kart.group.position) < 1100;
       if (near !== kart.near) { kart.near = near; for (const m of kart.details) m.visible = near; }
       if (kart.halo) kart.halo.rotation.y = t;
-      if (k.hp < kart.lastHp) kart.hitAt = t;
+      if (k.hp < kart.lastHp) { kart.hitAt = t; kart.rig.jolt(0.8, true); }
       kart.lastHp = k.hp;
       const boosting = k.flags & 2;
+      // The driver: blinks, ears on springs, looking into the turn, hands on the wheel.
+      kart.rig.update(dt, t, { steer: kart.steer, speed: k.speed, airborne, boosting: !!boosting, spinning: !!spinning });
       for (const f of kart.flames) {
         f.visible = !!boosting;
         if (boosting) f.scale.set(0.8 + Math.random() * 0.9, 0.85 + Math.random() * 0.3, 0.85 + Math.random() * 0.3);
@@ -1180,8 +1084,8 @@ export class Kart3D {
         }
       }
       // Exhaust: flames when boosting, light smoke otherwise; sparks and skids when drifting.
-      const ex = k.x - cos * 26;
-      const ez = k.y - sin * 26;
+      const ex = k.x - cos * 31;
+      const ez = k.y - sin * 31;
       if (boosting) {
         for (let i = 0; i < 3; i++) {
           this.fire.emit(ex + (Math.random() - 0.5) * 8, y + 8, ez + (Math.random() - 0.5) * 8,
@@ -1271,7 +1175,7 @@ export class Kart3D {
       if (!kart?.label) continue;
       kart.tagWant = false;
       if (view.countdown || !kart.group.visible || kart.fade < 1 || k.flags & 32) continue;
-      v.set(k.x, kart.group.position.y + LABEL_TOP, k.y);
+      v.set(k.x, kart.group.position.y + kart.top, k.y);
       const d = v.distanceTo(cam.position);
       if (d < 110 || d > 750) continue;
       v.applyMatrix4(cam.matrixWorldInverse);
@@ -1476,6 +1380,7 @@ export class Kart3D {
     for (const k of this.karts.values()) this.items.releaseKart(k);
     this.items.dispose();
     this.composer?.dispose();
+    this.envTex.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
     this.renderer.domElement.remove();

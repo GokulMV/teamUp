@@ -41,18 +41,12 @@ const STAR_RAM_GAP = 0.8; // seconds before the same star kart can ram the same 
 // faster than ramSpeed is a ram: the victim gets shoved harder (and in the arena takes a little damage).
 const BUMP = { restitution: 0.35, boostMass: 1.5, shrunkMass: 0.55, ramSpeed: 260, ramShove: 1.35, ramGap: 0.5, eventSpeed: 90 };
 const SHOCK_RADIUS = 360;
-const PICKUPS = { red: 0, yellow: 50, green: 125, purple: 275 }; // paint job -> hue
-function pickupFor(color) {
-  const m = /^#?([0-9a-f]{6})$/i.exec(color || '');
-  if (!m) return 'red';
-  const [r, g, b] = [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16) / 255);
-  const max = Math.max(r, g, b);
-  const d = max - Math.min(r, g, b);
-  if (!d) return 'purple';
-  let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
-  h = (h * 60 + 360) % 360;
-  const gap = (a) => Math.min(Math.abs(a - h), 360 - Math.abs(a - h));
-  return Object.keys(PICKUPS).sort((a, b) => gap(PICKUPS[a]) - gap(PICKUPS[b]))[0];
+// Everyone drives a kart with one of the animal drivers (kart-core CHARACTERS, modelled by
+// kart3d/gokart.js): the one they picked, or else the one that goes with their lobby avatar.
+function characterFor(player) {
+  if (K.CHARACTERS.some((c) => c.id === player.character)) return player.character;
+  const n = K.CHARACTERS.length;
+  return K.CHARACTERS[(((Number(player.avatar) || 0) % n) + n) % n].id;
 }
 const GUN_TIME = 2;
 const BANANA_LIFE = 40;
@@ -215,9 +209,7 @@ class KartBattle {
       id: player.id,
       name: player.name, color: player.color, avatar: player.avatar || 0, team: player.team || 0,
       bot, skill: bot ? player.skill : null,
-      // CPU drivers sometimes ride a little pickup instead of a kart (Kenney's CC0 models; cosmetic),
-      // in whichever of its four paint jobs is closest to their colour.
-      body: bot && Math.random() < 0.35 ? `pickup-${pickupFor(player.color)}` : 'kart',
+      character: characterFor(player),
       speedMul: this.speedMul * (bot ? Bots.SKILLS[player.skill].speed : 1),
       x: g.x, y: g.y, angle: g.angle, speed: 0,
       z: g.z ?? null, // height (race tracks and layered arenas; set by the physics on races)
@@ -259,7 +251,7 @@ class KartBattle {
         const src = (!k.bot && this.room.players.get(id)) || k;
         const meta = { idx, id, name: src.name || '?', color: src.color || '#888', avatar: src.avatar || 0, team: src.team || 0 };
         if (k.bot) meta.bot = true;
-        if (k.body !== 'kart') meta.body = k.body;
+        meta.character = k.character;
         return meta;
       }),
     };

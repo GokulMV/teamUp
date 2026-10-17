@@ -21,10 +21,9 @@ Everything else in Ball & Chain (course pieces, stick figures, textures, the oth
 
 | What | Used for | Licence | Source |
 |------|----------|---------|--------|
-| [three.js](https://threejs.org) r169 and its addons (GLTFLoader, EffectComposer, UnrealBloomPass, OutputPass, RoundedBoxGeometry, BufferGeometryUtils) | The 3D tracks, karts, items and effects; GLTFLoader loads the models below | MIT | npm `three`, served from `/vendor/three` |
-| `vehicle-truck-{red,green,yellow,purple}.glb` and `Textures/colormap.png` | The little pickups some CPU drivers ride instead of a kart | CC0 1.0 | Kenney, [Starter Kit Racing](https://github.com/KenneyNL/Starter-Kit-Racing) |
+| [three.js](https://threejs.org) r169 and its addons (EffectComposer, UnrealBloomPass, OutputPass, RoomEnvironment, RoundedBoxGeometry, BufferGeometryUtils) | The 3D tracks, karts, drivers, items and effects | MIT | npm `three`, served from `/vendor/three` |
 
-The models live, unchanged, in `public/models/kenney-racing/` and are loaded on demand by `public/js/games/kart3d/models.js`. Everything else in Kart Battle (karts, drivers, tracks, item models, icons, sounds) is drawn or synthesized in code.
+Everything in Kart Battle (the go-karts and their 15 animal drivers, tracks, item models, icons, sounds) is original and drawn or synthesized in code: the karts and drivers in `public/js/games/kart3d/gokart.js`.
 
 ## Control Room
 
