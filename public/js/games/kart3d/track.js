@@ -92,6 +92,8 @@ function axis(min, max, innerMin, innerMax, fine, coarse) {
   return out;
 }
 
+// The detail and lava-crack maps are projected triplanar: top-down (xz) on flat ground, from the
+// side (xy, zy) on slopes, blended by the world normal, so steep faces are not smeared into streaks.
 function terrainMaterial(theme, ctx) {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, map: tex.detail(theme.detail || 'grass'), roughness: 0.96, metalness: 0 });
   const glow = new THREE.Color(theme.terrain.glow || '#000000');
@@ -104,10 +106,28 @@ function terrainMaterial(theme, ctx) {
     shader.uniforms.uCracks = { value: theme.terrain.glow ? tex.basaltGlow() : null };
     shader.uniforms.uCrackOn = { value: theme.terrain.glow ? 1 : 0 };
     shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute float aRock;\nattribute float aGlow;\nvarying float vRock;\nvarying float vGlow;\nvarying vec3 vWPos;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRock = aRock;\nvGlow = aGlow;\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      .replace('#include <common>', '#include <common>\nattribute float aRock;\nattribute float aGlow;\nvarying float vRock;\nvarying float vGlow;\nvarying vec3 vWPos;\nvarying vec3 vWNrm;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvRock = aRock;\nvGlow = aGlow;\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWNrm = mat3(modelMatrix) * objectNormal;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform sampler2D uRockTex;\nuniform sampler2D uStrataTex;\nuniform sampler2D uCracks;\nuniform float uCrackOn;\nuniform float uStrata;\nuniform vec3 uGlow;\nvarying float vRock;\nvarying float vGlow;\nvarying vec3 vWPos;')
+      .replace('#include <common>', `#include <common>
+uniform float uTime;
+uniform sampler2D uRockTex;
+uniform sampler2D uStrataTex;
+uniform sampler2D uCracks;
+uniform float uCrackOn;
+uniform float uStrata;
+uniform vec3 uGlow;
+varying float vRock;
+varying float vGlow;
+varying vec3 vWPos;
+varying vec3 vWNrm;
+// Triplanar weights |n|^4, normalised (n need not be unit length), and the blended sample.
+vec3 triWeights(vec3 n) { vec3 w = n * n; w *= w; return w / max(w.x + w.y + w.z, 1e-6); }
+vec4 triplanar(sampler2D t, vec3 p, vec3 w) { return texture2D(t, p.xz) * w.y + texture2D(t, p.xy) * w.z + texture2D(t, p.zy) * w.x; }`)
+      .replace('#include <map_fragment>', `vec3 triW = triWeights(vWNrm);
+        #ifdef USE_MAP
+          diffuseColor *= triplanar(map, vWPos / 420.0, triW);
+        #endif`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         {
           // Cliffs and steep slopes: rock textured from the side; strata bands in the desert.
@@ -118,7 +138,7 @@ function terrainMaterial(theme, ctx) {
         }`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         totalEmissiveRadiance += uGlow * vGlow * (0.75 + 0.25 * sin(uTime * 2.1 + vWPos.x * 0.013 + vWPos.z * 0.011));
-        if (uCrackOn > 0.5) totalEmissiveRadiance += texture2D(uCracks, vWPos.xz / 900.0).rgb * (0.35 + 1.2 * vGlow) * (1.0 - vRock * 0.5);`);
+        if (uCrackOn > 0.5) totalEmissiveRadiance += triplanar(uCracks, vWPos / 900.0, triW).rgb * (0.35 + 1.2 * vGlow) * (1.0 - vRock * 0.5);`);
   };
   return mat;
 }
@@ -131,7 +151,6 @@ function buildTerrain(scene, map, theme, ctx, R) {
   const W = xs.length;
   const D = zs.length;
   const pos = new Float32Array(W * D * 3);
-  const uv = new Float32Array(W * D * 2);
   const dist = new Float32Array(W * D);
   const half = R.half;
   const e0 = half + K.RUNOFF;
@@ -147,7 +166,6 @@ function buildTerrain(scene, map, theme, ctx, R) {
         h -= 6 * map.anchor[q.index] * (1 - smoothstep(half + K.CURB, e0 + 30, q.dist));
       }
       pos[k * 3] = x; pos[k * 3 + 1] = h; pos[k * 3 + 2] = z;
-      uv[k * 2] = x / 420; uv[k * 2 + 1] = z / 420;
       dist[k] = q ? q.dist : 1e9;
     }
   }
@@ -162,8 +180,7 @@ function buildTerrain(scene, map, theme, ctx, R) {
     }
   }
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); // no UVs: the material projects from world space
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
   geo.computeVertexNormals();
 
@@ -192,7 +209,8 @@ function buildTerrain(scene, map, theme, ctx, R) {
     c.copy(low).lerp(high, smoothstep(hMin - 60, hMax + 500, h));
     c.multiplyScalar(0.9 + 0.14 * fbm(x / 420, z / 420, 5, 3) + 0.06 * fbm(x / 90, z / 90, 9, 2));
     let rock = smoothstep(theme.snowfall ? 0.42 : 0.3, theme.snowfall ? 0.62 : 0.52, slope);
-    if (theme.snowfall) rock *= 1 - smoothstep(900, 1300, h) * 0.6; // snowy summits
+    // Snowy summits, but their steep faces (slope above ~0.7) stay bare rock.
+    if (theme.snowfall) rock *= 1 - smoothstep(900, 1300, h) * 0.6 * (1 - smoothstep(0.6, 0.7, slope));
     if (water !== null && water !== undefined) {
       if (h < water + 2) {
         c.copy(bed).multiplyScalar(1 - smoothstep(water, water - 160, h) * 0.45);
