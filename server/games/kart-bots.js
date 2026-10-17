@@ -545,16 +545,48 @@ function layeredGoal(game, k, ai, sk) {
     return;
   }
   if (!armed && !(k.item && k.item2) && game.boxes.length) {
+    // The nearest box to drive to: round the walls, up the stairs or by jump pad, not as the crow
+    // flies (a box on the gallery overhead can be a long way round).
+    const nav = map.nav;
+    const here = nav.nodeAt(k.x, k.y, kz);
+    // Boxes up on the high ground count for more (that's where the view and the fun are).
+    const way = (i) => {
+      const box = map.itemBoxes[i];
+      const field = here >= 0 ? nav.toward(nav.nodeAt(box.x, box.y, box.z || 0, 3)) : null;
+      const d = field && Number.isFinite(field[here]) ? field[here] : far(box) * 2 + 1000;
+      return (box.z || 0) > kz + 40 ? d * 0.6 : d;
+    };
     let best = -1;
     let bestD = Infinity;
     for (let i = 0; i < game.boxes.length; i++) {
       if (game.boxes[i] > 0) continue;
-      const d = far(map.itemBoxes[i]);
+      const d = way(i);
       if (d < bestD) { bestD = d; best = i; }
     }
-    if (best >= 0) { ai.mode = 'box'; ai.goal = map.itemBoxes[best]; return; }
+    // Stick with the box we were after unless another is a good deal nearer: two about as far off
+    // would otherwise swap at every think, and the kart would turn back and forth between them.
+    const cur = ai.mode === 'box' ? map.itemBoxes.indexOf(ai.goal) : -1;
+    if (cur >= 0 && best !== cur && !(game.boxes[cur] > 0) && bestD > way(cur) * 0.7 - 40) best = cur;
+    if (best >= 0) {
+      if (ai.goal !== map.itemBoxes[best]) ai.path = null; // a new box: find the way there now
+      ai.mode = 'box';
+      ai.goal = map.itemBoxes[best];
+      return;
+    }
   }
-  if (s.near && (armed || !game.boxes.length || s.nearD < 500)) { ai.mode = 'hunt'; ai.target = s.near; return; }
+  if (s.near && (armed || !game.boxes.length || s.nearD < 500)) {
+    // The same goes for rivals: keep after the one we're chasing unless another is much closer.
+    const was = ai.mode === 'hunt' ? ai.prey : null;
+    let prey = s.near;
+    if (was && was !== prey && was.dead <= 0 && game.karts.get(was.id) === was) {
+      const d = Math.hypot(was.x - k.x, was.y - k.y) + Math.abs((was.z || 0) - kz) * 2.5;
+      if (s.nearD > d * 0.7 - 40) prey = was;
+    }
+    ai.mode = 'hunt';
+    ai.target = prey;
+    ai.prey = prey;
+    return;
+  }
   if (ai.mode !== 'roam' || ai.roamClock <= 0 || !ai.goal || far(ai.goal) < 120) {
     // Wander somewhere, up on the high ground as often as not (that's where the fun is).
     const high = map.spawns.filter((p) => p.z > 40).concat(map.itemBoxes.filter((b) => b.z > 40));
@@ -600,7 +632,7 @@ function clearLine(map, k, x, y, t) {
   for (let i = 1; i <= n; i++) {
     const px = k.x + ((x - k.x) * i) / n;
     const py = k.y + ((y - k.y) * i) / n;
-    if (deadly(map, px, py, kz, t) || map.blocked(px, py, 14, kz, t)) return false;
+    if (deadly(map, px, py, kz, t) || map.blocked(px, py, K.Layers.KART_R + 5, kz, t)) return false;
   }
   return true;
 }
@@ -723,9 +755,11 @@ function layeredDrive(game, k, ai, sk, input) {
     else if (!bad(want + 1.5)) want += 1.5;
     else if (!bad(want - 1.5)) want -= 1.5;
     else {
+      // Boxed in: back out, wheels turned so the nose swings towards where we want to go (steering
+      // works the other way round in reverse).
       input.up = false;
       input.down = behindSafe();
-      setSteer(input, wrap(want - k.angle), 0.06);
+      setSteer(input, k.speed < 0 ? -wrap(want - k.angle) : wrap(want - k.angle), 0.06);
       return;
     }
   }
@@ -766,6 +800,14 @@ function layeredDrive(game, k, ai, sk, input) {
     input.up = false;
     input.down = true;
     setSteer(input, k.speed < 0 ? -err : err, 0.06);
+    return;
+  }
+  // Facing the wrong way at a crawl (nose to a wall, the goal behind): a three-point turn, backing
+  // out with the wheels turned the other way so the nose swings round.
+  if (Math.abs(err) > 1.9 && v < 110 && behindSafe()) {
+    input.up = false;
+    input.down = true;
+    setSteer(input, -err, 0.06);
     return;
   }
   // Braking hard enough to roll backwards: only with floor behind.

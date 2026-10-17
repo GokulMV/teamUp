@@ -31,7 +31,10 @@
     grass: '#3d6a33', ground: '#3d6a33', courtyard: '#5b564e', wall: '#8b8576', merlon: '#a29c8c', gate: '#8b8576',
     bridge: '#7a5432', keep: '#958c7b', roof: '#70737b', tent: '#a83430', crate: '#946030', stair: '#857c6c',
     tower: '#a39885', pillar: '#958c7b', stone: '#7d7a72',
+    crypt: '#4c4959', gallery: '#5f5b6c', slate: '#3b4053', tomb: '#8d8d93', fence: '#1d1d24', deadtree: '#3d3530',
   };
+  // Rolling ground, low to high (layered arenas with hills).
+  const LAND = { grass: ['#1d2a1f', '#3c5236'] };
   const LAYER_LIQUID = { water: '#25596a', lava: '#a2381a' };
 
   function rng(seed) {
@@ -261,6 +264,24 @@
       c.restore();
       c.save();
       roundRectPath(c, fx, fy, fw, fw, 7 * k); c.clip();
+      if (map.land) {
+        // The hills, shaded by height from a small image of the height grid.
+        const L = map.land;
+        const img = document.createElement('canvas');
+        img.width = L.n; img.height = L.n;
+        const ic = img.getContext('2d');
+        const data = ic.createImageData(L.n, L.n);
+        let hlo = Infinity; let hhi = -Infinity;
+        for (const h of L.h) { hlo = Math.min(hlo, h); hhi = Math.max(hhi, h); }
+        const [a, b] = (LAND[L.kind] || LAND.grass).map(rgb);
+        for (let i = 0; i < L.h.length; i++) {
+          const u = (L.h[i] - hlo) / (hhi - hlo || 1);
+          data.data.set([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u, 255], i * 4);
+        }
+        ic.putImageData(data, 0, 0);
+        c.imageSmoothingEnabled = true;
+        c.drawImage(img, fx, fy, (L.n - 1) * L.cell * s, (L.n - 1) * L.cell * s);
+      }
       const colour = (kind, z) => {
         const u = (z - lo) / (hi - lo || 1);
         const [r, gg, b] = rgb(LAYER_KINDS[kind] || LAYER_KINDS.stone);
@@ -312,8 +333,15 @@
         c.beginPath(); c.moveTo(2.2 * k, 0); c.lineTo(-1.4 * k, 1.6 * k); c.lineTo(-1.4 * k, -1.6 * k); c.closePath(); c.fill();
         c.restore();
       }
+      for (const h of map.hazards) {
+        c.fillStyle = h.kind === 'acid' ? '#84cc16' : '#ff6a1a';
+        c.beginPath();
+        if (h.r !== undefined) c.arc(X(h.x), Y(h.y), Math.max(1.5 * k, h.r * s), 0, TAU);
+        else c.rect(X(h.x0), Y(h.y0), Math.max(1.2 * k, (h.x1 - h.x0) * s), Math.max(1.2 * k, (h.y1 - h.y0) * s));
+        c.fill();
+      }
       for (const b of map.bumpers) {
-        c.fillStyle = '#ff4fa3';
+        c.fillStyle = map.theme === 'graveyard' ? '#f97316' : '#ff4fa3';
         c.beginPath(); c.arc(X(b.x), Y(b.y), Math.max(1.6 * k, b.r * s), 0, TAU); c.fill();
       }
       for (const p of map.boostPads) padChevron(c, X(p.x), Y(p.y), p.angle, 2.2 * k);

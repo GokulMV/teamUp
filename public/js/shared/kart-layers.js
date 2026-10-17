@@ -45,6 +45,94 @@
   const TAU = Math.PI * 2;
   const clamp = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
   const ease = (u) => u * u * (3 - 2 * u);
+  const smoothstep = (a, b, x) => ease(clamp((x - a) / (b - a), 0, 1));
+
+  // ---------- noise (the same on every machine) ----------
+  function hash2(ix, iy, seed) {
+    let h = (Math.imul(ix, 374761393) + Math.imul(iy, 668265263) + Math.imul(seed, 1442695041)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  }
+  function vnoise(x, y, seed) {
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    const u = ease(x - ix);
+    const v = ease(y - iy);
+    const a = hash2(ix, iy, seed);
+    const b = hash2(ix + 1, iy, seed);
+    const c = hash2(ix, iy + 1, seed);
+    const d = hash2(ix + 1, iy + 1, seed);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  }
+  // Fractal noise in [-1, 1].
+  function fbm(x, y, seed, octaves = 4) {
+    let sum = 0;
+    let amp = 1;
+    let norm = 0;
+    let f = 1;
+    for (let o = 0; o < octaves; o++) {
+      sum += (vnoise(x * f, y * f, seed + o * 17) * 2 - 1) * amp;
+      norm += amp;
+      amp *= 0.5;
+      f *= 2.03;
+    }
+    return sum / norm;
+  }
+
+  // ---------- rolling ground ----------
+  // def.terrain = {seed, amp, scale, base, edge, flats: [{x, y, r, z, soft}], kind}: a ground over the
+  // whole arena that rolls with fractal noise, levelled to z inside each flat (where buildings and
+  // pits stand) and back down to base over the last `edge` units by the sides. Baked into a grid once,
+  // so lookups are cheap and every machine gets the very same numbers.
+  const TCELL = 32;
+  const lands = new WeakMap();
+  function makeTerrain(def) {
+    const t = def.terrain;
+    if (!t) return null;
+    const known = lands.get(t);
+    if (known) return known;
+    const S = def.size;
+    const n = Math.ceil(S / TCELL) + 1;
+    const h = new Float32Array(n * n);
+    const base = t.base || 0;
+    for (let j = 0; j < n; j++) {
+      for (let i = 0; i < n; i++) {
+        const x = i * TCELL;
+        const y = j * TCELL;
+        let z = base + fbm(x / (t.scale || 800), y / (t.scale || 800), t.seed || 1, 4) * (t.amp || 0);
+        if (t.edge) z = base + (z - base) * smoothstep(EDGE, t.edge, Math.min(x, y, S - x, S - y));
+        for (const f of t.flats || []) {
+          const d = Math.hypot(x - f.x, y - f.y);
+          if (d < f.r) z += (f.z - z) * (1 - smoothstep(f.r * (f.soft ?? 0.6), f.r, d));
+        }
+        h[j * n + i] = z;
+      }
+    }
+    // Bilinear between grid points; the slope is that patch's own (rise per unit along x and y).
+    const cellOf = (x, y) => {
+      const i = clamp(Math.floor(x / TCELL), 0, n - 2);
+      const j = clamp(Math.floor(y / TCELL), 0, n - 2);
+      return [i, j, clamp(x / TCELL - i, 0, 1), clamp(y / TCELL - j, 0, 1)];
+    };
+    const at = (x, y) => {
+      const [i, j, fx, fy] = cellOf(x, y);
+      const k = j * n + i;
+      const a = h[k] + (h[k + 1] - h[k]) * fx;
+      const b = h[k + n] + (h[k + n + 1] - h[k + n]) * fx;
+      return a + (b - a) * fy;
+    };
+    const slope = (x, y, out) => {
+      const [i, j, fx, fy] = cellOf(x, y);
+      const k = j * n + i;
+      out.gx = ((h[k + 1] - h[k]) * (1 - fy) + (h[k + n + 1] - h[k + n]) * fy) / TCELL;
+      out.gy = ((h[k + n] - h[k]) * (1 - fx) + (h[k + n + 1] - h[k + 1]) * fx) / TCELL;
+      return out;
+    };
+    const land = { n, cell: TCELL, h, at, slope, kind: t.kind || 'grass' };
+    lands.set(t, land);
+    return land;
+  }
 
   // ---------- static solids ----------
   function box(b, kind) {
@@ -68,7 +156,9 @@
     return s;
   }
   function cyl(c, extra) {
-    return { type: CYL, kind: c.kind || 'stone', x: c.x, y: c.y, r: c.r, z0: Math.min(c.z0, c.z1), z1: Math.max(c.z0, c.z1), src: c, ...extra };
+    // Posts thinner than a kart (pillars, a brazier's foot, a dead tree) are never something to
+    // stand on: whatever comes down on top slides off them.
+    return { type: CYL, kind: c.kind || 'stone', x: c.x, y: c.y, r: c.r, z0: Math.min(c.z0, c.z1), z1: Math.max(c.z0, c.z1), thin: c.r < 20, src: c, ...extra };
   }
   function contains(s, x, y) {
     if (s.type === CYL) return (x - s.x) ** 2 + (y - s.y) ** 2 <= s.r * s.r;
@@ -211,6 +301,9 @@
     const liquid = def.liquid || null;
     const deathZ = def.deathZ !== undefined ? def.deathZ : -320;
     const edge = def.edge || 'wall';
+    const land = makeTerrain(def); // rolling ground under everything (or none)
+    const onLand = (x, y) => land && x >= 0 && y >= 0 && x <= S && y <= S;
+    const LAND = { kind: land ? land.kind : 'grass', land: true };
 
     // Lookup grid with one cell of margin round the arena.
     const GW = Math.ceil(S / CELL) + 2;
@@ -233,7 +326,7 @@
       let best = -Infinity;
       let sol = null;
       for (const s of near(x, y)) {
-        if (s.z1 < best || !contains(s, x, y)) continue;
+        if (s.z1 < best || s.thin || !contains(s, x, y)) continue;
         const top = topAt(s, x, y);
         if (top <= zMax && top > best) { best = top; sol = s; }
       }
@@ -241,6 +334,12 @@
       out.gy = 0;
       if (sol && sol.type === RAMP) {
         if (sol.axis) out.gy = sol.grade; else out.gx = sol.grade;
+      }
+      if (onLand(x, y)) {
+        // The rolling ground is solid all the way down: a kart a little under it (a steep rise at
+        // speed) is put back on top, never dropped through it.
+        const top = land.at(x, y);
+        if (top > best) { best = top; sol = LAND; land.slope(x, y, out); }
       }
       for (const m of bridges) {
         if (x < m.x0 || x > m.x1 || y < m.y0 || y > m.y1) continue;
@@ -266,6 +365,7 @@
 
     // Is the point (x, y, z) inside something solid? (The camera keeps out of walls.)
     function inside(x, y, z) {
+      if (onLand(x, y) && z < land.at(x, y) - 2) return true;
       for (const s of near(x, y)) {
         if (z <= s.z0 || z >= s.z1 || !contains(s, x, y)) continue;
         if (z < topAt(s, x, y)) return true;
@@ -514,7 +614,7 @@
       center: [S / 2, S / 2], bounds: { minX: 0, minY: 0, maxX: S, maxY: S },
       solids, movers, bumpers, pads, hazards, itemBoxes, spawns, boostPads,
       obstacles: [], // the flat arenas' round obstacles (none here: everything is a solid)
-      floorInfo, floorAt, ceilingAt, walls, collide, blocked, hazardAt, padAt, heightAt, inside,
+      land, floorInfo, floorAt, ceilingAt, walls, collide, blocked, hazardAt, padAt, heightAt, inside,
       sliderAt, pendulumAt, bridgeAt, bridgeFrame,
     };
     let nav = null;
@@ -530,6 +630,37 @@
   const DRIVE = 0;
   const DROP = 1;
   const FLY = 2;
+  // A binary min-heap of [key, id] pairs in a plain array (A* and Dijkstra over the nav grid).
+  function heapPush(heap, f, id) {
+    heap.push([f, id]);
+    let i = heap.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (heap[p][0] <= heap[i][0]) break;
+      [heap[p], heap[i]] = [heap[i], heap[p]];
+      i = p;
+    }
+  }
+  function heapPop(heap) {
+    const top = heap[0];
+    const last = heap.pop();
+    if (heap.length) {
+      heap[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = i * 2 + 1;
+        const r = l + 1;
+        let m = i;
+        if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
+        if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
+        if (m === i) break;
+        [heap[m], heap[i]] = [heap[i], heap[m]];
+        i = m;
+      }
+    }
+    return top;
+  }
+
   function buildNav(map) {
     const S = map.size;
     const N = Math.ceil(S / NAV);
@@ -545,7 +676,8 @@
         const x = (i + 0.5) * NAV;
         const y = (j + 0.5) * NAV;
         tops.length = 0;
-        for (const s of map.solids) if ((s.type === CYL ? (x - s.x) ** 2 + (y - s.y) ** 2 <= s.r * s.r : contains(s, x, y))) tops.push([topAt(s, x, y), -1]);
+        for (const s of map.solids) if (!s.thin && contains(s, x, y)) tops.push([topAt(s, x, y), -1]);
+        if (map.land) tops.push([map.land.at(x, y), -1]);
         for (const m of bridges) if (x >= m.x0 && x <= m.x1 && y >= m.y0 && y <= m.y1) tops.push([m.z, m.i]);
         tops.sort((a, b) => a[0] - b[0]);
         const list = [];
@@ -568,7 +700,16 @@
     // reach of sweeper arms and pendulums. Driving into them costs extra.
     const cost = new Float32Array(count).fill(1);
     const padOf = new Int16Array(count).fill(-1);
+    const lo = EDGE + KART_R + 22;
+    const hi = S - lo;
     for (let id = 0; id < count; id++) {
+      // Hugging a wall costs a little: paths go through the middle of doorways and wide of corners
+      // and pillars, where a kart (which never quite follows the line) doesn't scrape them.
+      const x = xs[id];
+      const y = ys[id];
+      const rim = map.edge === 'wall' && (x < lo || y < lo || x > hi || y > hi);
+      if (map.walls(x, y, zs[id], KART_R + 10, null) > 0) cost[id] = 1.35;
+      else if (rim || map.walls(x, y, zs[id], KART_R + 22, null) > 0) cost[id] = 1.12;
       for (const p of map.pads) {
         if (Math.abs(zs[id] - p.z) <= 8 && (xs[id] - p.x) ** 2 + (ys[id] - p.y) ** 2 < (p.r + KART_R) ** 2) { cost[id] = 4; padOf[id] = p.i; }
       }
@@ -683,40 +824,11 @@
       const prev = new Int32Array(count).fill(-1);
       const closed = new Uint8Array(count);
       const heap = [];
-      const push = (id, f) => {
-        heap.push([f, id]);
-        let i = heap.length - 1;
-        while (i > 0) {
-          const p = (i - 1) >> 1;
-          if (heap[p][0] <= heap[i][0]) break;
-          [heap[p], heap[i]] = [heap[i], heap[p]];
-          i = p;
-        }
-      };
-      const pop = () => {
-        const top = heap[0];
-        const last = heap.pop();
-        if (heap.length) {
-          heap[0] = last;
-          let i = 0;
-          for (;;) {
-            const l = i * 2 + 1;
-            const r = l + 1;
-            let m = i;
-            if (l < heap.length && heap[l][0] < heap[m][0]) m = l;
-            if (r < heap.length && heap[r][0] < heap[m][0]) m = r;
-            if (m === i) break;
-            [heap[m], heap[i]] = [heap[i], heap[m]];
-            i = m;
-          }
-        }
-        return top;
-      };
       const h = (id) => Math.hypot(xs[id] - xs[to], ys[id] - ys[to]);
       g[from] = 0;
-      push(from, h(from));
+      heapPush(heap, h(from), from);
       while (heap.length) {
-        const [, id] = pop();
+        const [, id] = heapPop(heap);
         if (closed[id]) continue;
         if (id === to) break;
         closed[id] = 1;
@@ -724,7 +836,7 @@
           const [b, cost] = e;
           if (closed[b] || (avoid && avoid(e, b))) continue;
           const ng = g[id] + cost;
-          if (ng < g[b]) { g[b] = ng; prev[b] = id; push(b, ng + h(b)); }
+          if (ng < g[b]) { g[b] = ng; prev[b] = id; heapPush(heap, ng + h(b), b); }
         }
       }
       if (prev[to] < 0) return null;
@@ -733,27 +845,57 @@
       return out.reverse();
     }
 
+    // The edges turned round: back[b] lists [a, cost] for every edge a -> b.
+    let back = null;
+    const backEdges = () => {
+      if (!back) {
+        back = Array.from({ length: count }, () => []);
+        for (let a = 0; a < count; a++) for (const [b, c] of adj[a]) back[b].push([a, c]);
+      }
+      return back;
+    };
+
     // Every node reachable from `from` (following edges forwards, or backwards with `reverse`).
     function reach(from, reverse = false) {
       const seen = new Uint8Array(count);
-      let back = null;
-      if (reverse) {
-        back = Array.from({ length: count }, () => []);
-        for (let a = 0; a < count; a++) for (const [b] of adj[a]) back[b].push(a);
-      }
+      const edges = reverse ? backEdges() : adj;
       const stack = [from];
       seen[from] = 1;
       while (stack.length) {
         const id = stack.pop();
-        for (const e of reverse ? back[id] : adj[id]) {
-          const b = reverse ? e : e[0];
+        for (const e of edges[id]) {
+          const b = e[0];
           if (!seen[b]) { seen[b] = 1; stack.push(b); }
         }
       }
       return seen;
     }
 
-    return { cell: NAV, n: N, count, xs, ys, zs, bridgeOf, padOf, cost, adj, cellNodes, nodeAt, path, reach, DRIVE, DROP, FLY };
+    // How far it is to drive from every node to `to` (Dijkstra over the edges backwards), kept for
+    // each target. CPU drivers rank item boxes by it: as the crow flies is a poor guide on a map
+    // of walls, stairs and jump pads.
+    const fields = new Map();
+    function toward(to) {
+      if (to < 0) return null;
+      let dist = fields.get(to);
+      if (dist) return dist;
+      const edges = backEdges();
+      dist = new Float64Array(count).fill(Infinity);
+      const heap = [];
+      dist[to] = 0;
+      heapPush(heap, 0, to);
+      while (heap.length) {
+        const [d, id] = heapPop(heap);
+        if (d > dist[id]) continue;
+        for (const [a, c] of edges[id]) {
+          if (d + c < dist[a]) { dist[a] = d + c; heapPush(heap, d + c, a); }
+        }
+      }
+      fields.set(to, dist);
+      return dist;
+    }
+
+    return { cell: NAV, n: N, count, xs, ys, zs, bridgeOf, padOf, cost, adj, cellNodes, nodeAt, path, reach, toward, DRIVE, DROP, FLY };
   }
 
   // ---------- symmetry helpers for map data ----------
@@ -799,7 +941,7 @@
     const ROOF = 100;
     const TOWER = 170;
     const def = {
-      id: 'keep', name: 'The Keep', emoji: '🏰', theme: 'keep', size: S, hidden: true,
+      id: 'keep', name: 'The Keep', emoji: '🏰', theme: 'keep', size: S,
       blurb: 'Storm the castle: drawbridges, wall walks, tower perches and a moat.',
       edge: 'wall', deathZ: -320, liquid: { kind: 'water', z: -46 },
       ground: { z: 0, depth: 60, kind: 'grass', holes: [{ x0: 560, y0: 560, x1: 2640, y1: 2640 }] },
@@ -871,9 +1013,123 @@
     return def;
   }
 
-  const ARENAS = [theKeep()];
+  // The Graveyard: rolling hills under the moon, a crypt in the middle of a paved plaza. The crypt's
+  // hall has four doors, a gallery round the inside up two flights of stairs, a scythe turning in the
+  // atrium and bells swinging over the galleries; its roof has skylights you can drop through and
+  // four jump pads fly you up onto it. Out on the hills: rows of headstones, fenced plots with open
+  // graves full of acid, dead trees and pumpkin bumpers.
+  function theGraveyard() {
+    const S = 3200;
+    const C = S / 2;
+    const GAL = 84; // the gallery's floor
+    const ROOF = 168;
+    const plaza = { x: C, y: C, r: 760, z: 0, soft: 0.72 };
+    const base = { seed: 13, amp: 58, scale: 640, base: 0, edge: 320, kind: 'grass' };
+    // The fenced plots are levelled at whatever height the hills have there.
+    const plots = [0, 1, 2, 3].map((k) => turn({ x: 600, y: 1000 }, S, k));
+    const pre = makeTerrain({ size: S, terrain: { ...base, flats: [plaza] } });
+    const def = {
+      id: 'graveyard', name: 'The Graveyard', emoji: '🪦', theme: 'graveyard', size: S,
+      blurb: 'Hills of headstones, acid graves and a two-storey crypt with a scythe in it.',
+      edge: 'wall', deathZ: -320,
+      terrain: { ...base, flats: [plaza, ...plots.map((p) => ({ x: p.x, y: p.y, r: 230, z: Math.round(pre.at(p.x, p.y)), soft: 0.75 }))] },
+      blocks: [], ramps: [], cyls: [], pads: [], bumpers: [], boosts: [], hazards: [], boxes: [], spawns: [], movers: [],
+      deco: [],
+    };
+    const land = makeTerrain(def);
+    const hAt = (x, y) => land.at(x, y);
+    // The crypt: the north and west halves, and the same again half a turn round.
+    symmetric(def, {
+      blocks: [
+        { x0: 1120, y0: 1240, x1: 1530, y1: 1280, z0: -40, z1: 150, kind: 'crypt' },
+        { x0: 1670, y0: 1240, x1: 2080, y1: 1280, z0: -40, z1: 150, kind: 'crypt' },
+        { x0: 1530, y0: 1240, x1: 1670, y1: 1280, z0: 60, z1: 150, kind: 'crypt' }, // over the north door
+        { x0: 1120, y0: 1280, x1: 1160, y1: 1530, z0: -40, z1: 150, kind: 'crypt' },
+        { x0: 1120, y0: 1670, x1: 1160, y1: 1920, z0: -40, z1: 150, kind: 'crypt' },
+        { x0: 1120, y0: 1530, x1: 1160, y1: 1670, z0: 60, z1: 150, kind: 'crypt' }, // over the west door
+        // The gallery: along the north wall and down the west side, on pillars.
+        { x0: 1160, y0: 1280, x1: 2040, y1: 1380, z0: 66, z1: GAL, kind: 'gallery' },
+        { x0: 1160, y0: 1380, x1: 1260, y1: 1820, z0: 66, z1: GAL, kind: 'gallery' },
+        // The roof, with three skylights over the atrium.
+        { x0: 1120, y0: 1240, x1: 2080, y1: 1530, z0: 150, z1: ROOF, kind: 'slate' },
+        { x0: 1120, y0: 1530, x1: 1310, y1: 1600, z0: 150, z1: ROOF, kind: 'slate' },
+        { x0: 1450, y0: 1530, x1: 1530, y1: 1600, z0: 150, z1: ROOF, kind: 'slate' },
+        { x0: 1670, y0: 1530, x1: 1750, y1: 1600, z0: 150, z1: ROOF, kind: 'slate' },
+        { x0: 1890, y0: 1530, x1: 2080, y1: 1600, z0: 150, z1: ROOF, kind: 'slate' },
+      ],
+      ramps: [{ x0: 1300, y0: 1380, x1: 1620, y1: 1460, z0: 0, z1: GAL, dir: 'x+', base: -20, kind: 'stair' }],
+      cyls: [
+        { x: 1260, y: 1380, r: 16, z0: -40, z1: 66, kind: 'pillar' }, { x: 1940, y: 1380, r: 16, z0: -40, z1: 66, kind: 'pillar' },
+        { x: 1800, y: 1380, r: 16, z0: -40, z1: 66, kind: 'pillar' },
+      ],
+      pads: [
+        { x: 1380, y: 1040, z: 0, r: 40, to: [1380, 1330, ROOF], t: 1 }, // up onto the roof, from the north
+        { x: 960, y: 1820, z: 0, r: 40, to: [1240, 1820, ROOF], t: 1 }, // and from the west
+      ],
+      movers: [{ type: 'pendulum', x: 1210, y: 1600, z: 150, len: 52, r: 18, axis: 'y', amp: 0.85, period: 2.6, phase: 0 }],
+      boxes: [
+        { x: 1330, y: 1600, z: 0 }, { x: 1450, y: 1330, z: GAL }, { x: 1600, y: 1380, z: ROOF }, { x: 1215, y: 1565, z: ROOF },
+      ],
+      spawns: [
+        { x: 1600, y: 1330, z: 0, angle: Math.PI / 2 }, { x: 1850, y: 1330, z: GAL, angle: Math.PI },
+        { x: 1210, y: 1460, z: GAL, angle: Math.PI / 2 }, { x: 1330, y: 1710, z: 0, angle: 0 },
+      ],
+      deco: [
+        { kind: 'lantern', x: 1490, y: 1225, z: 110 }, { kind: 'lantern', x: 1710, y: 1225, z: 110 }, { kind: 'brazier', x: 1648, y: 1420, z: 0 }, // in the lee of the stair's top
+        { kind: 'arch', x: 1600, y: 1233, z: 0, w: 140, h: 52, angle: 0 }, { kind: 'arch', x: 1113, y: 1600, z: 0, w: 140, h: 52, angle: Math.PI / 2 },
+      ],
+    }, S, [0, 2]);
+    // The braziers' stone feet are solid.
+    for (const d of def.deco) if (d.kind === 'brazier') def.cyls.push({ x: d.x, y: d.y, r: 16, z0: -40, z1: 46, kind: 'pillar' });
+    def.movers.push({ type: 'sweeper', x: C, y: C, z: 0, len: 130, w: 10, lo: 6, hi: 22, arms: 2, speed: 1.3, phase: 0, hub: 26 });
+    // The hills: one corner's worth of graves, turned to all four corners and set on the ground.
+    const corner = { blocks: [], cyls: [], bumpers: [], boosts: [], hazards: [], boxes: [], spawns: [], deco: [] };
+    // A fenced plot with two open graves (and their headstones), its gate facing the crypt.
+    const P = { x: 600, y: 1000 };
+    const fence = (x0, y0, x1, y1) => corner.blocks.push({ x0, y0, x1, y1, kind: 'fence' });
+    fence(P.x - 150, P.y - 110, P.x + 150, P.y - 102); // north side
+    fence(P.x - 150, P.y + 102, P.x + 150, P.y + 110); // south side
+    fence(P.x - 150, P.y - 110, P.x - 142, P.y + 110); // west side
+    fence(P.x + 142, P.y - 110, P.x + 150, P.y - 50); // east side, either side of the gate
+    fence(P.x + 142, P.y + 50, P.x + 150, P.y + 110);
+    for (const dx of [-60, 60]) {
+      corner.hazards.push({ x0: P.x + dx - 26, y0: P.y - 34, x1: P.x + dx + 26, y1: P.y + 62, kind: 'acid' });
+      corner.blocks.push({ x0: P.x + dx - 22, y0: P.y - 62, x1: P.x + dx + 22, y1: P.y - 48, kind: 'tomb' });
+    }
+    // Rows of headstones (a couple missing), to weave between.
+    for (const [x, y] of [[860, 470], [950, 470], [1040, 470], [1130, 470], [860, 560], [1040, 560], [1130, 560], [860, 650], [950, 650], [1040, 650]]) {
+      corner.blocks.push({ x0: x - 17, y0: y - 7, x1: x + 17, y1: y + 7, kind: 'tomb' });
+    }
+    corner.cyls.push({ x: 300, y: 640, r: 18, kind: 'deadtree' }, { x: 760, y: 300, r: 18, kind: 'deadtree' });
+    corner.bumpers.push({ x: 1000, y: 880, r: 30 }, { x: 880, y: 1000, r: 30 });
+    corner.boosts.push({ x: 520, y: 520, angle: Math.PI / 4 });
+    corner.boxes.push({ x: 330, y: 900 }, { x: 900, y: 330 }, { x: 950, y: 560 }); // the last in the headstones' gap
+    corner.spawns.push({ x: 300, y: 300, angle: Math.PI / 4 }, { x: 1220, y: 300, angle: Math.PI / 2 });
+    corner.deco.push({ kind: 'lantern', x: P.x + 160, y: P.y - 60 }, { kind: 'lantern', x: P.x + 160, y: P.y + 60 });
+    // The plaza round the crypt.
+    corner.spawns.push({ x: 1600, y: 1060, angle: Math.PI / 2 }, { x: 1120, y: 1120, angle: Math.PI / 4 });
+    corner.boxes.push({ x: 1800, y: 980 });
+    const placed = symmetric({}, corner, S);
+    // Everything out there stands on the hills.
+    for (const b of placed.blocks) {
+      const lo = Math.min(hAt(b.x0, b.y0), hAt(b.x1, b.y0), hAt(b.x0, b.y1), hAt(b.x1, b.y1));
+      const hi = Math.max(hAt(b.x0, b.y0), hAt(b.x1, b.y0), hAt(b.x0, b.y1), hAt(b.x1, b.y1));
+      def.blocks.push({ ...b, z0: lo - 24, z1: hi + (b.kind === 'fence' ? 42 : b.kind === 'tomb' ? (b.x1 - b.x0 > 40 || b.y1 - b.y0 > 40 ? 52 : 40) : 40) });
+    }
+    for (const c of placed.cyls) def.cyls.push({ ...c, z0: hAt(c.x, c.y) - 24, z1: hAt(c.x, c.y) + 150 });
+    for (const b of placed.bumpers) def.bumpers.push({ ...b, z: hAt(b.x, b.y) });
+    for (const b of placed.boosts) def.boosts.push({ ...b, z: hAt(b.x, b.y) });
+    for (const h of placed.hazards) def.hazards.push({ ...h, z: hAt((h.x0 + h.x1) / 2, (h.y0 + h.y1) / 2) });
+    for (const b of placed.boxes) def.boxes.push({ ...b, z: hAt(b.x, b.y) });
+    for (const p of placed.spawns) def.spawns.push({ ...p, z: hAt(p.x, p.y) });
+    for (const d of placed.deco) def.deco.push({ ...d, z: d.z ?? hAt(d.x, d.y) });
+    // The fences on each plot's levelled ground lie flat: no need for anything else.
+    return def;
+  }
+
+  const ARENAS = [theKeep(), theGraveyard()];
 
   return {
-    KART_R, KART_H, STEP, NAV, EDGE, ARENAS, makeLayeredArena, groundBlocks, turn, symmetric,
+    KART_R, KART_H, STEP, NAV, EDGE, ARENAS, makeLayeredArena, makeTerrain, groundBlocks, turn, symmetric,
   };
 });

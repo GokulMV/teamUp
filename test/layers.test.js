@@ -199,6 +199,31 @@ test('layers: CPU navigation finds ways up ramps, off ledges and over jump pads'
   // Nothing in the moat, the pit or the lava.
   assert.strictEqual(nav.nodeAt(1450, 950, 0, 0), -1);
   assert.ok(!nav.cellNodes[Math.floor(300 / 48) * nav.n + Math.floor(350 / 48)]?.some((id) => nav.zs[id] === 60), 'no node in the lava pool');
+  // How far it is to drive to the deck, from everywhere at once: no further than the way A* found.
+  const field = nav.toward(deck);
+  const length = (p) => p.slice(1).reduce((sum, id, i) => sum + nav.adj[p[i]].find(([b]) => b === id)[1], 0);
+  assert.strictEqual(field[deck], 0);
+  assert.ok(field[ground] > 300 && field[ground] <= length(up) + 0.5, `${field[ground]} vs ${length(up)}`);
+  assert.ok(field[under] <= length(nav.path(under, deck)) + 0.5);
+  assert.strictEqual(nav.toward(deck), field, 'worked out once per spot');
+});
+
+test('layers: posts thinner than a kart are in the way but never a floor', () => {
+  const map = L.makeLayeredArena({
+    id: 'posts', size: 1000, ground: { z: 0 },
+    cyls: [{ x: 500, y: 500, r: 16, z0: 0, z1: 46, kind: 'pillar' }, { x: 700, y: 500, r: 60, z0: 0, z1: 46 }],
+  });
+  assert.strictEqual(map.floorAt(500, 500, 100, 0), 0, 'nothing to stand on atop a post');
+  assert.strictEqual(map.floorAt(700, 500, 100, 0), 46, 'a wide drum is a floor');
+  assert.ok(map.walls(470, 500, 0, L.KART_R, null) > 0, 'the post is in the way');
+  // Dropped onto the post, a kart slides off it to the ground.
+  const k = drive(map, kartAt(500, 503, 70), {}, 1.5);
+  assert.ok(Math.abs(k.z) < 0.5, `on the ground (${k.z})`);
+  assert.ok(Math.hypot(k.x - 500, k.y - 500) >= 16 + L.KART_R - 1, 'beside the post');
+  // And the CPU drivers never plan a stop on top of it.
+  const nav = map.nav;
+  assert.ok(!(nav.cellNodes[Math.floor(500 / 48) * nav.n + Math.floor(500 / 48)] || []).some((id) => nav.zs[id] > 1));
+  assert.ok((nav.cellNodes[Math.floor(500 / 48) * nav.n + Math.floor(700 / 48)] || []).some((id) => nav.zs[id] === 46));
 });
 
 test('layers: the kart physics is deterministic (server and prediction agree)', () => {
@@ -351,8 +376,11 @@ test('layers: CPU drivers on The Keep collect boxes, use the jump pads and keep 
   assert.ok(drowned <= 5, `${drowned} karts drove into the moat by themselves`);
 });
 
-test('layers: The Keep: every spawn and box stands on its floor, and each is reachable from every other', () => {
-  const map = K.getMap('keep', 'arena');
+test('layers: The Keep and The Graveyard: every spawn and box stands on its floor, and each is reachable from every other', () => {
+  for (const id of ['keep', 'graveyard']) checkArena(K.getMap(id, 'arena'));
+});
+
+function checkArena(map) {
   assert.ok(map.layered);
   const nav = map.nav;
   const home = nav.nodeAt(map.spawns[0].x, map.spawns[0].y, map.spawns[0].z);
@@ -360,11 +388,39 @@ test('layers: The Keep: every spawn and box stands on its floor, and each is rea
   const back = nav.reach(home, true);
   for (const [what, list] of [['spawn', map.spawns], ['box', map.itemBoxes]]) {
     list.forEach((p, i) => {
-      assert.strictEqual(map.floorAt(p.x, p.y, p.z + L.STEP, 0), p.z, `${what} ${i} on its floor`);
-      if (what === 'spawn') assert.strictEqual(map.walls(p.x, p.y, p.z, L.KART_R, null), 0, `spawn ${i} clear of walls`);
+      assert.strictEqual(map.floorAt(p.x, p.y, p.z + L.STEP, 0), p.z, `${map.id}: ${what} ${i} on its floor`);
+      if (what === 'spawn') assert.strictEqual(map.walls(p.x, p.y, p.z, L.KART_R, null), 0, `${map.id}: spawn ${i} clear of walls`);
       const id = nav.nodeAt(p.x, p.y, p.z);
-      assert.ok(id >= 0 && there[id] && back[id], `${what} ${i} at (${p.x}, ${p.y}, ${p.z}) reachable both ways`);
+      assert.ok(id >= 0 && there[id] && back[id], `${map.id}: ${what} ${i} at (${p.x}, ${p.y}, ${p.z}) reachable both ways`);
     });
   }
   assert.ok(map.spawns.length >= 24 && map.itemBoxes.length >= 20);
+}
+
+test('layers: rolling ground: karts follow it, decks stand over it, and nothing falls through a steep rise', () => {
+  const def = {
+    id: 'hills', size: 2400,
+    terrain: { seed: 5, amp: 70, scale: 500, base: 0, edge: 200, flats: [{ x: 1200, y: 1200, r: 300, z: 0 }] },
+    blocks: [{ x0: 1100, y0: 1150, x1: 1300, y1: 1250, z0: 50, z1: 66 }],
+  };
+  const map = L.makeLayeredArena(def);
+  assert.ok(map.land, 'a rolling ground');
+  assert.strictEqual(map.floorAt(1200, 1100, 1000), 0, 'levelled where the flat is');
+  assert.strictEqual(map.floorAt(1200, 1200, 1000), 66, 'a deck stands over it');
+  assert.strictEqual(map.floorAt(1200, 1200, 10), 0, 'and the ground is under the deck');
+  const lo = Math.min(...map.land.h);
+  const hi = Math.max(...map.land.h);
+  assert.ok(hi - lo > 60, `hills ${lo.toFixed(0)}..${hi.toFixed(0)}`);
+  // Drive across the hills at boost speed: the kart is never under the ground.
+  const k = kartAt(250, 300, map.floorAt(250, 300, 1e9), 0.6);
+  k.boost = 30;
+  let worst = 0;
+  drive(map, k, UP, 4, 0, (kk) => { worst = Math.max(worst, map.land.at(kk.x, kk.y) - kk.z); });
+  assert.ok(worst < 0.5, `never under the ground (worst ${worst.toFixed(2)})`);
+  assert.ok(Math.hypot(k.x - 250, k.y - 300) > 1500, 'and covered the distance');
+  // The navigation grid walks over the hills.
+  const nav = map.nav;
+  const a = nav.nodeAt(300, 300, map.land.at(300, 300));
+  const b = nav.nodeAt(2100, 2100, map.land.at(2100, 2100));
+  assert.ok(nav.path(a, b), 'a way across the hills');
 });

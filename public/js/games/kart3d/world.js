@@ -458,6 +458,12 @@ export const THEMES = {
     deadTrees: ['almond', 'casuarina'], embers: true, volcanoCone: true, hills: 0x3a2722,
   },
   // Layered arenas (kart3d/arena3d.js builds their geometry from the map's own materials kit).
+  graveyard: {
+    night: true, sky: [0x0d0a2a, 0x3a2f6e], fog: [0x2c2450, 1900, 7000], hemi: [0xb4aaf0, 0x2c2638, 1.55], sun: [0xd0dcff, 2.1],
+    ground: () => tex.ground('#2c3a2c', ['#253325', '#36483a']),
+    deadTrees: ['almond', 'casuarina'], stars: true, hills: 0x1c2030, clouds: 8, cloudTint: 0x4a4570,
+    moon: true, wisps: true, pumpkins: true, railings: true,
+  },
   keep: {
     sky: [0x4a90d9, 0xd8ecfb], fog: [0xd2e6f5, 2200, 7800], hemi: [0xe4f1ff, 0x5b7a45, 1.2], sun: [0xfff0d4, 2.7],
     ground: () => tex.ground('#5c9a43', ['#4f8c3a', '#6aab4e']),

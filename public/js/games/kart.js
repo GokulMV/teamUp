@@ -675,6 +675,27 @@ window.Games.kart = {
       return Math.max(0.08, 1 - Math.hypot(local.x - x, local.y - y) / 1400);
     }
 
+    // Drawbridges ring a bell two seconds before they go up, and whoever is close by gets told.
+    const bridgeRang = new Map(); // drawbridge -> when the rise it rang for starts
+    function warnBridges(t) {
+      let loudest = 0;
+      let near = false;
+      for (const m of map.movers) {
+        if (m.type !== 'drawbridge') continue;
+        const st = map.bridgeAt(m, t);
+        if (!st.down || st.rise > 2) continue;
+        const at = Math.round((t + st.rise) * 4);
+        if (bridgeRang.get(m) === at) continue;
+        bridgeRang.set(m, at);
+        const x = (m.x0 + m.x1) / 2;
+        const y = (m.y0 + m.y1) / 2;
+        loudest = Math.max(loudest, volumeAt(x, y));
+        if (Math.hypot(local.x - x, local.y - y) < 420) near = true;
+      }
+      if (loudest > 0.08) Sfx.bell?.(loudest);
+      if (near) hud.callout('DRAWBRIDGE RISING', { kind: 'small', hold: 1100, sub: 'Get across or get off' });
+    }
+
     // ---------- Frame loop ----------
     function frame(now) {
       raf = requestAnimationFrame(frame);
@@ -691,6 +712,7 @@ window.Games.kart = {
       // The game clock the moving obstacles run on: the server's, plus the half round trip my
       // predicted kart is ahead of it (so they line up with my kart; everyone else is a little behind).
       const mapTime = clockOffset === null ? 0 : (now - clockOffset + rtt / 2) / 1000;
+      if (map?.layered && local && !local.dead && latest?.phase === 'racing') warnBridges(mapTime);
       if (local && !local.dead && !local.falling && latest?.phase === 'racing') {
         predictAcc = Math.min(predictAcc + dt, STEP * 4);
         let stepT = mapTime - predictAcc;
@@ -820,7 +842,7 @@ window.Games.kart = {
 
     const ITEM_SOUND = { rocket: 'rocket', triple: 'rocket', bomb: 'rocket', banana: 'banana', mine: 'banana', shield: 'shield', ghost: 'shield', bouncer: 'bouncer', ink: 'ink',
       snowball: 'snowThrow', sticky: 'banana', spikes: 'spikes', decoy: 'banana' };
-    const QUIET_HITS = ['mine', 'bomb', 'shock', 'lava', 'water', 'void', 'comet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy']; // their own effect covers it
+    const QUIET_HITS = ['mine', 'bomb', 'shock', 'lava', 'water', 'void', 'acid', 'comet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy']; // their own effect covers it
     const nameOf = (idx) => api.escapeHtml(kartsByIdx.get(idx)?.name || 'Someone');
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -899,10 +921,10 @@ window.Games.kart = {
         } else if (event === 'game:kart:hit') {
           const kind = data.kill ? 'kill' : data.kind === 'bullet' ? 'bullet' : 'hit';
           const victim = kartsByIdx.get(data.target);
-          if (data.kind === 'water') {
-            // Into the moat: a splash where the kart went in.
-            view3d?.fallFx(data.x, data.y, 'water', data.z);
-            Sfx.splash?.(data.target === myIdx ? 1 : volumeAt(data.x, data.y));
+          if (data.kind === 'water' || data.kind === 'acid') {
+            // Into the moat, or an open grave full of acid: a splash (green and fizzing for acid).
+            view3d?.fallFx(data.x, data.y, data.kind, data.z);
+            (data.kind === 'acid' ? Sfx.sizzle : Sfx.splash)?.(data.target === myIdx ? 1 : volumeAt(data.x, data.y));
           } else if (!QUIET_HITS.includes(data.kind) || data.kill) view3d?.explode(data.x, data.y, kind, data.kill ? 90 : 50, colorOf(victim), data.z);
           if (!['bullet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy'].includes(data.kind) || data.kill) Sfx.explosion(volumeAt(data.x, data.y) * (data.kill ? 1 : 0.4));
           if (data.kind === 'snowball') Sfx.freeze?.(data.target === myIdx ? 1 : volumeAt(data.x, data.y));

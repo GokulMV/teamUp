@@ -7,7 +7,7 @@ No installs for players: share a 4-letter room code or invite link and everyone 
 |------|-------------|--------------|
 | 🎨 **Pictionary** | skribbl.io | One player draws, everyone guesses in chat. Rounds where everyone draws once (or a fixed number of turns), 15-240 s draw time, 1-5 word choices, 0-5 letter hints, **Normal / Hidden / Combination** word modes, custom word lists, fill bucket, 👍/👎 ratings. Team mode alternates teams and pools scores. |
 | 📞 **Telephone** | Gartic Phone | Books pass round the group. Modes: **Normal** (write → draw → describe…), **Speedrun**, **Secret** (draw blind), **Knock-off** (memorise a drawing, redraw it), **Complement** (add to the last drawing). Pace and auto/host reveal options, emoji reactions, save albums as images. |
-| 🏎️ **Kart Battle** | Mario Kart / Smash Karts | **3D** karts (Three.js) with drifting + mini-turbos. **Race** on 6 big tracks with climbs, crests, bridges and jumps (Grand Prix, Desert Canyon, Snowy Peaks, Neon City, Coral Coast, Lava Peak; ~50 s laps, tricks off ramps, fall into the sea or lava and get fished back out) or fight in 2 **arenas** (Colosseum, Volcano Crater) with health bars and respawns. Hop over hazards with a tap of drift; karts bump and trade momentum (hard hits are rams). 19 power-ups from a slot-machine item roulette, two held at once (Q swaps): boost, homing rocket, triple rockets, bouncer shell, banana, shield, mine, minigun, bomb (hold to aim the lob), shock wave, ghost, star power, ink splat, comet (hunts the leader), thunder, snowball (freezes; hit a frozen kart to shatter it), sticky bomb (bump someone to pass it on), spin spikes and decoy box. |
+| 🏎️ **Kart Battle** | Mario Kart / Smash Karts | **3D** karts (Three.js) with drifting + mini-turbos. **Race** on 6 big tracks with climbs, crests, bridges and jumps (Grand Prix, Desert Canyon, Snowy Peaks, Neon City, Coral Coast, Lava Peak; ~50 s laps, tricks off ramps, fall into the sea or lava and get fished back out) or fight in 4 **arenas** with health bars and respawns: Colosseum and Volcano Crater, plus two built in layers, The Keep (a moated castle: drawbridges that rise in turn, wall walks, towers you reach by jump pad, a keep hall with a roof to fight on; knock someone into the moat and the kill is yours) and The Graveyard (rolling hills of headstones and acid graves round a two-storey crypt with a gallery, a scythe and a roof you can drop through). Hop over hazards with a tap of drift; karts bump and trade momentum (hard hits are rams). 19 power-ups from a slot-machine item roulette, two held at once (Q swaps): boost, homing rocket, triple rockets, bouncer shell, banana, shield, mine, minigun, bomb (hold to aim the lob), shock wave, ghost, star power, ink splat, comet (hunts the leader), thunder, snowball (freezes; hit a frozen kart to shatter it), sticky bomb (bump someone to pass it on), spin spikes and decoy box. |
 | ⛓️ **Ball & Chain** | Fall Guys | Teams of 2-6 stick figures, each tied to their team's giant beach ball by a stretchy rope, drag it through a candy-coloured **3D** obstacle course floating in the sky. **All hands:** the ball digs in unless *everyone* is pulling (holding a pressure plate or bracing counts), so one slacker leaves the team crawling at ~10% speed. **Heave** together for a sync bonus (and to launch the ball off ramps), **brace** to anchor it on slopes, belts and in gusts. 13 obstacle types (pillar slalom, airlock plates, twin keys, wobbly bridges, tilted slide, big slide, conveyors, wind tunnel, sweeper, hammers, bumpers, mud & ice, sync jump), side-by-side lanes, sabotage traps, 1/3/5 courses. |
 | 🎛️ **Control Room** | Spaceteam | Crews of 2-6 each fly a ship. Every phone is a control panel of silly technobabble controls (buttons, switches, faders, dials, selectors, levers) and shows one order, usually for a crewmate's control, so you shout. Done orders fill the sector, missed ones dent the hull. Harder sectors bring asteroid fields (everyone mashes together), blackouts, panel shuffles, wormholes and ion storms. All crews fly at once; furthest sector wins. Cadet / Pilot / Ace, 5 / 10 / endless sectors, Voice or Relay comms (tap your order to flash it on your crew's screens). |
 
@@ -45,6 +45,7 @@ public/                     browser client (plain HTML/CSS/JS, no build step)
   js/games/kart3d/items3d.js power-up models and effects (pooled/instanced), item boxes, kart auras
   js/games/kart3d/world.js  themes, textures, shared scenery (trees, grass, clouds...) and arenas
   js/games/kart3d/track.js  race tracks: terrain, road, bridges, rails, ramps, water, lava, landmarks
+  js/games/kart3d/arena3d.js layered arenas: floors, ramps, walls, roofs that fade, movers, pads, scenery
   js/games/ballchain*.js    Ball & Chain: shared physics + course layouts (-core), client/HUD, 3D view
   js/games/ballchain3d/     course scenery (candy islands, obstacles, arches, sky) and the stick figures
   js/games/controlroom*.js  Control Room: game client, control widgets, starfield viewport, icons
@@ -54,11 +55,13 @@ public/                     browser client (plain HTML/CSS/JS, no build step)
   js/item-icons.js          SVG power-up icons (HUD slot, roulette, lobby picker, kill feed)
   vendor/moonlit/           trees.js from GokulMV/moonlit-cove (grows the 3D trees)
   js/shared/kart-core.js    tracks (3D centerline, terrain, heightAt) + kart physics shared by server and client
+  js/shared/kart-layers.js  layered arenas: floors over floors, ramps, pads, movers, rolling ground, CPU nav grid
 server/
   index.js                  Express + Socket.IO
   rooms.js                  rooms (30 max), host controls, teams, reconnects
   games/pictionary.js       turns, word choice, hints, scoring
   games/kart.js             authoritative 30 Hz simulation: race laps or arena deathmatch, items
+  games/kart-bots.js        CPU drivers: racing lines, item use, path-finding round layered arenas
   games/telephone.js        chained write/draw/describe steps + reveal
   games/ballchain.js        teams, courses, ropes/heave/brace physics at 30 Hz, checkpoints, sabotage, scoring
   games/controlroom.js      crews, panels, orders, hull/sectors, team events, relay comms
@@ -90,7 +93,7 @@ Any Node 18+ host or container platform that supports WebSockets works (Render, 
 
 ## Ideas for next steps
 
-- More kart tracks and arenas, plus a picker
+- A new arena every week, generated from the week's number
 - Kart customization (colors, hats, bodies)
 - Custom word lists for Pictionary
 - Sound effects and music

@@ -5,7 +5,7 @@
 // fade out when they would hide your kart from the camera.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { tex, canvasTexture, rng, MOBILE, boostPad, decorate, addHills } from './world.js';
+import { tex, canvasTexture, rng, MOBILE, boostPad, decorate, addHills, addMoonlitTrees } from './world.js';
 
 const K = window.KartCore;
 const L = K.Layers;
@@ -190,6 +190,72 @@ const TEX = {
   bumper: () => canvasTexture(128, 64, (c, w, h) => {
     for (let i = 0; i < 8; i++) { c.fillStyle = i % 2 ? '#fdf2f8' : '#e11d48'; c.fillRect((i * w) / 8, 0, w / 8 + 1, h); }
   }),
+  // Night grass: dark and blue-green, with bare patches of earth.
+  nightGrass: () => canvasTexture(256, 256, (c, w, h) => {
+    c.fillStyle = '#394a37'; c.fillRect(0, 0, w, h);
+    const r = rng(71);
+    for (let i = 0; i < 40; i++) {
+      const x = r() * w; const y = r() * h; const rr = 16 + r() * 36;
+      wrapped(c, w, h, x, y, rr, (px, py) => {
+        const g = c.createRadialGradient(px, py, 0, px, py, rr);
+        g.addColorStop(0, r() < 0.35 ? 'rgba(74,58,44,0.55)' : r() < 0.5 ? 'rgba(80,110,80,0.3)' : 'rgba(10,16,14,0.35)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+        c.fillStyle = g; c.fillRect(px - rr, py - rr, rr * 2, rr * 2);
+      });
+    }
+    speckle(c, w, h, 5000, ['#2e3e2e', '#435842', '#344636', '#506a50', '#283628'], 2, 72);
+    c.lineWidth = 1;
+    for (let i = 0; i < 800; i++) {
+      const x = r() * w; const y = r() * h;
+      c.strokeStyle = r() < 0.5 ? 'rgba(10,20,14,0.5)' : 'rgba(110,140,110,0.35)';
+      c.beginPath(); c.moveTo(x, y); c.lineTo(x + (r() - 0.5) * 3, y - 3 - r() * 4); c.stroke();
+    }
+  }),
+  // Slate roof tiles: rows of overlapping, slightly uneven tiles.
+  slate: () => canvasTexture(256, 256, (c, w, h) => {
+    c.fillStyle = '#1d2029'; c.fillRect(0, 0, w, h);
+    const r = rng(81);
+    for (let y = 0, row = 0; y < h; y += 26, row++) {
+      for (let x = (row % 2) * -16; x < w; x += 32) {
+        c.fillStyle = shade('#454b5c', 0.75 + r() * 0.35);
+        c.beginPath(); c.moveTo(x + 1, y); c.lineTo(x + 31, y); c.lineTo(x + 31, y + 22); c.quadraticCurveTo(x + 16, y + 27, x + 1, y + 22); c.closePath(); c.fill();
+        c.fillStyle = 'rgba(255,255,255,0.06)'; c.fillRect(x + 2, y + 1, 28, 2);
+      }
+    }
+    speckle(c, w, h, 1500, ['rgba(0,0,0,0.15)', 'rgba(255,255,255,0.05)'], 2, 82);
+  }),
+  // A headstone's face: weathered stone, a carved cross and lines of worn-away lettering.
+  grave: () => canvasTexture(128, 160, (c, w, h) => {
+    c.fillStyle = '#8a8a8f'; c.fillRect(0, 0, w, h);
+    speckle(c, w, h, 2200, ['#7a7a80', '#9a9aa0', '#6e6e75', '#a8a8ad', '#5d6b55'], 2, 91);
+    const r = rng(92);
+    for (let i = 0; i < 14; i++) { const x = r() * w; const y = r() * h * 0.4 + h * 0.6; c.fillStyle = `rgba(70,100,60,${0.15 + r() * 0.2})`; c.beginPath(); c.arc(x, y, 3 + r() * 8, 0, TAU); c.fill(); }
+    c.fillStyle = 'rgba(30,30,36,0.55)';
+    c.fillRect(w / 2 - 4, 20, 8, 46); c.fillRect(w / 2 - 18, 32, 36, 8);
+    for (let y = 80; y < 128; y += 12) c.fillRect(24 + r() * 8, y, w - 48 - r() * 16, 4);
+  }, false),
+  // Bubbling acid: lurid green with brighter blobs (scrolled slowly, like the lava).
+  acid: () => canvasTexture(256, 256, (c, w, h) => {
+    c.fillStyle = '#3f6212'; c.fillRect(0, 0, w, h);
+    const r = rng(101);
+    for (let i = 0; i < 70; i++) {
+      const x = r() * w; const y = r() * h; const rr = 8 + r() * 30;
+      wrapped(c, w, h, x, y, rr, (px, py) => {
+        const g = c.createRadialGradient(px, py, 0, px, py, rr);
+        g.addColorStop(0, r() < 0.6 ? 'rgba(190,242,100,0.9)' : 'rgba(236,252,203,0.8)'); g.addColorStop(1, 'rgba(101,163,13,0)');
+        c.fillStyle = g; c.fillRect(px - rr, py - rr, rr * 2, rr * 2);
+      });
+    }
+  }),
+  // A jack-o'-lantern's face, glowing (transparent round it).
+  pumpkinFace: () => canvasTexture(128, 128, (c, w, h) => {
+    c.clearRect(0, 0, w, h);
+    c.fillStyle = '#ffd34d';
+    c.beginPath(); c.moveTo(30, 52); c.lineTo(52, 52); c.lineTo(41, 30); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(76, 52); c.lineTo(98, 52); c.lineTo(87, 30); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(24, 70);
+    for (let i = 0; i <= 8; i++) c.lineTo(24 + i * 10, 70 + (i % 2 ? 12 : 0));
+    c.lineTo(104, 70); c.quadraticCurveTo(64, 118, 24, 70); c.fill();
+  }, false),
 };
 const texture = (name, ...args) => once(`${name}${args.join(',')}`, () => TEX[name](...args));
 
@@ -214,7 +280,19 @@ const KITS = {
     ground: { top: ['grass', [], 300], side: ['dirt', [], 200] },
   },
 };
-const ROUGH = { planks: 0.85, timber: 0.9, tent: 0.95, grass: 1, dirt: 1 };
+KITS.graveyard = {
+  grass: { top: ['nightGrass', [], 260], side: ['dirt', [], 200] },
+  crypt: { top: ['flag', ['#4d4a57'], 200], side: ['ashlar', ['#5d5a68', '#2b2933'], 150], bottom: ['ashlar', ['#5d5a68', '#2b2933'], 150] },
+  gallery: { top: ['flag', ['#625e6c'], 170], side: ['ashlar', ['#5d5a68', '#2b2933'], 150], bottom: ['timber', [], 110] },
+  slate: { top: ['slate', [], 160], side: ['ashlar', ['#5d5a68', '#2b2933'], 150], bottom: ['timber', [], 110] },
+  stair: { top: ['steps', [], 22, 'steps'], side: ['ashlar', ['#5d5a68', '#2b2933'], 150] },
+  pillar: { top: ['ashlar', ['#6b6876', '#34313d'], 150], side: ['ashlar', ['#6b6876', '#34313d'], 150] },
+  stone: { top: ['flag', ['#4d4a57'], 200], side: ['ashlar', ['#5d5a68', '#2b2933'], 150] },
+  ground: { top: ['nightGrass', [], 260], side: ['dirt', [], 200] },
+};
+// Kinds drawn by their own builders instead of as plain blocks.
+const SPECIAL = new Set(['tomb', 'fence', 'deadtree']);
+const ROUGH = { planks: 0.85, timber: 0.9, tent: 0.95, grass: 1, dirt: 1, nightGrass: 1, slate: 0.7 };
 
 // Shared materials, one per texture setup (roofs get their own copies so each can fade alone).
 const matCache = {};
@@ -364,8 +442,11 @@ export function buildLayered(scene, map, theme, ctx) {
   const statics = new Buckets();
   const cylGeos = new Map(); // material key -> [spec, geometries]
   const roofs = [];
+  const special = { tomb: [], fence: [], deadtree: [] };
+  const glows = []; // acid pools that fizz
   for (const s of map.solids) {
     if (s.kind === 'bumper' || s.kind === 'hub') continue; // drawn with their bumper / sweeper
+    if (SPECIAL.has(s.kind)) { special[s.kind].push(s); continue; }
     const footprint = s.type === 2 ? Math.PI * s.r * s.r : (s.x1 - s.x0) * (s.y1 - s.y0);
     // Anything big enough to drive under fades when it would hide your kart.
     const roof = s.z0 > 20 && footprint > 5000;
@@ -396,6 +477,13 @@ export function buildLayered(scene, map, theme, ctx) {
     mesh.receiveShadow = true;
     scene.add(mesh);
   }
+  if (map.land) buildLand(scene, map, kit);
+  if (special.tomb.length) buildTombs(scene, map, special.tomb);
+  if (special.fence.length) buildFences(scene, map, special.fence);
+  if (special.deadtree.length) {
+    addMoonlitTrees(scene, special.deadtree.map((d) => [d.x, d.y, 0.9 + ((d.x * 7 + d.y * 3) % 5) / 10, map.land ? map.land.at(d.x, d.y) : 0]), ['almond', 'casuarina'],
+      { barkOnly: true, barkTint: 0x3a3330, seed: 6, variants: 2 });
+  }
 
   // The world outside the arena: the same ground, with a square hole where the arena is.
   const outerKit = kit.grass || kit.ground;
@@ -415,8 +503,8 @@ export function buildLayered(scene, map, theme, ctx) {
     scene.add(outside);
   }
 
-  // Edge walls: a palisade of sharpened logs where the physics wall stands.
-  if (map.edge === 'wall') addPalisade(scene, S);
+  // Edge walls: a palisade of sharpened logs (or wrought iron railings) where the physics wall stands.
+  if (map.edge === 'wall') addPalisade(scene, S, theme.railings);
 
   // Moat / lava lake: one sheet at the liquid's level (only seen through the holes in the floor).
   if (map.liquid) {
@@ -443,31 +531,75 @@ export function buildLayered(scene, map, theme, ctx) {
     }
   }
 
-  // Lava (or water) pools on a floor.
+  // Lava or acid pools on a floor (an open grave full of acid sits a little down in a dug-out pit).
   for (const h of map.hazards) {
-    const lt = tex.lava().clone();
+    const acid = h.kind === 'acid';
+    const lt = (acid ? texture('acid') : tex.lava()).clone();
     lt.needsUpdate = true;
     const round = h.r !== undefined;
     const w = round ? h.r * 2 : h.x1 - h.x0;
     const d = round ? h.r * 2 : h.y1 - h.y0;
     lt.repeat.set(w / 240, d / 240);
     const geo = round ? new THREE.CircleGeometry(h.r, 40) : new THREE.PlaneGeometry(w, d);
-    const pool = new THREE.Mesh(geo.rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: lt, emissive: 0xffffff, emissiveMap: lt, emissiveIntensity: 1.3, roughness: 0.4 }));
-    pool.position.set(round ? h.x : (h.x0 + h.x1) / 2, h.z + 0.6, round ? h.y : (h.y0 + h.y1) / 2);
+    const pool = new THREE.Mesh(geo.rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: lt, emissive: 0xffffff, emissiveMap: lt, emissiveIntensity: acid ? 0.9 : 1.3, roughness: 0.3 }));
+    const cx = round ? h.x : (h.x0 + h.x1) / 2;
+    const cz = round ? h.y : (h.y0 + h.y1) / 2;
+    pool.position.set(cx, h.z + 0.6, cz);
     scene.add(pool);
     ctx.lava.push(lt);
+    if (acid) {
+      // A dark rim of turned earth round the grave.
+      const rim = new THREE.Mesh(new THREE.PlaneGeometry(w + 18, d + 18).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x2a2018, roughness: 1 }));
+      rim.position.set(cx, h.z + 0.3, cz);
+      rim.receiveShadow = true;
+      scene.add(rim);
+      glows.push({ x: cx, y: h.z + 4, z: cz, w, d });
+    }
   }
 
   for (const p of map.boostPads) ctx.pads.push(boostPad(scene, p));
   const pads = map.pads.map((p) => buildPad(scene, p));
-  const bumpers = map.bumpers.map((b) => buildBumper(scene, b));
+  const bumpers = map.bumpers.map((b) => (theme.pumpkins ? buildPumpkin(scene, b, S) : buildBumper(scene, b)));
   const movers = map.movers.map((m) => buildMover(scene, map, m, kit));
-  addScenery(scene, map, theme, ctx, kit);
+  const flames = []; // braziers: flames come off them in ambient()
+  addScenery(scene, map, theme, ctx, kit, flames);
 
+  const moon = theme.moon ? addMoon(scene) : null;
   const v0 = new THREE.Vector3();
   const v1 = new THREE.Vector3();
+  let wispT = 0;
   return {
     roofs,
+    // Particles the scenery gives off near the camera: acid fizzing, wisps drifting over the graves.
+    ambient(dt, cam, fire, smoke) {
+      if (moon) moon.position.set(cam.x - 5200, cam.y + 4200, cam.z - 6400);
+      for (const f of flames) {
+        if (Math.abs(f.x - cam.x) > 1400 || Math.abs(f.z - cam.z) > 1400) continue;
+        f.acc = (f.acc || 0) + dt * 40;
+        for (; f.acc >= 1; f.acc--) {
+          fire.emit(f.x + (Math.random() - 0.5) * 14, f.y, f.z + (Math.random() - 0.5) * 14, (Math.random() - 0.5) * 10, 40 + Math.random() * 35, (Math.random() - 0.5) * 10,
+            FLAME_COLS[Math.floor(Math.random() * 3)], 5 + Math.random() * 5, 0.4, { grow: -0.6, drag: 1 });
+        }
+        if (Math.random() < dt * 3) smoke.emit(f.x, f.y + 30, f.z, 0, 40, 0, SMOKE_COL, 12, 1.6, { alpha: 0.22, grow: 1.6, rise: 10 });
+      }
+      for (const g of glows) {
+        if (Math.abs(g.x - cam.x) > 1600 || Math.abs(g.z - cam.z) > 1600 || Math.random() > dt * 10) continue;
+        fire.emit(g.x + (Math.random() - 0.5) * g.w * 0.8, g.y, g.z + (Math.random() - 0.5) * g.d * 0.8, 0, 20 + Math.random() * 30, 0,
+          ACID_COLS[Math.floor(Math.random() * 3)], 3 + Math.random() * 3, 0.7, { drag: 1, rise: 30 });
+      }
+      if (theme.wisps) {
+        wispT -= dt;
+        if (wispT <= 0) {
+          wispT = MOBILE ? 0.5 : 0.22;
+          const a = Math.random() * TAU;
+          const r = 200 + Math.random() * 900;
+          const x = cam.x + Math.cos(a) * r;
+          const z = cam.z + Math.sin(a) * r;
+          const y = (map.land ? map.land.at(x, z) : 0) + 20 + Math.random() * 60;
+          fire.emit(x, y, z, (Math.random() - 0.5) * 30, 6 + Math.random() * 10, (Math.random() - 0.5) * 30, WISP_COLS[Math.floor(Math.random() * 2)], 9 + Math.random() * 6, 4, { drag: 0.2, rise: 4 });
+        }
+      }
+    },
     // t: the game clock (where the movers are); focus: {x, y, z} of the kart the camera follows.
     update(t, dt, focus, camera) {
       for (const m of movers) m.update(t);
@@ -602,7 +734,7 @@ function buildBumper(scene, b) {
 // ---------- moving obstacles ----------
 function buildMover(scene, map, m, kit) {
   if (m.type === 'drawbridge') return buildDrawbridge(scene, map, m, kit);
-  if (m.type === 'sweeper') return buildSweeper(scene, m);
+  if (m.type === 'sweeper') return map.theme === 'graveyard' ? buildScythe(scene, m) : buildSweeper(scene, m);
   if (m.type === 'slider') {
     const B = new Buckets();
     addBox(B, { ...m, kind: m.kind || 'stone' }, kit, { bottom: true });
@@ -614,8 +746,9 @@ function buildMover(scene, map, m, kit) {
   if (m.type === 'pendulum') {
     const g = new THREE.Group();
     const iron = new THREE.MeshStandardMaterial({ color: 0x3a3f47, roughness: 0.5, metalness: 0.8 });
-    const ball = new THREE.Mesh(new THREE.IcosahedronGeometry(m.r, 1), iron);
-    for (let i = 0; i < 12; i++) {
+    const bell = map.theme === 'graveyard';
+    const ball = bell ? bellMesh(m.r) : new THREE.Mesh(new THREE.IcosahedronGeometry(m.r, 1), iron);
+    for (let i = 0; i < (bell ? 0 : 12); i++) {
       const spike = new THREE.Mesh(new THREE.ConeGeometry(m.r * 0.18, m.r * 0.5, 6), iron);
       const a = (i / 12) * TAU;
       const e = ((i % 3) - 1) * 0.8;
@@ -634,7 +767,10 @@ function buildMover(scene, map, m, kit) {
       update(t) {
         const b = map.pendulumAt(m, t);
         ball.position.set(b.x, b.z, b.y);
-        ball.rotation.y = t * 2;
+        if (bell) {
+          // Hang along the chain, swinging with it.
+          if (m.axis === 'y') ball.rotation.set(-b.th, 0, 0); else ball.rotation.set(0, 0, b.th);
+        } else ball.rotation.y = t * 2;
         dir.set(m.x - b.x, m.z - b.z, m.y - b.y);
         const len = dir.length();
         chain.position.set((m.x + b.x) / 2, (m.z + b.z) / 2, (m.y + b.y) / 2);
@@ -644,6 +780,25 @@ function buildMover(scene, map, m, kit) {
     };
   }
   return { update() {} };
+}
+
+// A church bell (bronze, a clapper inside), sized to swing like a pendulum ball of radius r.
+function bellMesh(r) {
+  const pts = [];
+  for (let i = 0; i <= 12; i++) {
+    const u = i / 12; // top to lip
+    const rad = r * (0.38 + 0.5 * u * u + 0.32 * Math.max(0, u - 0.82) / 0.18);
+    pts.push(new THREE.Vector2(rad, r * (0.9 - 1.9 * u)));
+  }
+  const bronze = new THREE.MeshStandardMaterial({ color: 0xc9a066, emissive: 0x3a2508, emissiveIntensity: 0.4, roughness: 0.35, metalness: 0.4, side: THREE.DoubleSide });
+  const bell = new THREE.Mesh(new THREE.LatheGeometry(pts, 24), bronze);
+  const crown = new THREE.Mesh(new THREE.TorusGeometry(r * 0.22, r * 0.07, 6, 12), bronze);
+  crown.position.y = r * 0.98;
+  const clapper = new THREE.Mesh(new THREE.SphereGeometry(r * 0.2, 10, 8), new THREE.MeshStandardMaterial({ color: 0x2b2b30, metalness: 0.8, roughness: 0.4 }));
+  clapper.position.y = -r * 0.85;
+  bell.add(crown, clapper);
+  bell.castShadow = true;
+  return bell;
 }
 
 // A quintain: a post with arms turning on top, a shield on one arm and a sandbag on the other.
@@ -666,7 +821,7 @@ function buildSweeper(scene, m) {
       const shield = new THREE.Mesh(new THREE.CylinderGeometry(h * 1.15, h * 1.15, 5, 20), new THREE.MeshStandardMaterial({ color: 0xb91c1c, roughness: 0.6, metalness: 0.2 }));
       shield.rotation.x = Math.PI / 2;
       shield.position.set(m.len - 8, 0, 0);
-      const boss = new THREE.Mesh(new THREE.SphereGeometry(h * 0.35, 12, 8), new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.35, metalness: 0.7 }));
+      const boss = new THREE.Mesh(new THREE.SphereGeometry(h * 0.35, 12, 8), new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0x6a4500, emissiveIntensity: 0.4, roughness: 0.35, metalness: 0.3 }));
       boss.position.set(m.len - 8, 0, 4);
       shield.castShadow = true;
       arm.add(shield, boss);
@@ -682,6 +837,40 @@ function buildSweeper(scene, m) {
   }
   spin.position.y = (m.lo + m.hi) / 2;
   g.add(post, spin);
+  g.position.set(m.x, m.z, m.y);
+  scene.add(g);
+  return { update(t) { spin.rotation.y = -(m.phase + m.speed * t); } };
+}
+
+// The reaper's scythe: an iron post with two long arms, a curved blade on the end of each.
+function buildScythe(scene, m) {
+  const g = new THREE.Group();
+  const iron = new THREE.MeshStandardMaterial({ color: 0x2a2a33, roughness: 0.4, metalness: 0.8 });
+  const blade = new THREE.MeshStandardMaterial({ color: 0xc9d2e3, roughness: 0.2, metalness: 0.95, emissive: 0x334466, emissiveIntensity: 0.35 });
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(m.hub * 0.55, m.hub * 0.8, m.hi + 40, 10), iron);
+  post.position.y = (m.hi + 40) / 2;
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(m.hub * 0.6, 14, 10), new THREE.MeshStandardMaterial({ color: 0xe8e2d0, roughness: 0.6 }));
+  skull.position.y = m.hi + 44;
+  skull.scale.set(1, 0.9, 1.1);
+  post.castShadow = true;
+  const spin = new THREE.Group();
+  for (let i = 0; i < m.arms; i++) {
+    const arm = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, m.len - m.hub + 10, 8).rotateZ(Math.PI / 2), iron);
+    pole.position.x = (m.len + m.hub) / 2;
+    pole.castShadow = true;
+    // The blade: a flat crescent sweeping forward (the way it turns) from the end of the pole.
+    const crescent = new THREE.Mesh(new THREE.TorusGeometry(46, 4.5, 4, 20, Math.PI * 0.62), blade);
+    crescent.scale.set(1, 1, 0.35);
+    crescent.rotation.set(Math.PI / 2, 0, Math.PI * 1.02);
+    crescent.position.set(m.len - 2, 0, -46 * Math.sign(m.speed || 1));
+    crescent.castShadow = true;
+    arm.add(pole, crescent);
+    arm.rotation.y = -(i * TAU) / m.arms;
+    spin.add(arm);
+  }
+  spin.position.y = (m.lo + m.hi) / 2;
+  g.add(post, skull, spin);
   g.position.set(m.x, m.z, m.y);
   scene.add(g);
   return { update(t) { spin.rotation.y = -(m.phase + m.speed * t); } };
@@ -754,8 +943,262 @@ function buildDrawbridge(scene, map, m, kit) {
   };
 }
 
+// ---------- the graveyard's own pieces ----------
+const ACID_COLS = [new THREE.Color(0xa3e635), new THREE.Color(0xd9f99d), new THREE.Color(0x65a30d)];
+const WISP_COLS = [new THREE.Color(0x7dd3fc), new THREE.Color(0xa7f3d0)];
+const FLAME_COLS = [new THREE.Color(0xffd166), new THREE.Color(0xff8c1a), new THREE.Color(0xff4d00)];
+const SMOKE_COL = new THREE.Color(0x3a3440);
+
+// The rolling ground: one mesh straight off the physics grid (so the wheels sit where they should),
+// a little darker in the hollows.
+function buildLand(scene, map, kit) {
+  const land = map.land;
+  const n = land.n;
+  const c = land.cell;
+  const T = (kit.grass || kit.ground).top[2];
+  const pos = new Float32Array(n * n * 3);
+  const uv = new Float32Array(n * n * 2);
+  const col = new Float32Array(n * n * 3);
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const h of land.h) { lo = Math.min(lo, h); hi = Math.max(hi, h); }
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const k = j * n + i;
+      const h = land.h[k];
+      pos.set([i * c, h, j * c], k * 3);
+      uv.set([(i * c) / T, (j * c) / T], k * 2);
+      const f = 0.72 + 0.4 * ((h - lo) / (hi - lo || 1));
+      col.set([f, f, f], k * 3);
+    }
+  }
+  const idx = [];
+  for (let j = 0; j < n - 1; j++) {
+    for (let i = 0; i < n - 1; i++) {
+      const a = j * n + i;
+      idx.push(a, a + n, a + 1, a + 1, a + n, a + n + 1);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const mat = material((kit.grass || kit.ground).top).clone();
+  mat.vertexColors = true;
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  // A paved plaza over the first levelled spot (where the big building stands).
+  const flat = map.terrain && map.terrain.flats && map.terrain.flats[0];
+  if (flat && map.theme === 'graveyard') {
+    const r = flat.r * 0.74;
+    const ft = texture('flag', '#4a4752').clone();
+    ft.needsUpdate = true;
+    ft.repeat.set((r * 2) / 170, (r * 2) / 170);
+    const alpha = canvasTexture(128, 128, (cc, w, h) => {
+      const g = cc.createRadialGradient(w / 2, h / 2, w * 0.36, w / 2, h / 2, w / 2);
+      g.addColorStop(0, '#fff'); g.addColorStop(1, '#000');
+      cc.fillStyle = g; cc.fillRect(0, 0, w, h);
+    }, false);
+    const paving = new THREE.Mesh(new THREE.CircleGeometry(r, 64).rotateX(-Math.PI / 2),
+      new THREE.MeshStandardMaterial({ map: ft, alphaMap: alpha, transparent: true, depthWrite: false, roughness: 0.95, polygonOffset: true, polygonOffsetFactor: -2 }));
+    paving.position.set(flat.x, flat.z + 0.4, flat.y);
+    paving.receiveShadow = true;
+    paving.renderOrder = 1;
+    scene.add(paving);
+  }
+}
+
+// Headstones: a slab with a rounded top, a little askew, the broad face across its block's long side.
+function buildTombs(scene, map, list) {
+  const geos = [];
+  const r = rng(17);
+  for (const s of list) {
+    const alongX = s.x1 - s.x0 >= s.y1 - s.y0;
+    const w = alongX ? s.x1 - s.x0 : s.y1 - s.y0;
+    const d = alongX ? s.y1 - s.y0 : s.x1 - s.x0;
+    const cx = (s.x0 + s.x1) / 2;
+    const cy = (s.y0 + s.y1) / 2;
+    const g0 = map.land ? map.land.at(cx, cy) : s.z0;
+    const body = s.z1 - g0 - w / 2;
+    const slab = new THREE.BoxGeometry(w, body + 8, d);
+    slab.translate(0, (body + 8) / 2 - 8, 0);
+    const top = new THREE.CylinderGeometry(w / 2, w / 2, d, 16, 1, false, 0, Math.PI).rotateZ(Math.PI / 2).rotateY(Math.PI / 2);
+    top.translate(0, body, 0);
+    // Both pieces take the grave texture across their face.
+    for (const g of [slab, top]) {
+      const p = g.attributes.position;
+      const uv = g.attributes.uv;
+      for (let i = 0; i < p.count; i++) uv.setXY(i, p.getX(i) / w + 0.5, (p.getY(i) + 8) / (body + w / 2 + 8));
+    }
+    const g = mergeGeometries([slab.toNonIndexed(), top.toNonIndexed()]);
+    g.rotateZ((r() - 0.5) * 0.12);
+    g.rotateY((alongX ? 0 : Math.PI / 2) + (r() - 0.5) * 0.18);
+    g.translate(cx, g0, cy);
+    geos.push(g);
+  }
+  const mesh = new THREE.Mesh(mergeGeometries(geos), new THREE.MeshStandardMaterial({ map: texture('grave'), roughness: 0.95 }));
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+}
+
+// Wrought iron railings: spear-topped bars that follow the ground, two rails, a post at each end.
+function buildFences(scene, map, list) {
+  const bars = [];
+  const iron = new THREE.MeshStandardMaterial({ color: 0x23232b, roughness: 0.45, metalness: 0.7 });
+  const H = 40;
+  const ground = (x, y) => (map.land ? map.land.at(x, y) : 0);
+  for (const s of list) {
+    const alongX = s.x1 - s.x0 >= s.y1 - s.y0;
+    const len = alongX ? s.x1 - s.x0 : s.y1 - s.y0;
+    const cx = (s.x0 + s.x1) / 2;
+    const cy = (s.y0 + s.y1) / 2;
+    const n = Math.max(2, Math.round(len / 9));
+    for (let i = 0; i <= n; i++) {
+      const u = -len / 2 + (len * i) / n;
+      const x = alongX ? cx + u : cx;
+      const y = alongX ? cy : cy + u;
+      const g = ground(x, y);
+      const post = i === 0 || i === n;
+      bars.push(new THREE.BoxGeometry(post ? 6 : 2.2, H + (post ? 6 : 0), post ? 6 : 2.2).translate(x, g + (H + (post ? 6 : 0)) / 2 - 4, y));
+      bars.push(new THREE.ConeGeometry(post ? 5 : 2.6, post ? 8 : 7, 4).translate(x, g + H + (post ? 10 : 2), y));
+    }
+    for (const hgt of [8, 32]) {
+      const a = alongX ? [s.x0, cy] : [cx, s.y0];
+      const b = alongX ? [s.x1, cy] : [cx, s.y1];
+      const ga = ground(a[0], a[1]) + hgt;
+      const gb = ground(b[0], b[1]) + hgt;
+      const rail = new THREE.BoxGeometry(len, 2.4, 2.4);
+      rail.rotateZ(Math.atan2(gb - ga, len));
+      if (!alongX) rail.rotateY(Math.PI / 2);
+      rail.translate(cx, (ga + gb) / 2, cy);
+      bars.push(rail);
+    }
+  }
+  const mesh = new THREE.Mesh(mergeGeometries(bars.map((g) => (g.index ? g.toNonIndexed() : g))), iron);
+  mesh.castShadow = true;
+  scene.add(mesh);
+}
+
+// A pumpkin bumper: ribbed and orange, a stalk on top, a grinning face lit from inside (towards the
+// middle of the arena). It glows hot when someone bounces off it.
+function buildPumpkin(scene, b, S) {
+  const g = new THREE.Group();
+  const geo = new THREE.SphereGeometry(1, 28, 16);
+  const p = geo.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i); const y = p.getY(i); const z = p.getZ(i);
+    const k = 1 - 0.07 * Math.abs(Math.cos(Math.atan2(z, x) * 5));
+    p.setXYZ(i, x * k, y * (0.78 - 0.08 * Math.abs(Math.cos(Math.atan2(z, x) * 5))), z * k);
+  }
+  geo.computeVertexNormals();
+  const skinMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.55, emissive: 0x7c2d12, emissiveIntensity: 0.25 });
+  const body = new THREE.Mesh(geo, skinMat);
+  body.scale.set(b.r * 1.05, b.r * 1.05, b.r * 1.05);
+  body.position.y = b.r * 0.78;
+  const stalk = new THREE.Mesh(new THREE.CylinderGeometry(3, 4.5, 12, 6), new THREE.MeshStandardMaterial({ color: 0x3f6212, roughness: 0.8 }));
+  stalk.position.y = b.r * 1.6;
+  stalk.rotation.z = 0.25;
+  const faceMat = new THREE.MeshBasicMaterial({ map: texture('pumpkinFace'), transparent: true, depthWrite: false, color: 0xffb020 });
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(b.r * 1.3, b.r * 1.3), faceMat);
+  const a = Math.atan2(S / 2 - b.y, S / 2 - b.x);
+  face.position.set(Math.cos(a) * b.r * 1.02, b.r * 0.82, Math.sin(a) * b.r * 1.02);
+  face.rotation.y = Math.PI / 2 - a;
+  for (const m of [body, stalk]) { m.castShadow = true; g.add(m); }
+  g.add(face);
+  g.position.set(b.x, b.z, b.y);
+  scene.add(g);
+  let flash = 0;
+  return {
+    hit() { flash = 1; },
+    update(dt) {
+      flash = Math.max(0, flash - dt * 3);
+      const sq = 1 + Math.sin(flash * Math.PI) * 0.16;
+      g.scale.set(sq, 2 - sq, sq);
+      skinMat.emissiveIntensity = 0.25 + flash * 1.5;
+      faceMat.color.setRGB(1, 0.69 + flash * 0.3, 0.13 + flash * 0.6);
+    },
+  };
+}
+
+// The moon: a big pale disc with a soft halo, kept far off in the same direction from the camera.
+function addMoon(scene) {
+  const t = canvasTexture(256, 256, (c, w, h) => {
+    const halo = c.createRadialGradient(w / 2, h / 2, w * 0.18, w / 2, h / 2, w / 2);
+    halo.addColorStop(0, 'rgba(220,230,255,0.55)'); halo.addColorStop(1, 'rgba(160,170,255,0)');
+    c.fillStyle = halo; c.fillRect(0, 0, w, h);
+    const disc = c.createRadialGradient(w * 0.45, h * 0.42, 4, w / 2, h / 2, w * 0.2);
+    disc.addColorStop(0, '#fffdf2'); disc.addColorStop(1, '#d9dcf0');
+    c.fillStyle = disc; c.beginPath(); c.arc(w / 2, h / 2, w * 0.2, 0, TAU); c.fill();
+    c.fillStyle = 'rgba(150,155,185,0.35)';
+    for (const [x, y, r] of [[0.46, 0.44, 0.04], [0.55, 0.53, 0.03], [0.5, 0.58, 0.02], [0.42, 0.54, 0.025]]) { c.beginPath(); c.arc(w * x, h * y, w * r, 0, TAU); c.fill(); }
+  }, false);
+  const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, fog: false, depthWrite: false, transparent: true }));
+  moon.scale.set(2600, 2600, 1);
+  moon.renderOrder = -1;
+  scene.add(moon);
+  return moon;
+}
+
+// A lantern: on a post, or (mounted high) on a wall; a warm glow round it.
+function addLantern(scene, x, y, z, ground, light) {
+  const g = new THREE.Group();
+  const iron = new THREE.MeshStandardMaterial({ color: 0x1f1f25, roughness: 0.5, metalness: 0.7 });
+  const onPost = z - ground < 20;
+  if (onPost) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 3.2, 64, 6), iron);
+    post.position.y = 32;
+    g.add(post);
+  }
+  const top = onPost ? 64 : 0;
+  const cage = new THREE.Mesh(new THREE.CylinderGeometry(5, 6.5, 14, 6), new THREE.MeshStandardMaterial({ color: 0xffcf6b, emissive: 0xffa630, emissiveIntensity: 2.2, roughness: 0.3 }));
+  cage.position.y = top + 9;
+  const cap = new THREE.Mesh(new THREE.ConeGeometry(8, 7, 6), iron);
+  cap.position.y = top + 19;
+  g.add(cage, cap);
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex.spark(), color: 0xffb347, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, opacity: 0.55 }));
+  glow.scale.set(60, 60, 1);
+  glow.position.y = top + 9;
+  g.add(glow);
+  if (light) {
+    const l = new THREE.PointLight(0xffb15a, 2.2, 420, 1.6);
+    l.position.y = top + 9;
+    g.add(l);
+  }
+  g.position.set(x, onPost ? ground : z, y);
+  scene.add(g);
+}
+
 // ---------- scenery ----------
-function addPalisade(scene, S) {
+function addPalisade(scene, S, railings) {
+  if (railings) {
+    // Wrought iron: spear-topped bars all round, with a stone pier every so often.
+    const step = 12;
+    const per = Math.ceil(S / step);
+    const barGeo = mergeGeometries([new THREE.BoxGeometry(2.4, 62, 2.4).translate(0, 31, 0), new THREE.ConeGeometry(3, 9, 4).translate(0, 66, 0)]);
+    const bars = new THREE.InstancedMesh(barGeo, new THREE.MeshStandardMaterial({ color: 0x23232b, roughness: 0.45, metalness: 0.7 }), per * 4);
+    const m4 = new THREE.Matrix4();
+    let n = 0;
+    for (let i = 0; i < per; i++) {
+      const a = i * step + step / 2;
+      for (const [x, z] of [[a, 22], [a, S - 22], [22, a], [S - 22, a]]) { m4.makeTranslation(x, 0, z); bars.setMatrixAt(n++, m4); }
+    }
+    bars.count = n;
+    bars.castShadow = true;
+    scene.add(bars);
+    const piers = new THREE.InstancedMesh(new THREE.BoxGeometry(26, 80, 26).translate(0, 40, 0), new THREE.MeshStandardMaterial({ map: texture('ashlar', '#5d5a68', '#2b2933'), roughness: 0.9 }), 64);
+    let p = 0;
+    for (let a = 0; a <= S; a += 400) {
+      for (const [x, z] of [[a, 22], [a, S - 22], [22, a], [S - 22, a]]) { if (p < 64) { m4.makeTranslation(x, 0, z); piers.setMatrixAt(p++, m4); } }
+    }
+    piers.count = p;
+    piers.castShadow = true;
+    scene.add(piers);
+    return;
+  }
   const step = 14;
   const per = Math.ceil(S / step);
   const count = per * 4;
@@ -784,12 +1227,57 @@ function addPalisade(scene, S) {
   scene.add(logs);
 }
 
-function addScenery(scene, map, theme, ctx, kit) {
+function addScenery(scene, map, theme, ctx, kit, flames) {
   const S = map.size;
   const r = rng(7);
+  let lights = 0;
   for (const d of map.deco || []) {
+    if (d.kind === 'brazier') {
+      const g = new THREE.Group();
+      const stone = new THREE.MeshStandardMaterial({ map: texture('ashlar', '#6b6876', '#34313d'), roughness: 0.9 });
+      const foot = new THREE.Mesh(new THREE.CylinderGeometry(12, 16, 34, 10), stone);
+      foot.position.y = 17;
+      const bowl = new THREE.Mesh(new THREE.CylinderGeometry(20, 11, 12, 12, 1, true), new THREE.MeshStandardMaterial({ color: 0x2a2a33, roughness: 0.4, metalness: 0.8, side: THREE.DoubleSide }));
+      bowl.position.y = 40;
+      const coals = new THREE.Mesh(new THREE.CircleGeometry(18, 12).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ color: 0x2b0d05, emissive: 0xff5a1a, emissiveIntensity: 1.6 }));
+      coals.position.y = 43;
+      const light = new THREE.PointLight(0xff8a3d, 2.6, 520, 1.5);
+      light.position.y = 70;
+      for (const m of [foot, bowl]) m.castShadow = true;
+      g.add(foot, bowl, coals, light);
+      g.position.set(d.x, d.z, d.y);
+      scene.add(g);
+      flames.push({ x: d.x, y: d.z + 46, z: d.y });
+      continue;
+    }
+    if (d.kind === 'arch') {
+      // A stone frame round a doorway: two jambs and a round arch over the opening.
+      const stone = material(kit.pillar ? kit.pillar.side : kit.stone.side);
+      const g = new THREE.Group();
+      for (const sd of [-1, 1]) {
+        const jamb = new THREE.Mesh(new THREE.BoxGeometry(18, d.h, 14), stone);
+        jamb.position.set(sd * (d.w / 2 + 9), d.h / 2, 0);
+        jamb.castShadow = true;
+        g.add(jamb);
+      }
+      const arch = new THREE.Mesh(new THREE.TorusGeometry(d.w / 2 + 9, 9, 6, 20, Math.PI), stone);
+      arch.position.y = d.h;
+      arch.castShadow = true;
+      g.add(arch);
+      g.position.set(d.x, d.z || 0, d.y);
+      g.rotation.y = d.angle || 0;
+      scene.add(g);
+      continue;
+    }
+    if (d.kind === 'lantern') {
+      const ground = map.land ? map.land.at(d.x, d.y) : 0;
+      // A few of them really light things up (the ones on the big building); the rest just glow.
+      addLantern(scene, d.x, d.y, d.z, ground, d.z - ground > 20 && lights++ < 4);
+      continue;
+    }
     if (d.kind === 'crown') {
-      const gold = new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0x7a4b00, emissiveIntensity: 0.6, roughness: 0.25, metalness: 0.9 });
+      // There's no environment map to reflect, so a mostly metal gold would come out brown.
+      const gold = new THREE.MeshStandardMaterial({ color: 0xffd34d, emissive: 0x9a6a00, emissiveIntensity: 0.45, roughness: 0.3, metalness: 0.35 });
       const crown = new THREE.Group();
       const band = new THREE.Mesh(new THREE.CylinderGeometry(26, 24, 16, 24, 1, true), gold);
       band.material.side = THREE.DoubleSide;

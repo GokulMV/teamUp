@@ -65,13 +65,13 @@ const BOX_CLEAR = 40;
 
 // Damage in the arena (karts have 100 hp). In a race every hit except bullets spins you out.
 const DAMAGE = {
-  rocket: 70, triple: 45, bullet: 6, banana: 35, mine: 100, bomb: 100, shock: 45, lava: 1000, // lava (water, the void) is instant death
+  rocket: 70, triple: 45, bullet: 6, banana: 35, mine: 100, bomb: 100, shock: 45, lava: 1000, // lava (water, acid, the void) is instant death
   bouncer: 50, comet: 90, star: 40, thunder: 35, ram: 6, // ram: 6 at ramSpeed, up to 16 for a full-speed T-bone
   snowball: 10, sticky: 75, spikes: 25, decoy: 40,
 };
 
 // Lava, water and falling into the void: nothing protects you, and the kill goes to whoever hit you last.
-const ENV_KILLS = new Set(['lava', 'water', 'void']);
+const ENV_KILLS = new Set(['lava', 'water', 'void', 'acid']);
 // Layered arenas: how close in height things must be to touch (shots, traps and boxes are on one floor).
 const LEVEL = { shot: 26, trap: 20, box: 30, shock: 90 };
 const BOMB_LOB = { apex: 110, reach: 60 }; // a bomb lands on a floor up to `reach` above the thrower

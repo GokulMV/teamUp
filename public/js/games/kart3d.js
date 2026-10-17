@@ -43,7 +43,7 @@ class Particles {
     geo.setAttribute('alpha', new THREE.BufferAttribute(this.alpha, 1).setUsage(THREE.DynamicDrawUsage));
     this.geo = geo;
     const mat = new THREE.ShaderMaterial({
-      uniforms: { map: { value: tex.spark() }, scale: { value: 600 } },
+      uniforms: { map: { value: tex.spark() }, scale: { value: 600 }, gain: { value: 1 } },
       vertexShader: `
         attribute float size; attribute float alpha; varying vec3 vColor; varying float vAlpha;
         uniform float scale;
@@ -56,10 +56,10 @@ class Particles {
           gl_Position = projectionMatrix * mv;
         }`,
       fragmentShader: `
-        uniform sampler2D map; varying vec3 vColor; varying float vAlpha;
+        uniform sampler2D map; uniform float gain; varying vec3 vColor; varying float vAlpha;
         void main() {
           vec4 t = texture2D(map, gl_PointCoord);
-          gl_FragColor = vec4(vColor, t.a * vAlpha);
+          gl_FragColor = vec4(vColor * gain, t.a * vAlpha);
         }`,
       vertexColors: true,
       transparent: true,
@@ -480,7 +480,8 @@ export class Kart3D {
       this.composer = new EffectComposer(this.renderer);
       this.composer.addPass(new RenderPass(scene, this.camera));
       // Daylight maps only bloom truly bright things (flames, explosions, neon), never white tyres or curbs.
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), theme.night ? 0.8 : 0.32, 0.45, theme.night ? 0.7 : 0.97);
+      // At night a tighter, dimmer halo: explosions stay a bright flash instead of fogging the screen.
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), theme.night ? 0.5 : 0.32, theme.night ? 0.2 : 0.45, theme.night ? 0.8 : 0.97);
       this.composer.addPass(this.bloom);
       this.composer.addPass(new OutputPass());
     }
@@ -491,6 +492,8 @@ export class Kart3D {
 
     this.fire = new Particles(scene, 3000, true);
     this.smoke = new Particles(scene, 3000, false);
+    // Added-up flames against a night sky (and bloom) would turn a big fight into a white screen.
+    if (theme.night) this.fire.points.material.uniforms.gain.value = 0.5;
     this.colBlue = new THREE.Color(0x4da6ff);
     this.colOrange = new THREE.Color(0xff9a1f);
     this.colWhite = new THREE.Color(0xfff6d5);
@@ -851,6 +854,16 @@ export class Kart3D {
       }
       this.ring(x, z, 0xdff6ff, 170, 1.5, gy);
       this.ring(x, z, 0xffffff, 100, 1.2, gy);
+    } else if (kind === 'acid') {
+      // Green goo thrown up, fizzing bubbles, a sickly ring.
+      const goo = [new THREE.Color(0xa3e635), new THREE.Color(0x65a30d), new THREE.Color(0xecfccb)];
+      for (let i = 0; i < 60; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 40 + Math.random() * 160;
+        this.fire.emit(x, gy + 4, z, Math.cos(a) * sp * 0.6, 200 + Math.random() * 300, Math.sin(a) * sp * 0.6, goo[i % 3], 4 + Math.random() * 4, 0.7, { drag: 0.5, rise: -900 });
+      }
+      for (let i = 0; i < 10; i++) this.smoke.emit(x + (Math.random() - 0.5) * 40, gy + 8, z + (Math.random() - 0.5) * 40, 0, 40 + Math.random() * 40, 0, goo[1], 16, 1, { alpha: 0.35, grow: 2 });
+      this.ring(x, z, 0xa3e635, 110, 0.8, gy);
     } else if (kind === 'lava') {
       // A burst of flame and embers with a short, light orange-grey puff: never a big dark disc.
       for (let i = 0; i < 46; i++) {
@@ -875,7 +888,7 @@ export class Kart3D {
   // and beach, earth on grass, snow on ice, a violet haze on neon streets.
   dustColor() {
     if (!this.dustCol) {
-      const byTheme = { desert: 0xd9b68a, coast: 0xe8d5a8, meadow: 0x9c8a62, snow: 0xffffff, neon: 0x9d8cff, lava: 0x4a403b, volcano: 0x4a403b };
+      const byTheme = { desert: 0xd9b68a, coast: 0xe8d5a8, meadow: 0x9c8a62, snow: 0xffffff, neon: 0x9d8cff, lava: 0x4a403b, volcano: 0x4a403b, keep: 0xa8957a, graveyard: 0x5a5148 };
       this.dustCol = new THREE.Color(byTheme[this.map.theme] ?? (this.theme.snowfall ? 0xffffff : this.theme.night ? 0x9d8cff : 0xc8b48a));
     }
     return this.dustCol;
@@ -937,6 +950,7 @@ export class Kart3D {
   // Weather and ambient particles around the camera.
   ambient(dt) {
     const c = this.camera.position;
+    this.layers?.ambient?.(dt, c, this.fire, this.smoke);
     const gy = this.camGround === null ? 0 : this.camGround;
     if (this.theme.snowfall) {
       for (let i = 0; i < (MOBILE ? 2 : 5); i++) {
@@ -1351,7 +1365,9 @@ export class Kart3D {
         }
       }
       this.camDist = this.camDist === undefined || focus.snap ? dist : this.camDist + (dist - this.camDist) * Math.min(1, dt * (dist < this.camDist ? 14 : 3));
-      const camUp = mix('up') + Math.max(0, back - this.camDist) * 0.6;
+      // Pulled in by a wall, the camera rises to look over it (layered arenas: their walls are
+      // too tall for that, and a ceiling is often overhead: it stays at its height).
+      const camUp = mix('up') + (this.layered ? 0 : Math.max(0, back - this.camDist) * 0.6);
       // Aim so the kart keeps its usual height on screen, even when the camera is pulled in and
       // lifted: the look-ahead shrinks with the pull-in instead of pitching your kart off the bottom.
       let ahead = mix('look');
