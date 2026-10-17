@@ -619,10 +619,13 @@ function planPath(game, k, ai, goal) {
   return !!ai.path;
 }
 
-// Layered arenas: would a kart at height z go to its doom at (x, y)? (the void, the moat, lava)
+// Layered arenas: would a kart at height z go to its doom at (x, y)? (the void, the moat, lava; or
+// ground too steep to drive on, like a crater's wall, which slides you down into whatever is below)
+const steepOut = { z: 0, gx: 0, gy: 0, s: null };
 function deadly(map, x, y, z, t) {
-  const f = map.floorAt(x, y, z + K.Layers.STEP, t);
-  return !Number.isFinite(f) || !!map.hazardAt(x, y, f);
+  const f = map.floorInfo(x, y, z + K.Layers.STEP, t, steepOut);
+  if (!Number.isFinite(f.z) || map.hazardAt(x, y, f.z)) return true;
+  return f.s && f.s.land ? Math.hypot(f.gx, f.gy) > K.Layers.NAV_SLOPE : false;
 }
 // Drive (in thought) from where the kart is straight towards (x, y) for `dist`, following the
 // floor as the kart would: up ramps, and off ledges (just off one it is still up in the air, clear
@@ -642,7 +645,7 @@ function lineBlocked(map, k, x, y, dist, pad, t) {
     const px = k.x + (ux * dist * i) / n;
     const py = k.y + (uy * dist * i) / n;
     const f = map.floorAt(px, py, z + K.Layers.STEP, t);
-    if (!Number.isFinite(f) || map.hazardAt(px, py, f)) return true;
+    if (!Number.isFinite(f) || deadly(map, px, py, z, t)) return true;
     if (f < z - K.Layers.STEP) { airZ = Math.max(airZ, z); air = 70; }
     z = f;
     if (map.blocked(px, py, pad, air > 0 ? airZ : z, t)) return true;
@@ -809,6 +812,17 @@ function layeredDrive(game, k, ai, sk, input) {
   // Turning hard at speed with a wall in the way of the arc (a U-turn beside a tower, a corner cut
   // too tight): brake as well as steer, rather than plough into it.
   if (v > 170 && turn && Math.abs(err) > 0.9 && arc(turn, [1], 6, (x, y) => map.blocked(x, y, 18, kz, t))) { input.up = false; input.down = true; }
+  // On a narrow deck (a gangway, a pier's edge): steady does it. Ease off above a moderate speed
+  // and brake into turns there, so the kart's slide doesn't carry it over the side.
+  {
+    const hx = Math.cos(k.angle);
+    const hy = Math.sin(k.angle);
+    const narrow = deadly(map, k.x - hy * 52, k.y + hx * 52, kz, t) || deadly(map, k.x + hy * 52, k.y - hx * 52, kz, t);
+    if (narrow && v > 250) {
+      input.up = false;
+      if (v > 300 && Math.abs(err) > 0.35) input.down = true;
+    }
+  }
   if (ai.mode === 'hunt' && gunning && dist < 230 && v > 140) input.up = false;
   if (ai.mode === 'box' && dist < 240 && Math.abs(err) > 0.9 && v > 170) { input.up = false; input.down = true; }
   if (Math.abs(err) > 2 && v > 250) { input.up = false; input.down = true; }

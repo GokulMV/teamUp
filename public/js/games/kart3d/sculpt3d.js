@@ -266,17 +266,21 @@ export function buildRoad(scene, map, road) {
         quad(P(i, a, 0), P(j, a, 0), P(j, a, ch), P(i, a, ch), kc); // inner face
       }
     }
-    // The deck's sides: the kerb's outer face carries on down as a painted fascia, then concrete.
+    // The deck's sides: the kerb's outer face carries on down as a painted fascia, then concrete
+    // (down to the ground where the deck is an embankment: see kart-layers.js roadSolids).
+    const thi = Math.max(th, S[i].fill || 0);
+    const thj = Math.max(th, S[j].fill || 0);
     for (const side of [-1, 1]) {
       const v = side * hw;
       quad(P(i, v, ch), P(j, v, ch), P(j, v, -5), P(i, v, -5), C.fascia);
-      quad(P(i, v, -5), P(j, v, -5), P(j, v, -th), P(i, v, -th), C.concrete);
+      quad(P(i, v, -5), P(j, v, -5), P(j, v, -thj), P(i, v, -thi), C.concrete);
     }
-    quad(P(i, -hw, -th), P(j, -hw, -th), P(j, hw, -th), P(i, hw, -th), C.under);
+    quad(P(i, -hw, -thi), P(j, -hw, -thj), P(j, hw, -thj), P(i, hw, -thi), C.under);
   }
   // The two ends of the deck (where they show above the ground).
   for (const i of [0, S.length - 1]) {
-    quad(P(i, -hw, ch), P(i, hw, ch), P(i, hw, -th), P(i, -hw, -th), C.concrete);
+    const d = Math.max(th, S[i].fill || 0);
+    quad(P(i, -hw, ch), P(i, hw, ch), P(i, hw, -d), P(i, -hw, -d), C.concrete);
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));

@@ -324,6 +324,15 @@
     const curb = road.curb === false ? null : { w: 10, h: 13, ...(road.curb || {}) };
     const segs = [];
     const cyls = [];
+    // Near its ends the deck runs too low to drive under (higher off the ground than a step, lower
+    // than a kart): there it is solid down to the ground, an embankment, so nothing gets wedged
+    // underneath. o.fill: how deep the deck goes there (0: its usual thickness).
+    const across = [-w / 2, 0, w / 2];
+    const groundAt = (o, v) => (land ? land.at(o.x - o.uy * v, o.y + o.ux * v) : 0);
+    for (const o of samples) {
+      const gap = Math.min(...across.map((v) => o.z + o.bank * v - thick - groundAt(o, v)));
+      o.fill = gap < KART_H + 12 ? Math.max(...across.map((v) => o.z + o.bank * v - groundAt(o, v))) + 10 : 0;
+    }
     for (let i = 0; i < samples.length - 1; i++) {
       const a = samples[i];
       const b = samples[i + 1];
@@ -331,7 +340,8 @@
       let dh = b.h - a.h;
       dh = Math.atan2(Math.sin(dh), Math.cos(dh));
       const ext = 2 + (w / 2) * Math.abs(dh); // enough overlap to close the outside of a bend
-      segs.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, za: a.z, zb: b.z, w, bank, thick, ext, kind: road.kind || 'road' });
+      const deep = Math.max(thick, a.fill, b.fill);
+      segs.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, za: a.z, zb: b.z, w, bank, thick: deep, ext, kind: road.kind || 'road' });
       if (curb) {
         for (const side of [1, -1]) {
           const v = side * (w / 2 - curb.w / 2);
@@ -341,7 +351,7 @@
           const oy2 = b.ux * v;
           segs.push({
             ax: a.x + ox, ay: a.y + oy, bx: b.x + ox2, by: b.y + oy2, za: a.z + bank * v + curb.h, zb: b.z + bank * v + curb.h,
-            w: curb.w, bank, thick: thick + curb.h, ext: 1, kind: 'kerb',
+            w: curb.w, bank, thick: deep + curb.h, ext: 1, kind: 'kerb',
           });
         }
       }
@@ -1482,6 +1492,6 @@
   const ARENAS = [theKeep(), theGraveyard(), theCinderBowl()];
 
   return {
-    KART_R, KART_H, STEP, NAV, EDGE, ARENAS, makeLayeredArena, makeTerrain, groundBlocks, turn, symmetric, roadSolids, SEG,
+    KART_R, KART_H, STEP, NAV, NAV_SLOPE, EDGE, ARENAS, makeLayeredArena, makeTerrain, groundBlocks, turn, symmetric, roadSolids, SEG,
   };
 });
