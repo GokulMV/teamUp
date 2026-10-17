@@ -1,7 +1,9 @@
 // Power-up models and effects for Kart Battle: projectiles, dropped items, item boxes, what karts
 // carry (trailing bananas, orbiting rockets, a minigun) and their auras (shield, ghost, star), plus
 // one-shot effects (shock rings, thunder bolts, comet blasts, debris).
-// Everything is pooled or instanced: meshes are hidden and reused, never rebuilt per shot.
+// Draw calls stay low: each model is baked into one vertex-coloured mesh, bullets and debris are
+// instanced, and meshes and effect materials are pooled (hidden and reused, never rebuilt per shot,
+// so no shader is ever recompiled mid-race). warmUp() compiles every item shader before the start.
 // Every item sits at ground(x, z) + offset so it follows hills on maps that have them.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -15,7 +17,8 @@ const CODE = Object.fromEntries(K.ITEMS.map((id, i) => [id, i + 1]));
 const FLAG = { spin: 1, boost: 2, shield: 4, dead: 32, ghost: 1024, gun: 2048, star: 4096, shrunk: 8192, inked: 16384 };
 const TIME = { value: 0 }; // shared by every animated item material
 // Item models are built at toy scale and blown up so they read clearly from the chase camera.
-const SIZE = { rocket: 1.6, shell: 1.45, bomb: 1.35, mine: 1.4, peel: [1.9, 1.5, 1.9], comet: 1.9 };
+const SIZE = { rocket: 1.6, shell: 1.45, bomb: 1.35, mine: 1.4, peel: 1.25, comet: 1.9 };
+const HELD = 0.7; // items carried behind a kart are shown smaller so they trail it rather than hide it
 const scaleAll = (obj, s) => { for (const g of Object.values(obj)) if (g && g.isBufferGeometry) g.scale(s, s, s); };
 
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -29,7 +32,7 @@ const VIEW_VERT = `
     vW = w.xyz; vL = position;
     vN = normalize(mat3(modelMatrix) * normal);
     vV = normalize(cameraPosition - w.xyz);
-    gl_Position = projectionMatrix * viewMatrix * w;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }`;
 const HUE = 'vec3 hue(float h) { return clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0); }';
 const FRESNEL = (p) => `float fres(vec3 n, vec3 v) { return pow(1.0 - abs(dot(normalize(n), normalize(v))), ${p}); }`;
@@ -82,26 +85,48 @@ export function ghostMaterial() {
       gl_FragColor = vec4(col, (0.08 + 0.55 * f + 0.1 * scan) * flick);
     }`, { blending: THREE.NormalBlending }));
 }
-// Star: a glow behind the kart that cycles through the rainbow (one material, every star kart in step).
-function starAura() {
-  return AURA.aura || (AURA.aura = new THREE.SpriteMaterial({ map: tex.spark(), transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false }));
+// Star: a pool of rainbow light on the ground under the kart (one material, every star kart in step).
+function starGlow() {
+  return AURA.glow || (AURA.glow = new THREE.MeshBasicMaterial({ map: tex.spark(), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
 }
-// Star: a rainbow sheen laid over every part of the kart.
-function starMaterial() {
-  return AURA.star || (AURA.star = viewMaterial(`
-    uniform float uTime; varying vec3 vN; varying vec3 vV; varying vec3 vW; ${FRESNEL('1.3')} ${HUE}
-    void main() {
-      float f = fres(vN, vV);
-      float h = fract(uTime * 1.6 + vW.y * 0.012 + (vW.x + vW.z) * 0.002);
-      float pulse = 0.75 + 0.25 * sin(uTime * 14.0);
-      gl_FragColor = vec4(hue(h) * (0.5 + 1.7 * f) * pulse, 1.0);
-    }`));
+// Star: the kart's own materials with a rainbow sheen worked in (no overlay meshes: nothing to
+// z-fight and no extra draw calls). One variant per base material, all sharing one shader program.
+const STAR_SKIN = new WeakMap();
+export function starVariant(mat) {
+  let star = STAR_SKIN.get(mat);
+  if (star) return star;
+  star = mat.clone();
+  star.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = TIME;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vStarW;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvStarW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>\nuniform float uTime; varying vec3 vStarW; ${HUE}`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        {
+          float rim = pow(1.0 - abs(dot(normal, normalize(vViewPosition))), 1.6);
+          vec3 rainbow = hue(fract(uTime * 1.6 + vStarW.y * 0.014 + (vStarW.x + vStarW.z) * 0.003));
+          float pulse = 0.8 + 0.2 * sin(uTime * 14.0);
+          diffuseColor.rgb = mix(diffuseColor.rgb, rainbow, 0.4);
+          totalEmissiveRadiance += rainbow * (0.3 + 1.5 * rim) * pulse;
+        }`);
+  };
+  star.customProgramCacheKey = () => 'kart-star';
+  STAR_SKIN.set(mat, star);
+  return star;
 }
 
 // ---------- textures ----------
 const TEX = {};
+// Hex plates on the top 128 rows; the last 8 rows are plain white so the shell's rim and base
+// (vertex-coloured, in the same mesh) can sample white and keep their own colour.
+const SHELL_TEX_H = 136;
 function hexShellTexture() {
-  return TEX.shell || (TEX.shell = canvasTexture(256, 128, (c, w, h) => {
+  return TEX.shell || (TEX.shell = canvasTexture(256, SHELL_TEX_H, (c, w) => {
+    const h = 128;
+    c.fillStyle = '#fff'; c.fillRect(0, h, w, SHELL_TEX_H - h);
+    c.beginPath(); c.rect(0, 0, w, h); c.clip();
     const g = c.createLinearGradient(0, 0, 0, h);
     g.addColorStop(0, '#a7f3d0'); g.addColorStop(0.5, '#34d399'); g.addColorStop(1, '#059669');
     c.fillStyle = g; c.fillRect(0, 0, w, h);
@@ -166,6 +191,23 @@ function glow(color, opacity = 1) {
 }
 function hdr(r, g, b) { return new THREE.Color(r, g, b); }
 
+// Bake [geometry, colour] parts into one geometry with a colour per vertex, so a whole model is a
+// single mesh: one draw call and one shadow caster. Colours are hex (sRGB) or linear THREE.Colors.
+function baked(parts, keepUv = false) {
+  const keep = ['position', 'normal', 'color', ...(keepUv ? ['uv'] : [])];
+  return mergeGeometries(parts.map(([geo, color]) => {
+    const g = geo.index ? geo.toNonIndexed() : geo.clone();
+    const c = color.isColor ? color : new THREE.Color(color);
+    const n = g.attributes.position.count;
+    const col = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    for (const name of Object.keys(g.attributes)) if (!keep.includes(name)) g.deleteAttribute(name);
+    return g;
+  }));
+}
+const vtx = (extra = {}) => ({ vertexColors: true, ...extra });
+
 function models() {
   if (M.ready) return M;
   // Rocket (points +x): red body, white nose and band, yellow fins, glass porthole, steel nozzle.
@@ -173,30 +215,36 @@ function models() {
   finShape.moveTo(0, 0); finShape.lineTo(-7, 0); finShape.lineTo(-9.5, 6.5); finShape.lineTo(-4.5, 6.5); finShape.closePath();
   const fin = new THREE.ExtrudeGeometry(finShape, { depth: 0.9, bevelEnabled: false }).translate(-1.5, 2.4, -0.45);
   M.rocket = {
-    body: part(new THREE.CylinderGeometry(3.2, 3.2, 15, 16), 0, 0, 0, 0, 0, Math.PI / 2),
-    white: mergeGeometries([
-      part(new THREE.ConeGeometry(3.2, 9, 16), 12, 0, 0, 0, 0, -Math.PI / 2),
-      part(new THREE.CylinderGeometry(3.35, 3.35, 2.2, 16), 4, 0, 0, 0, 0, Math.PI / 2),
-    ]),
-    fins: mergeGeometries([0, 1, 2, 3].map((i) => part(fin, 0, 0, 0, (i * Math.PI) / 2 + Math.PI / 4, 0, 0))),
-    nozzle: part(new THREE.CylinderGeometry(2.3, 3, 3, 12), -9, 0, 0, 0, 0, Math.PI / 2),
-    glass: part(new THREE.SphereGeometry(1.7, 12, 8), 0, 2.7, 0),
-    flame: new THREE.ConeGeometry(2.8, 16, 12, 1, true).rotateZ(Math.PI / 2).translate(-18.5, 0, 0),
-    core: new THREE.ConeGeometry(1.5, 9, 10, 1, true).rotateZ(Math.PI / 2).translate(-15, 0, 0),
-    redMat: std(0xef233c, 0.28, 0.35), whiteMat: std(0xf8fafc, 0.25, 0.2), finMat: std(0xfbbf24, 0.35, 0.3),
-    steelMat: std(0x4b5563, 0.3, 0.9), glassMat: std(0x7dd3fc, 0.05, 0.3, { emissive: 0x0ea5e9, emissiveIntensity: 0.5 }),
-    flameMat: glow(hdr(2.2, 0.9, 0.25), 0.9), coreMat: glow(hdr(2.6, 2.4, 1.7), 1),
+    geo: baked([
+      [part(new THREE.CylinderGeometry(3.2, 3.2, 15, 16), 0, 0, 0, 0, 0, Math.PI / 2), 0xef233c],
+      [part(new THREE.ConeGeometry(3.2, 9, 16), 12, 0, 0, 0, 0, -Math.PI / 2), 0xf8fafc],
+      [part(new THREE.CylinderGeometry(3.35, 3.35, 2.2, 16), 4, 0, 0, 0, 0, Math.PI / 2), 0xf8fafc],
+      ...[0, 1, 2, 3].map((i) => [part(fin, 0, 0, 0, (i * Math.PI) / 2 + Math.PI / 4, 0, 0), 0xfbbf24]),
+      [part(new THREE.CylinderGeometry(2.3, 3, 3, 12), -9, 0, 0, 0, 0, Math.PI / 2), 0x4b5563],
+      [part(new THREE.SphereGeometry(1.7, 12, 8), 0, 2.7, 0), 0x9be7ff],
+    ]).scale(SIZE.rocket, SIZE.rocket, SIZE.rocket),
+    mat: std(0xffffff, 0.3, 0.3, vtx()),
+    // Exhaust: an orange flame cone around a white-hot core (HDR colours, so they bloom).
+    flame: baked([
+      [new THREE.ConeGeometry(2.8, 16, 12, 1, true).rotateZ(Math.PI / 2).translate(-18.5, 0, 0), hdr(2.2, 0.9, 0.25)],
+      [new THREE.ConeGeometry(1.5, 9, 10, 1, true).rotateZ(Math.PI / 2).translate(-15, 0, 0), hdr(2.6, 2.4, 1.7)],
+    ]).scale(SIZE.rocket, SIZE.rocket, SIZE.rocket),
+    flameMat: new THREE.MeshBasicMaterial(vtx({ transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false })),
   };
-  scaleAll(M.rocket, SIZE.rocket);
-  // Bouncer shell: hex-plated dome on a white rim and dark base.
+  // Bouncer shell: hex-plated dome (textured) on a white rim and dark base, all one mesh.
+  const dome = new THREE.SphereGeometry(10, 28, 14, 0, TAU, 0, Math.PI / 2).scale(1, 0.8, 1).translate(0, 3.2, 0);
+  const lo = (SHELL_TEX_H - 128) / SHELL_TEX_H; // the dome uses the hex rows, above the white strip
+  const uv = dome.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setY(i, lo + uv.getY(i) * (1 - lo));
+  const plain = (g) => { const a = g.attributes.uv; for (let i = 0; i < a.count; i++) a.setXY(i, 0.5, lo / 2); return g; };
   M.shell = {
-    dome: new THREE.SphereGeometry(10, 28, 14, 0, TAU, 0, Math.PI / 2).scale(1, 0.8, 1).translate(0, 3.2, 0),
-    rim: new THREE.TorusGeometry(10.1, 2.2, 10, 32).rotateX(Math.PI / 2).translate(0, 3.2, 0),
-    base: new THREE.CylinderGeometry(9.6, 8, 3.2, 28).translate(0, 1.6, 0),
-    domeMat: std(0xffffff, 0.18, 0.05, { map: hexShellTexture(), emissive: 0x064e3b, emissiveIntensity: 0.25 }),
-    rimMat: std(0xf8fafc, 0.3, 0.1), baseMat: std(0x1e293b, 0.6, 0.2),
+    geo: baked([
+      [dome, 0xffffff],
+      [plain(new THREE.TorusGeometry(10.1, 2.2, 10, 32).rotateX(Math.PI / 2).translate(0, 3.2, 0)), 0xf8fafc],
+      [plain(new THREE.CylinderGeometry(9.6, 8, 3.2, 28).translate(0, 1.6, 0)), 0x1e293b],
+    ], true).scale(SIZE.shell, SIZE.shell, SIZE.shell),
+    mat: std(0xffffff, 0.2, 0.05, vtx({ map: hexShellTexture(), emissive: 0x064e3b, emissiveIntensity: 0.2 })),
   };
-  scaleAll(M.shell, SIZE.shell);
   // Comet: a white-hot core in a crown of crystal spikes, a spinning halo ring and a glow.
   const spikes = [];
   for (let i = 0; i < 10; i++) {
@@ -220,39 +268,39 @@ function models() {
   // Bomb: glossy black sphere, gold band, steel cap, a curling fuse with a sparking tip.
   const fuseCurve = new THREE.CatmullRomCurve3([new THREE.Vector3(0, 10.5, 0), new THREE.Vector3(1, 13.5, 0.4), new THREE.Vector3(3.6, 15.2, 0.6), new THREE.Vector3(5.2, 14.4, 0.2)]);
   M.bomb = {
-    ball: new THREE.SphereGeometry(9, 24, 16),
-    band: new THREE.TorusGeometry(9.05, 1.1, 8, 32).rotateX(Math.PI / 2),
-    cap: new THREE.CylinderGeometry(3, 3.4, 3.4, 14).translate(0, 9.6, 0),
-    fuse: new THREE.TubeGeometry(fuseCurve, 12, 0.75, 6),
-    tip: new THREE.Vector3(5.2, 14.4, 0.2),
-    ballMat: std(0x1b2030, 0.22, 0.65), bandMat: std(0xf59e0b, 0.3, 0.8), capMat: std(0x9ca3af, 0.3, 0.9), fuseMat: std(0x92400e, 0.8, 0),
+    geo: baked([
+      [new THREE.SphereGeometry(9, 24, 16), 0x1b2030],
+      [new THREE.TorusGeometry(9.05, 1.1, 8, 32).rotateX(Math.PI / 2), 0xf59e0b],
+      [new THREE.CylinderGeometry(3, 3.4, 3.4, 14).translate(0, 9.6, 0), 0x9ca3af],
+      [new THREE.TubeGeometry(fuseCurve, 12, 0.75, 6), 0x92400e],
+    ]).scale(SIZE.bomb, SIZE.bomb, SIZE.bomb),
+    mat: std(0xffffff, 0.26, 0.55, vtx()),
+    tip: new THREE.Vector3(5.2, 14.4, 0.2).multiplyScalar(SIZE.bomb),
     sparkMat: new THREE.SpriteMaterial({ map: tex.spark(), color: 0xffb347, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
   };
-  scaleAll(M.bomb, SIZE.bomb);
-  M.bomb.tip.multiplyScalar(SIZE.bomb);
-  // Mine: a squat metal disc, hazard band, spikes and a light dome that blinks.
+  // Mine: a squat metal disc, hazard band and spikes (one mesh), and a light dome that blinks.
   const mineSpikes = [];
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * TAU;
-    mineSpikes.push(part(new THREE.ConeGeometry(1.5, 6, 8), Math.cos(a) * 11, 4, Math.sin(a) * 11, 0, -a, -Math.PI / 2));
+    mineSpikes.push([part(new THREE.ConeGeometry(1.5, 6, 8), Math.cos(a) * 11, 4, Math.sin(a) * 11, 0, -a, -Math.PI / 2), 0x3a404d]);
   }
   M.mine = {
-    body: mergeGeometries([
-      part(new THREE.SphereGeometry(10, 22, 12).scale(1, 0.5, 1), 0, 4, 0),
-      part(new THREE.CylinderGeometry(8, 9.5, 1.6, 22), 0, 0.8, 0),
+    body: baked([
+      [part(new THREE.SphereGeometry(10, 22, 12).scale(1, 0.5, 1), 0, 4, 0), 0x2f3440],
+      [part(new THREE.CylinderGeometry(8, 9.5, 1.6, 22), 0, 0.8, 0), 0x23272f],
       ...mineSpikes,
-    ]),
-    band: new THREE.TorusGeometry(9.7, 1.2, 8, 30).rotateX(Math.PI / 2).translate(0, 4, 0),
-    light: new THREE.SphereGeometry(2.8, 14, 8, 0, TAU, 0, Math.PI / 2).translate(0, 8.2, 0),
-    bodyMat: std(0x2f3440, 0.35, 0.75), bandMat: std(0xfacc15, 0.4, 0.3),
+      [new THREE.TorusGeometry(9.7, 1.2, 8, 30).rotateX(Math.PI / 2).translate(0, 4, 0), 0xffd21f],
+    ]).scale(SIZE.mine, SIZE.mine, SIZE.mine),
+    bodyMat: std(0xffffff, 0.35, 0.45, vtx()),
+    light: new THREE.SphereGeometry(2.8, 14, 8, 0, TAU, 0, Math.PI / 2).translate(0, 8.2, 0).scale(SIZE.mine, SIZE.mine, SIZE.mine),
     lightOff: std(0x7f1d1d, 0.3, 0.1), lightOn: new THREE.MeshBasicMaterial({ color: hdr(3, 0.25, 0.2) }),
     lightArming: new THREE.MeshBasicMaterial({ color: hdr(2.4, 1.8, 0.2) }),
-    glowMat: new THREE.SpriteMaterial({ map: tex.spark(), color: 0xff3030, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
+    // Two halo materials, so an armed (red) mine and a fresh (amber) one can sit side by side.
+    haloArmed: new THREE.SpriteMaterial({ map: tex.spark(), color: 0xff3030, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
+    haloArming: new THREE.SpriteMaterial({ map: tex.spark(), color: 0xffc040, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
   };
-  scaleAll(M.mine, SIZE.mine);
-  // Banana peel: four petals drooping from the open top to the ground, tips browned.
-  M.peel = peelGeometry().scale(...SIZE.peel);
-  M.peelMat = std(0xffffff, 0.5, 0, { vertexColors: true, side: THREE.DoubleSide });
+  M.peel = peelGeometry().scale(SIZE.peel, SIZE.peel, SIZE.peel);
+  M.peelMat = std(0xffffff, 0.55, 0, vtx());
   // Minigun: six barrels around a hub, mounted on the kart's nose.
   const barrels = [];
   for (let i = 0; i < 6; i++) {
@@ -277,97 +325,150 @@ function models() {
   M.ring = new THREE.RingGeometry(0.82, 1, 48).rotateX(-Math.PI / 2);
   M.disc = new THREE.CircleGeometry(1, 40).rotateX(-Math.PI / 2);
   M.tick = new THREE.PlaneGeometry(0.1, 0.35).rotateX(-Math.PI / 2);
+  M.plate = new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2); // star light pool, shock ring
   M.tracer = new THREE.CylinderGeometry(1.5, 0.7, 1, 6, 1, true).rotateZ(Math.PI / 2);
   M.debris = new THREE.BoxGeometry(1, 1, 1);
   M.ready = true;
   return M;
 }
 
+// Banana peel: a short stub with a brown stem, and three thick flaps of uneven length that arc out
+// and droop to the ground, their tips curling back up. Yellow outside, cream inside, a few brown
+// speckles. Built at toy scale (about 20 across) as one vertex-coloured geometry.
 function peelGeometry() {
+  const YELLOW = new THREE.Color(0xf5c518);
+  const DEEP = new THREE.Color(0xd99a06); // shading where a flap meets the stub and along its edges
+  const CREAM = new THREE.Color(0xffe58a); // a warm inside, so it never goes olive in shadow
+  const BROWN = new THREE.Color(0x5a3510);
+  const SEG = 14;
+  const COLS = 5;
+  const THICK = 1.15;
   const parts = [];
-  const lin = (hex) => new THREE.Color(hex).toArray();
-  const YELLOW = lin(0xffd21a);
-  const PALE = lin(0xfff1a0);
-  const BROWN = lin(0x6b4214);
-  const petals = 4;
-  for (let p = 0; p < petals; p++) {
-    const a0 = (p / petals) * TAU + 0.35;
-    const segs = 10;
-    const cols = 4;
+  const flaps = [[0.25, 11.5], [2.4, 9.5], [4.3, 12.5]]; // [angle around the stub, length]
+  for (const [a0, len] of flaps) {
     const pos = [];
     const col = [];
     const idx = [];
-    for (let i = 0; i <= segs; i++) {
-      const t = i / segs;
-      const r = 2 + 12 * Math.sin(t * Math.PI * 0.5);
-      const y = 10 * (1 - t) ** 1.7 + 0.7 + Math.max(0, t - 0.82) * 10; // the tip curls up off the ground
-      const w = 5 * Math.sin(Math.PI * (0.16 + 0.84 * t)) + 0.5; // widest in the middle, pointed tip
-      for (let j = 0; j <= cols; j++) {
-        const s = j / cols - 0.5;
-        const ang = a0 + (s * w) / Math.max(r, 2.5);
-        const cup = Math.abs(s) * 2.2 * Math.sin(t * Math.PI); // edges curl up: a cupped petal
-        pos.push(Math.cos(ang) * r, y + cup, Math.sin(ang) * r);
-        const c = t > 0.86 ? BROWN : Math.abs(s) < 0.2 && t > 0.15 ? PALE : YELLOW;
-        col.push(...c);
+    const ring = 2 * (COLS + 1); // cross-section loop: top edge across, then the underside back
+    const tops = [];
+    for (let i = 0; i <= SEG; i++) {
+      const t = i / SEG;
+      // Over in a rounded arc from the top of the stub to the ground, along it, then a curl at the tip.
+      const arc = Math.min(1, t / 0.62);
+      const r = 2.2 + len * (0.74 * Math.sin((arc * Math.PI) / 2) + 0.26 * Math.max(0, (t - 0.62) / 0.38));
+      const curl = t > 0.8 ? ((t - 0.8) / 0.2) ** 2 * 2.8 : 0;
+      const y = 0.7 + 9.6 * Math.cos((arc * Math.PI) / 2) + curl;
+      const w = 6.2 + 3.0 * Math.sin(Math.PI * t) - 5.2 * t ** 3; // width: broad middle, pointed tip
+      const half = w / 2 / r;
+      const row = [];
+      for (let j = 0; j <= COLS; j++) {
+        const s = (j / COLS) * 2 - 1;
+        const ang = a0 + s * half;
+        const cup = s * s * 1.1 * Math.sin(Math.PI * Math.min(1, t * 1.2)); // edges curl up a little
+        row.push(new THREE.Vector3(Math.cos(ang) * r, y + cup, Math.sin(ang) * r));
+      }
+      tops.push(row);
+    }
+    for (let i = 0; i <= SEG; i++) {
+      const t = i / SEG;
+      const row = tops[i];
+      // The underside sits THICK below the top surface (along the local surface normal).
+      const along = tops[Math.min(SEG, i + 1)][2].clone().sub(tops[Math.max(0, i - 1)][2]);
+      const across = row[COLS].clone().sub(row[0]);
+      const n = across.cross(along).normalize();
+      if (n.y < 0) n.negate();
+      const tip = t > 0.88 ? BROWN : null;
+      for (let j = 0; j <= COLS; j++) {
+        const edge = Math.abs((j / COLS) * 2 - 1);
+        pos.push(row[j].x, row[j].y, row[j].z);
+        const c = tip || YELLOW.clone().lerp(DEEP, Math.max(t < 0.18 ? 1 - t / 0.18 : 0, edge > 0.7 ? 0.5 : 0));
+        col.push(c.r, c.g, c.b);
+      }
+      for (let j = COLS; j >= 0; j--) {
+        const p = row[j].clone().addScaledVector(n, -THICK);
+        p.y = Math.max(0.05, p.y);
+        pos.push(p.x, p.y, p.z);
+        const c = tip || CREAM;
+        col.push(c.r, c.g, c.b);
       }
     }
-    for (let i = 0; i < segs; i++) {
-      for (let j = 0; j < cols; j++) {
-        const a = i * (cols + 1) + j;
-        const b = a + cols + 1;
-        idx.push(a, b, a + 1, a + 1, b, b + 1);
+    // Stitch each cross-section loop to the next (outward-facing winding), then cap the tip.
+    for (let i = 0; i < SEG; i++) {
+      for (let k = 0; k < ring; k++) {
+        const a = i * ring + k;
+        const b = (i + 1) * ring + k;
+        const c = i * ring + ((k + 1) % ring);
+        const d = (i + 1) * ring + ((k + 1) % ring);
+        idx.push(a, c, b, c, d, b);
       }
     }
+    const end = SEG * ring;
+    for (let k = 1; k < ring - 1; k++) idx.push(end, end + k, end + k + 1);
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
     g.setIndex(idx);
     g.computeVertexNormals();
     parts.push(g.toNonIndexed());
+    // Two brown speckles on the top of each flap.
+    for (const [i, j] of [[5, 2], [8, 3]]) {
+      const p = tops[i][j];
+      const q = tops[i + 1][j].clone().sub(tops[i - 1][j]);
+      const tilt = Math.atan2(q.y, Math.hypot(q.x, q.z));
+      const dir = Math.atan2(q.z, q.x);
+      const up = 0.15; // lifted off the surface along its normal
+      const dot = new THREE.CircleGeometry(0.55 + (i % 3) * 0.15, 7).rotateX(-Math.PI / 2).rotateZ(tilt).rotateY(-dir);
+      dot.translate(p.x - Math.sin(tilt) * Math.cos(dir) * up, p.y + Math.cos(tilt) * up, p.z - Math.sin(tilt) * Math.sin(dir) * up);
+      parts.push(tinted(dot, BROWN));
+    }
   }
-  const colored = (geo, c) => {
-    const g = geo.index ? geo.toNonIndexed() : geo;
-    g.deleteAttribute('uv');
-    const n = g.attributes.position.count;
-    g.setAttribute('color', new THREE.Float32BufferAttribute(new Array(n).fill(0).flatMap(() => c), 3));
-    return g;
-  };
-  parts.push(colored(new THREE.CylinderGeometry(2.6, 2.1, 4.5, 12).translate(0, 9, 0), YELLOW));
-  parts.push(colored(new THREE.CylinderGeometry(1.1, 1.5, 3.6, 8).translate(0, 12.8, 0), BROWN));
+  // The stub where the flaps meet, and the stem on top.
+  parts.push(tinted(new THREE.CylinderGeometry(2.4, 3.2, 10.5, 14).translate(0, 5.25, 0), YELLOW));
+  parts.push(tinted(new THREE.SphereGeometry(2.4, 14, 6, 0, TAU, 0, Math.PI / 2).scale(1, 0.55, 1).translate(0, 10.5, 0), DEEP));
+  parts.push(tinted(new THREE.CylinderGeometry(1.0, 1.35, 3.4, 8).translate(0, 12.6, 0), BROWN));
   return mergeGeometries(parts);
+}
+function tinted(geo, color) {
+  const g = geo.index ? geo.toNonIndexed() : geo;
+  for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal') g.deleteAttribute(name);
+  const n = g.attributes.position.count;
+  const col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) col.set([color.r, color.g, color.b], i * 3);
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
 }
 
 function buildModel(kind) {
   const m = models();
   const g = new THREE.Group();
-  const mesh = (geo, mat, shadow = true) => {
-    const x = new THREE.Mesh(geo, mat);
-    x.castShadow = shadow;
-    return x;
-  };
+  const mesh = (geo, mat) => new THREE.Mesh(geo, mat);
+  // Projectiles cast real shadows on desktop. Things lying on the ground, carried items and every
+  // item on phones don't: each caster costs a second draw in the shadow pass.
+  const cast = !MOBILE && ['rocket', 'bouncer', 'bomb', 'comet'].includes(kind);
+  let body = null;
   if (kind === 'rocket' || kind === 'mini') {
-    const R = m.rocket;
     const spin = new THREE.Group(); // rolls around its own axis in flight
-    spin.add(mesh(R.body, R.redMat), mesh(R.white, R.whiteMat), mesh(R.fins, R.finMat), mesh(R.nozzle, R.steelMat), mesh(R.glass, R.glassMat, false));
+    body = mesh(m.rocket.geo, m.rocket.mat);
+    spin.add(body);
     g.add(spin);
     g.userData.spin = spin;
     if (kind === 'rocket') {
-      const flame = mesh(R.flame, R.flameMat, false);
-      const core = mesh(R.core, R.coreMat, false);
-      g.add(flame, core);
-      g.userData.flames = [flame, core];
+      const flame = mesh(m.rocket.flame, m.rocket.flameMat);
+      g.add(flame);
+      g.userData.flame = flame;
     }
   } else if (kind === 'bouncer') {
-    const S = m.shell;
     const spin = new THREE.Group();
-    spin.add(mesh(S.dome, S.domeMat), mesh(S.rim, S.rimMat), mesh(S.base, S.baseMat));
+    body = mesh(m.shell.geo, m.shell.mat);
+    spin.add(body);
     g.add(spin);
     g.userData.spin = spin;
   } else if (kind === 'comet') {
     const C = m.comet;
     const spin = new THREE.Group();
-    spin.add(mesh(C.core, C.coreMat, false), mesh(C.spikes, C.spikeMat));
-    const ring = mesh(C.ring, C.ringMat, false);
+    body = mesh(C.spikes, C.spikeMat);
+    spin.add(mesh(C.core, C.coreMat), body);
+    const ring = mesh(C.ring, C.ringMat);
     const halo = new THREE.Sprite(C.haloMat);
     halo.scale.set(100, 100, 1);
     g.add(spin, ring, halo);
@@ -375,25 +476,27 @@ function buildModel(kind) {
   } else if (kind === 'bomb') {
     const B = m.bomb;
     const tumble = new THREE.Group();
-    tumble.add(mesh(B.ball, B.ballMat), mesh(B.band, B.bandMat), mesh(B.cap, B.capMat), mesh(B.fuse, B.fuseMat, false));
+    body = mesh(B.geo, B.mat);
     const spark = new THREE.Sprite(B.sparkMat);
     spark.position.copy(B.tip);
     spark.scale.set(16, 16, 1);
-    tumble.add(spark);
+    tumble.add(body, spark);
     g.add(tumble);
     Object.assign(g.userData, { spin: tumble, spark });
   } else if (kind === 'mine') {
     const N = m.mine;
-    const light = mesh(N.light, N.lightOff, false);
-    const halo = new THREE.Sprite(N.glowMat);
+    body = mesh(N.body, N.bodyMat);
+    const light = mesh(N.light, N.lightOff);
+    const halo = new THREE.Sprite(N.haloArming);
     halo.position.y = 9.5 * SIZE.mine;
     halo.scale.set(30, 30, 1);
-    g.add(mesh(N.body, N.bodyMat), mesh(N.band, N.bandMat), light, halo);
+    g.add(body, light, halo);
     Object.assign(g.userData, { light, halo });
   } else if (kind === 'banana') {
-    g.add(mesh(m.peel, m.peelMat));
+    body = mesh(m.peel, m.peelMat);
+    g.add(body);
   }
-  g.userData.kind = kind;
+  Object.assign(g.userData, { kind, body, cast });
   return g;
 }
 
@@ -561,6 +664,8 @@ export class ItemFX {
       mint: new THREE.Color(0x6ee7b7), white: new THREE.Color(0xffffff), electric: new THREE.Color(0x9bd5ff),
       smoke: new THREE.Color(r.theme.night ? 0x4a4560 : 0x9aa0aa), shell: new THREE.Color(0x10b981),
       puff: new THREE.Color(r.theme.night ? 0x6a6585 : 0xe8ecf2), plume: new THREE.Color(0x3b2a8f),
+      fireball: [new THREE.Color(0xf5d0fe), new THREE.Color(0xa78bfa), new THREE.Color(0x7c3aed)],
+      shockRing: new THREE.Color(0.35, 0.7, 1), cometRing: new THREE.Color(0.75, 0.45, 1.3),
     };
 
     // Bullets: one instanced mesh of glowing tracers.
@@ -622,12 +727,16 @@ export class ItemFX {
     let obj = list.pop();
     if (!obj) {
       if (kind === 'marker' || kind === 'reticle' || kind === 'pulse') obj = this.buildMarker(kind);
+      else if (kind === 'shock') obj = this.buildShock();
+      else if (kind === 'flare') obj = this.buildFlare();
       else obj = buildModel(kind);
       this.scene.add(obj);
     }
     obj.visible = true;
     obj.scale.setScalar(1);
     obj.rotation.set(0, 0, 0);
+    obj.position.set(0, 0, 0);
+    if (obj.userData.body) obj.userData.body.castShadow = obj.userData.cast;
     return obj;
   }
 
@@ -665,10 +774,77 @@ export class ItemFX {
     return g;
   }
 
+  // A ring of lightning racing outwards over the ground (shock, comet impact). Pooled with its own
+  // material, so the shader is compiled once and never thrown away mid-race.
+  buildShock() {
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { uTime: TIME, uP: { value: 0 }, uColor: { value: new THREE.Color(0.35, 0.7, 1) } },
+      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
+      fragmentShader: `
+        uniform float uTime; uniform float uP; uniform vec3 uColor; varying vec2 vUv;
+        void main() {
+          vec2 p = vUv * 2.0 - 1.0;
+          float r = length(p); float a = atan(p.y, p.x);
+          float jag = 0.035 * sin(a * 23.0 + uTime * 47.0) + 0.025 * sin(a * 61.0 - uTime * 31.0) + 0.015 * sin(a * 7.0 + uTime * 13.0);
+          float d = abs(r - uP + jag);
+          float core = smoothstep(0.03, 0.0, d);
+          float halo = smoothstep(0.14, 0.0, d) * 0.4;
+          float inner = smoothstep(uP, 0.0, r) * 0.18 * (1.0 - uP);
+          float fade = 1.0 - uP * uP;
+          vec3 col = mix(uColor, vec3(1.0), core) * 2.0;
+          gl_FragColor = vec4(col, (core + halo + inner) * fade);
+        }`,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+    });
+    const disc = new THREE.Mesh(models().plate, mat);
+    disc.renderOrder = 5;
+    disc.userData = { kind: 'shock', mats: [mat], mat };
+    return disc;
+  }
+
+  // A bright camera-facing flash (comet impact). Pooled, own material for its own fade.
+  buildFlare() {
+    const mat = new THREE.SpriteMaterial({ map: tex.spark(), color: hdr(2.2, 1.9, 3.2), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+    const sprite = new THREE.Sprite(mat);
+    sprite.renderOrder = 6;
+    sprite.userData = { kind: 'flare', mats: [mat], mat };
+    return sprite;
+  }
+
+  // Every item shader compiles here, before the race, instead of with a stutter on first use:
+  // one of each model, marker, aura and effect is parked under the ground for the first frame
+  // (extra: kart materials such as the star, ghost and shield skins). Call coolDown() after it.
+  warmUp(extra = []) {
+    const objs = ['rocket', 'mini', 'bouncer', 'comet', 'bomb', 'mine', 'banana', 'marker', 'reticle', 'pulse', 'shock', 'flare'].map((kind) => this.get(kind));
+    const temp = new THREE.Group();
+    const G = models().gun;
+    const box = new THREE.BoxGeometry(4, 4, 4);
+    temp.add(new THREE.Mesh(G.barrels, G.barrelMat), new THREE.Mesh(G.housing, G.housingMat), new THREE.Mesh(G.flash, G.flashMat), new THREE.Mesh(models().plate, starGlow()));
+    for (const mat of extra) temp.add(new THREE.Mesh(box, mat));
+    this.scene.add(temp);
+    const bolt = this.bolt();
+    bolt.shape(new THREE.Vector3(0, -300, 0), new THREE.Vector3(10, -320, 0), 5, 0.2, this.r.camera);
+    for (const o of [...objs, temp, bolt.mesh]) {
+      o.position.set(this.map.center[0], -400, this.map.center[1]);
+      o.traverse((c) => { c.frustumCulled = false; if (c.isMesh) c.castShadow = true; });
+    }
+    return { objs, temp, bolt, box };
+  }
+
+  coolDown(w) {
+    for (const o of [...w.objs, w.temp, w.bolt.mesh]) o.traverse((c) => { c.frustumCulled = true; c.castShadow = false; });
+    w.bolt.mesh.frustumCulled = false;
+    w.bolt.busy = false;
+    w.bolt.mesh.visible = false;
+    this.scene.remove(w.temp);
+    w.box.dispose();
+    for (const o of w.objs) this.put(o);
+  }
+
   // ---------- per-kart visuals ----------
   // kart: the Kart3D kart record; k: the interpolated row { x, y, angle, speed, flags, item, ammo, roulette }.
   kart(kart, k, dt, t, isMe) {
-    const fx = kart.fx || (kart.fx = { held: null, heldKind: 0, orbit: null, orbitN: 0, gun: null, overlays: null, scale: 1, drip: 0, sparkle: 0 });
+    const fx = kart.fx || (kart.fx = { held: null, heldKind: 0, orbit: null, orbitN: 0, gun: null, glow: null, scale: 1, drip: 0, sparkle: 0 });
     const ready = !!k.item && !k.roulette;
 
     // Thunder victims shrink (and spring back).
@@ -676,21 +852,28 @@ export class ItemFX {
     fx.scale += (scale - fx.scale) * Math.min(1, dt * (scale < fx.scale ? 12 : 5));
     kart.group.scale.setScalar(fx.scale);
 
-    // Banana, mine or bouncer shell trailing behind the kart.
+    // Banana, mine or bouncer shell trailing behind the kart: smaller than when thrown, and far
+    // enough back to clear the rear wing and stay under the chase camera's view of the kart.
     const held = ready && [CODE.banana, CODE.mine, CODE.bouncer].includes(k.item) ? k.item : 0;
     if (held !== fx.heldKind) {
       this.put(fx.held);
       fx.held = null;
       fx.heldKind = held;
       if (held) {
-        fx.held = this.get(K.ITEMS[held - 1]);
-        fx.held.scale.setScalar(0.8); // a touch smaller than a dropped one, so it never hides the kart from the chase cam
-        kart.group.add(fx.held);
+        const obj = this.get(K.ITEMS[held - 1]);
+        obj.userData.body.castShadow = false;
+        obj.scale.setScalar(HELD);
+        if (obj.userData.halo) { // a mine in tow is not armed: no red glow washing over the kart
+          obj.userData.halo.visible = false;
+          obj.userData.light.material = models().mine.lightOff;
+        }
+        kart.group.add(obj);
+        fx.held = obj;
       }
     }
     if (fx.held) {
       const sway = Math.sin(t * 5 + k.idx) * 0.15 - (kart.steer || 0) * 0.35;
-      fx.held.position.set(-44 * Math.cos(sway), 0.5, -44 * Math.sin(sway));
+      fx.held.position.set(-50 * Math.cos(sway), 0.3, -50 * Math.sin(sway));
       fx.held.rotation.y = t * (held === CODE.bouncer ? 3 : 0.6);
     }
 
@@ -706,9 +889,9 @@ export class ItemFX {
       fx.orbit.rotation.y = t * 3.2;
       fx.orbit.children.forEach((r, i) => {
         const a = (i / orbitN) * TAU;
-        r.position.set(Math.cos(a) * 34, 16 + Math.sin(t * 4 + i * 2) * 2, Math.sin(a) * 34);
+        r.position.set(Math.cos(a) * 42, 18 + Math.sin(t * 4 + i * 2) * 2, Math.sin(a) * 42); // clear of the kart's corners
         r.rotation.set(0, -a - Math.PI / 2, 0);
-        r.scale.setScalar(0.45);
+        r.scale.setScalar(0.36);
       });
     }
 
@@ -740,26 +923,18 @@ export class ItemFX {
       }
     }
 
-    // Star: rainbow sheen over every part of the kart, and sparkles streaming off it.
+    // Star: the kart itself runs through the rainbow (Kart3D swaps in starVariant() materials), a
+    // pool of rainbow light follows it over the ground and sparkles stream off it.
     const star = !!(k.flags & FLAG.star);
-    if (star && !fx.overlays) {
-      const mat = starMaterial();
-      fx.overlays = kart.meshes.map((mesh) => {
-        const o = new THREE.Mesh(mesh.geometry, mat);
-        o.renderOrder = 3;
-        mesh.add(o);
-        return o;
-      });
+    if (star && !fx.glow) {
+      fx.glow = new THREE.Mesh(models().plate, starGlow());
+      fx.glow.position.y = 1.5;
+      fx.glow.renderOrder = 2;
+      kart.group.add(fx.glow);
     }
-    if (fx.overlays && fx.overlays[0].visible !== star) for (const o of fx.overlays) o.visible = star;
-    if (star && !fx.aura) {
-      fx.aura = new THREE.Sprite(starAura());
-      fx.aura.position.y = 14;
-      kart.group.add(fx.aura);
-    }
-    if (fx.aura) {
-      fx.aura.visible = star;
-      if (star) fx.aura.scale.setScalar(95 + Math.sin(t * 18) * 10);
+    if (fx.glow) {
+      fx.glow.visible = star;
+      if (star) fx.glow.scale.setScalar(46 + Math.sin(t * 18) * 5);
     }
     const gy = this.ground(k.x, k.y);
     if (star) {
@@ -798,7 +973,7 @@ export class ItemFX {
   // view: { shots:[[id,kind,x,y,a,prog|alt,...extra]], mines:[[id,x,y,armed]], bananas:[[id,x,y]], boxes:[0|1], karts }
   update(view, dt, t, now) {
     TIME.value = t;
-    starAura().color.setHSL((t * 1.6) % 1, 1, 0.6);
+    starGlow().color.setHSL((t * 1.6) % 1, 1, 0.55);
     this.updateShots(view.shots || [], view.karts || [], dt, t);
     this.updateMines(view.mines || [], dt, now);
     this.updateBananas(view.bananas || [], dt);
@@ -831,22 +1006,30 @@ export class ItemFX {
       let s = this.shots.get(id);
       if (!s) {
         const name = kind === SHOT.rocket ? 'rocket' : kind === SHOT.bomb ? 'bomb' : kind === SHOT.bouncer ? 'bouncer' : 'comet';
-        s = { kind, obj: this.get(name), marker: null, lastA: a, lastAlt: p, age: 0 };
+        s = { kind, obj: this.get(name), marker: null, lastA: a, lastAlt: p, age: 0, px: x, pz: z, trail: {} };
         this.shots.set(id, s);
         if (kind === SHOT.comet) this.cometLaunch(x, gy, z);
       }
       s.age += dt;
       const o = s.obj;
+      // Trails are emitted at a fixed rate per second and spread along the stretch flown since the
+      // last frame: the same density at 30, 60 or 144 fps, and no gaps on slow phones.
+      // emit(tx, tz) gets evenly spaced points on that stretch.
+      const trail = (name, rate, emit) => {
+        const n = this.burst(s.trail, name, rate, dt);
+        for (let i = 1; i <= n; i++) {
+          const f = i / n;
+          emit(s.px + (x - s.px) * f, s.pz + (z - s.pz) * f);
+        }
+      };
       if (kind === SHOT.rocket) {
         o.position.set(x, gy + 15, z);
         o.rotation.y = -a;
         o.userData.spin.rotation.x += dt * 9;
-        const [flame, core] = o.userData.flames;
-        flame.scale.set(rand(0.8, 1.3), rand(0.85, 1.15), rand(0.85, 1.15));
-        core.scale.set(rand(0.7, 1.2), 1, 1);
-        this.fire.emit(x - ca * 32, gy + 15, z - sa * 32, -ca * 60 + rand(-15, 15), rand(-15, 15), -sa * 60 + rand(-15, 15),
-          this.c.flame[Math.floor(rand(0, 3))], rand(12, 18), 0.16, { grow: 0.4 });
-        this.smoke.emit(x - ca * 38, gy + 15, z - sa * 38, rand(-8, 8), rand(6, 16), rand(-8, 8), this.c.puff, rand(8, 11), 0.8, { alpha: 0.42, grow: 2.4, drag: 1 });
+        o.userData.flame.scale.set(rand(0.8, 1.3), rand(0.85, 1.15), rand(0.85, 1.15));
+        trail('fire', MOBILE ? 30 : 60, (tx, tz) => this.fire.emit(tx - ca * 32, gy + 15, tz - sa * 32, -ca * 60 + rand(-15, 15), rand(-15, 15), -sa * 60 + rand(-15, 15),
+          this.c.flame[Math.floor(rand(0, 3))], rand(12, 18), 0.16, { grow: 0.4 }));
+        trail('smoke', MOBILE ? 20 : 45, (tx, tz) => this.smoke.emit(tx - ca * 38, gy + 15, tz - sa * 38, rand(-8, 8), rand(6, 16), rand(-8, 8), this.c.puff, rand(8, 11), 0.8, { alpha: 0.42, grow: 2.4, drag: 1 }));
       } else if (kind === SHOT.bomb) {
         // Lobbed: arcs up and down, tumbling, fuse fizzing. The landing spot is marked on the ground.
         const prog = Math.min(1, (p || 0) / 100);
@@ -855,7 +1038,8 @@ export class ItemFX {
         o.userData.spin.rotation.z -= dt * 7;
         o.userData.spark.scale.setScalar(rand(9, 16));
         const tip = o.userData.spark.getWorldPosition(v);
-        this.fire.emit(tip.x, tip.y, tip.z, rand(-60, 60), rand(20, 90), rand(-60, 60), this.c.flame[Math.floor(rand(0, 2))], rand(3, 5), 0.3, { drag: 2, rise: -300 });
+        const sparks = this.burst(s.trail, 'fuse', MOBILE ? 30 : 60, dt);
+        for (let i = 0; i < sparks; i++) this.fire.emit(tip.x, tip.y, tip.z, rand(-60, 60), rand(20, 90), rand(-60, 60), this.c.flame[Math.floor(rand(0, 2))], rand(3, 5), 0.3, { drag: 2, rise: -300 });
         if (row.length >= 8) {
           if (!s.marker) s.marker = this.get('marker');
           const lx = row[6];
@@ -870,7 +1054,7 @@ export class ItemFX {
         o.position.set(x, gy + 0.5 + Math.abs(Math.sin(s.age * 14)) * 1.5, z);
         o.userData.spin.rotation.y += dt * 18;
         if (Math.abs(wrap(a - s.lastA)) > 0.6) this.bounceFx(x, gy, z);
-        if (Math.random() < 0.5) this.fire.emit(x - ca * 10, gy + 4, z - sa * 10, rand(-20, 20), rand(10, 40), rand(-20, 20), this.c.mint, rand(4, 7), 0.3, { drag: 2 });
+        trail('spark', MOBILE ? 15 : 30, (tx, tz) => this.fire.emit(tx - ca * 10, gy + 4, tz - sa * 10, rand(-20, 20), rand(10, 40), rand(-20, 20), this.c.mint, rand(4, 7), 0.3, { drag: 2 }));
       } else if (kind === SHOT.comet) {
         // High over the track, then a dive onto the target (whose spot gets a reticle).
         const alt = p || 0;
@@ -881,13 +1065,16 @@ export class ItemFX {
         o.userData.spin.rotation.x += dt * 4;
         o.userData.spin.rotation.y += dt * 6;
         o.userData.ring.rotation.set(Math.PI / 2 + Math.sin(t * 3) * 0.4, t * 5, 0);
-        o.userData.halo.scale.setScalar(95 + Math.sin(t * 20) * 12);
+        // The glow shrinks and lifts as the comet comes down, so the ground never slices through it.
+        const lift = 16 + alt;
+        const hs = (95 + Math.sin(t * 20) * 12) * Math.max(0.4, Math.min(1, lift / 70));
+        o.userData.halo.scale.setScalar(hs);
+        o.userData.halo.position.y = Math.max(0, hs * 0.32 - lift);
         // Tail: bright sparks plus a darker indigo plume so it reads against a daytime sky.
-        for (let i = 0; i < (MOBILE ? 2 : 4); i++) {
-          this.fire.emit(x - ca * 16 + rand(-8, 8), o.position.y + rand(-8, 8), z - sa * 16 + rand(-8, 8), -ca * 90 + rand(-30, 30), rand(-30, 30), -sa * 90 + rand(-30, 30),
-            this.c.comet[Math.floor(rand(0, 4))], rand(16, 28), rand(0.35, 0.7), { grow: 0.5, drag: 1.5 });
-        }
-        this.smoke.emit(x - ca * 26, o.position.y, z - sa * 26, -ca * 40 + rand(-20, 20), rand(-10, 10), -sa * 40 + rand(-20, 20), this.c.plume, rand(18, 26), 0.8, { alpha: 0.55, grow: 1.6, drag: 1 });
+        const y0 = o.position.y;
+        trail('fire', MOBILE ? 90 : 200, (tx, tz) => this.fire.emit(tx - ca * 16 + rand(-8, 8), y0 + rand(-8, 8), tz - sa * 16 + rand(-8, 8), -ca * 90 + rand(-30, 30), rand(-30, 30), -sa * 90 + rand(-30, 30),
+          this.c.comet[Math.floor(rand(0, 4))], rand(16, 28), rand(0.35, 0.7), { grow: 0.5, drag: 1.5 }));
+        trail('smoke', MOBILE ? 25 : 50, (tx, tz) => this.smoke.emit(tx - ca * 26, y0, tz - sa * 26, -ca * 40 + rand(-20, 20), rand(-10, 10), -sa * 40 + rand(-20, 20), this.c.plume, rand(18, 26), 0.8, { alpha: 0.55, grow: 1.6, drag: 1 }));
         const target = row[6] >= 0 ? karts.find((kk) => kk.idx === row[6]) : null;
         if (target && !(target.flags & FLAG.dead)) {
           if (!s.marker) s.marker = this.get('reticle');
@@ -900,6 +1087,8 @@ export class ItemFX {
         s.lastAlt = alt;
       }
       s.lastA = a;
+      s.px = x;
+      s.pz = z;
     }
     this.tracers.count = tracers;
     this.tracers.instanceMatrix.needsUpdate = true;
@@ -909,6 +1098,14 @@ export class ItemFX {
       this.put(s.marker);
       this.shots.delete(id);
     }
+  }
+
+  // How many particles a `rate`-per-second emitter owes this frame (fractions carry over).
+  burst(acc, name, rate, dt) {
+    acc[name] = (acc[name] || 0) + rate * dt;
+    const n = Math.floor(acc[name]);
+    acc[name] -= n;
+    return n;
   }
 
   updateMines(list, dt, now) {
@@ -931,7 +1128,7 @@ export class ItemFX {
       const N = models().mine;
       light.material = !on ? N.lightOff : armed ? N.lightOn : N.lightArming;
       halo.visible = on;
-      halo.material.color.setHex(armed ? 0xff3030 : 0xffc040);
+      halo.material = armed ? N.haloArmed : N.haloArming;
       const ph = (now / 1000) % 1;
       m.pulse.visible = !!armed;
       m.pulse.position.set(x, gy + 1.2, z);
@@ -1053,48 +1250,58 @@ export class ItemFX {
       }
       return;
     }
-    // Comet: a white-blue starburst, a light pillar and shockwaves.
+    // Comet impact: a blinding flash, a violet fireball, a lightning shock ring racing out over the
+    // ground, a light pillar and debris thrown high. (Small = a comet fizzling out in the air.)
     const big = radius > 100;
-    const n = big ? (MOBILE ? 40 : 70) : 20;
-    for (let i = 0; i < n; i++) {
+    this.flare(x, gy + 40, z, radius * (big ? 1.7 : 0.7), big ? 0.32 : 0.2);
+    if (big) this.flare(x, gy + 20, z, radius * 0.7, 0.14);
+    const n = big ? (MOBILE ? 24 : 44) : 14;
+    for (let i = 0; i < n; i++) { // sparks
       const a = rand(0, TAU);
-      const e = rand(-0.1, 1.1);
-      const sp = rand(300, 760) * (big ? 1 : 0.5);
-      this.fire.emit(x, gy + 14, z, Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp + 60, Math.sin(a) * Math.cos(e) * sp,
-        this.c.comet[i % 4], rand(7, 14), rand(0.45, 0.8), { grow: 1.1, drag: 2.6, rise: 20 });
+      const e = rand(0, 1.2);
+      const sp = rand(380, 820) * (big ? 1 : 0.5);
+      this.fire.emit(x, gy + 14, z, Math.cos(a) * Math.cos(e) * sp, Math.sin(e) * sp + 80, Math.sin(a) * Math.cos(e) * sp,
+        this.c.comet[i % 4], rand(5, 9), rand(0.35, 0.6), { drag: 3, rise: -250 });
     }
-    if (big) this.dome(x, gy, z, radius);
-    for (let i = 0; i < (big ? 10 : 3); i++) {
+    for (let i = 0; i < (big ? (MOBILE ? 14 : 26) : 6); i++) { // fireball: slow, fat, rising puffs
       const a = rand(0, TAU);
-      this.debris.emit(x, gy + 10, z, Math.cos(a) * rand(160, 320), rand(200, 420), Math.sin(a) * rand(160, 320), rand(2.5, 5), i % 2 ? 0x8b5cf6 : 0x93c5fd, rand(0.8, 1.3));
+      const sp = rand(40, 170) * (big ? 1 : 0.5);
+      this.fire.emit(x + Math.cos(a) * rand(0, 40), gy + rand(10, 50), z + Math.sin(a) * rand(0, 40), Math.cos(a) * sp, rand(40, 160), Math.sin(a) * sp,
+        this.c.fireball[i % 3], rand(26, 40) * (big ? 1 : 0.6), rand(0.35, 0.6), { grow: 1.7, drag: 2.2, rise: 90 });
+    }
+    for (let i = 0; i < (big ? 14 : 3); i++) {
+      const a = rand(0, TAU);
+      this.debris.emit(x, gy + 10, z, Math.cos(a) * rand(120, 300), rand(320, 620), Math.sin(a) * rand(120, 300), rand(2.5, 5.5), i % 2 ? 0x8b5cf6 : 0x93c5fd, rand(1, 1.6));
     }
     for (let i = 0; i < (big ? 10 : 4); i++) {
       const a = rand(0, TAU);
       this.smoke.emit(x + Math.cos(a) * 60, gy + 8, z + Math.sin(a) * 60, Math.cos(a) * rand(100, 220), rand(10, 40), Math.sin(a) * rand(100, 220), this.c.plume, rand(20, 34), rand(0.9, 1.4), { alpha: 0.35, grow: 1.5, drag: 1.6, rise: 15 });
     }
     if (!big) return;
+    this.shockRing(x, gy, z, radius * 1.35, 0.42, this.c.cometRing);
     this.pillar(x, gy, z, 0x5b7cff, 0.9);
-    this.r.ring(x, z, 0x8fb4ff, radius * 1.6, 0.6);
-    this.r.ring(x, z, 0xffffff, radius * 1.1, 0.4);
+    this.r.ring(x, z, 0xffffff, radius * 1.1, 0.35);
     this.r.shake(x, z, 26);
   }
 
-  // A blast dome: a glassy blue hemisphere that swells to the blast radius and fades.
-  dome(x, gy, z, radius) {
-    const mat = viewMaterial(`
-      uniform float uA; varying vec3 vN; varying vec3 vV; varying vec3 vL; ${FRESNEL('1.8')}
-      void main() {
-        float f = fres(vN, vV);
-        float bands = 0.5 + 0.5 * sin(vL.y * 18.0);
-        vec3 col = mix(vec3(0.35, 0.45, 1.0), vec3(0.95, 0.97, 1.0), f) * (0.6 + 1.6 * f);
-        gl_FragColor = vec4(col, (0.08 + 0.85 * f + 0.06 * bands) * uA);
-      }`, { uniforms: { uA: { value: 1 } }, side: THREE.DoubleSide });
-    const geo = AURA.dome || (AURA.dome = new THREE.SphereGeometry(1, 32, 14, 0, TAU, 0, Math.PI / 2));
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(x, gy, z);
-    mesh.renderOrder = 5;
-    this.scene.add(mesh);
-    this.effects.push({ kind: 'dome', mesh, life: 0.55, max: 0.55, radius, shared: true });
+  // A flash sprite that swells and fades out over `life` seconds.
+  flare(x, y, z, size, life) {
+    const f = this.get('flare');
+    f.position.set(x, y, z);
+    f.scale.setScalar(size * 0.3);
+    f.userData.mat.opacity = 1;
+    this.effects.push({ kind: 'flare', obj: f, life, max: life, size });
+  }
+
+  // A pooled lightning ring on the ground expanding to `radius` (shock items, comet impacts).
+  shockRing(x, gy, z, radius, life, color) {
+    const disc = this.get('shock');
+    disc.position.set(x, gy + 3, z);
+    disc.scale.setScalar(radius);
+    disc.userData.mat.uniforms.uP.value = 0;
+    disc.userData.mat.uniforms.uColor.value.copy(color || this.c.shockRing);
+    this.effects.push({ kind: 'ring', obj: disc, life, max: life });
+    return disc;
   }
 
   pillar(x, gy, z, color, life) {
@@ -1115,38 +1322,16 @@ export class ItemFX {
   // Shock: a ring of lightning racing outwards plus bolts arcing to its edge.
   shock(x, z, radius) {
     const gy = this.ground(x, z);
-    const mat = new THREE.ShaderMaterial({
-      uniforms: { uTime: TIME, uP: { value: 0 } },
-      vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-      fragmentShader: `
-        uniform float uTime; uniform float uP; varying vec2 vUv;
-        void main() {
-          vec2 p = vUv * 2.0 - 1.0;
-          float r = length(p); float a = atan(p.y, p.x);
-          float jag = 0.035 * sin(a * 23.0 + uTime * 47.0) + 0.025 * sin(a * 61.0 - uTime * 31.0) + 0.015 * sin(a * 7.0 + uTime * 13.0);
-          float d = abs(r - uP + jag);
-          float core = smoothstep(0.03, 0.0, d);
-          float halo = smoothstep(0.14, 0.0, d) * 0.4;
-          float inner = smoothstep(uP, 0.0, r) * 0.18 * (1.0 - uP);
-          float fade = 1.0 - uP * uP;
-          vec3 col = mix(vec3(0.35, 0.7, 1.0), vec3(1.0), core) * 2.0;
-          gl_FragColor = vec4(col, (core + halo + inner) * fade);
-        }`,
-      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-    });
-    const disc = new THREE.Mesh(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), mat);
-    disc.position.set(x, gy + 3, z);
-    disc.scale.setScalar(radius);
-    disc.renderOrder = 5;
-    this.scene.add(disc);
-    this.effects.push({ kind: 'shock', mesh: disc, life: 0.5, max: 0.5, x, z, gy, radius, zap: 0, bolts: [] });
+    this.shockRing(x, gy, z, radius, 0.5);
+    this.effects.push({ kind: 'arcs', life: 0.5, max: 0.5, x, z, gy, radius, zap: 0, bolts: [] });
   }
 
   // Thunder: a bolt out of the sky onto each victim, with a flash on the ground.
+  // list: [{ x, z, idx }]; each bolt keeps following kart idx (where it is drawn) while it flickers.
   thunder(list) {
-    for (const [x, z] of list) {
+    for (const { x, z, idx } of list) {
       const gy = this.ground(x, z);
-      this.effects.push({ kind: 'strike', life: 0.55, max: 0.55, x, z, gy, zap: 0, bolts: [] });
+      this.effects.push({ kind: 'strike', life: 0.55, max: 0.55, x, z, gy, idx, zap: 0, bolts: [] });
       for (let i = 0; i < (MOBILE ? 14 : 28); i++) {
         const a = rand(0, TAU);
         this.fire.emit(x, gy + 10, z, Math.cos(a) * rand(80, 260), rand(60, 260), Math.sin(a) * rand(80, 260), i % 3 ? this.c.electric : this.c.white, rand(5, 10), 0.45, { drag: 2, rise: -300 });
@@ -1207,15 +1392,15 @@ export class ItemFX {
     this.effects = this.effects.filter((e) => {
       e.life -= dt;
       const p = 1 - Math.max(0, e.life) / e.max;
-      if (e.kind === 'dome') {
-        const k = 1 - (1 - p) ** 3;
-        e.mesh.scale.set(e.radius * (0.15 + 0.95 * k), e.radius * (0.1 + 0.75 * k), e.radius * (0.15 + 0.95 * k));
-        e.mesh.material.uniforms.uA.value = 1 - p * p;
+      if (e.kind === 'flare') {
+        e.obj.scale.setScalar(e.size * (0.3 + 0.7 * (1 - (1 - p) ** 3)));
+        e.obj.userData.mat.opacity = (1 - p) ** 2;
+      } else if (e.kind === 'ring') {
+        e.obj.userData.mat.uniforms.uP.value = Math.min(1, p * 1.15);
       } else if (e.kind === 'pillar') {
         e.mesh.material.opacity = 0.4 * (1 - p) * (1 - p);
         e.mesh.scale.set(1 - p * 0.6, 1 + p * 0.3, 1 - p * 0.6);
-      } else if (e.kind === 'shock') {
-        e.mesh.material.uniforms.uP.value = Math.min(1, p * 1.15);
+      } else if (e.kind === 'arcs') {
         e.zap -= dt;
         if (e.zap <= 0 && e.life > 0.08) {
           // Fresh arcs every few frames, from the kart out to the ring front.
@@ -1231,6 +1416,8 @@ export class ItemFX {
         }
         for (const bolt of e.bolts) bolt.mat.opacity = 1 - p;
       } else if (e.kind === 'strike') {
+        const k = e.idx !== undefined && this.r.lastKarts.get(e.idx);
+        if (k) { e.x = k.x; e.z = k.y; e.gy = this.ground(k.x, k.y); }
         e.zap -= dt;
         if (e.zap <= 0 && e.life > 0.1) {
           // The bolt flickers: re-drawn a few times, with a branch or two.
@@ -1251,9 +1438,10 @@ export class ItemFX {
       }
       if (e.life > 0) return true;
       if (e.bolts) this.freeBolts(e);
+      if (e.obj) this.put(e.obj); // pooled: hidden, material kept (so its shader stays compiled)
       if (e.mesh) {
         this.scene.remove(e.mesh);
-        if (!e.shared) e.mesh.geometry.dispose(); // the dome geometry is shared
+        e.mesh.geometry.dispose();
         e.mesh.material.dispose();
       }
       return false;
@@ -1280,7 +1468,10 @@ export class ItemFX {
     const markers = [...Object.values(this.pools).flat(), ...[...this.shots.values()].map((s) => s.marker), ...[...this.mines.values()].map((m) => m.pulse)];
     for (const o of markers) if (o && o.userData.mats) for (const mat of o.userData.mats) mat.dispose();
     for (const b of this.bolts) b.dispose();
-    for (const e of this.effects) if (e.mesh) { if (!e.shared) e.mesh.geometry.dispose(); e.mesh.material.dispose(); }
+    for (const e of this.effects) {
+      if (e.obj && e.obj.userData.mats) for (const mat of e.obj.userData.mats) mat.dispose();
+      if (e.mesh) { e.mesh.geometry.dispose(); e.mesh.material.dispose(); }
+    }
     this.tracers.material.dispose();
     this.tracers.dispose();
     this.debris.dispose();

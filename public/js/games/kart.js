@@ -240,6 +240,12 @@ window.Games.kart = {
       while (snapshots.length > 30) snapshots.shift();
       latest = s;
       reconcile(s);
+      // A fresh roulette shows as the time left going back up. Checked per snapshot, not per frame,
+      // so a slow frame rate can't miss a short roulette for the same item as before.
+      const row = s.k.find((r) => r[0] === myIdx);
+      const cs = (row && row[15]) || 0; // 15: roulette time left
+      if (cs > slotState.cs) slotState.again = true;
+      slotState.cs = cs;
     }
 
     function reconcile(s) {
@@ -337,7 +343,8 @@ window.Games.kart = {
     const fireIcon = q('[data-fire-icon]');
     const nameEl = q('[data-item-name]');
     const itemId = (code) => K.ITEMS[code - 1];
-    const slotState = { code: 0, ammo: -1, mode: 'empty' }; // mode: empty | rolling | ready
+    // mode: empty | rolling | ready; cs: roulette time left in the last snapshot; again: a new roulette started
+    const slotState = { code: 0, ammo: -1, mode: 'empty', cs: 0, again: false };
     const roulette = { start: 0, end: 0, cells: 0, last: -1, cell: 60, strip: [] };
     let nameTimer = 0;
 
@@ -391,7 +398,11 @@ window.Games.kart = {
       if (text && ms) nameTimer = setTimeout(() => nameEl.classList.remove('show'), ms);
     }
     function updateSlot(now, code, ammo, rouletteCs) {
-      if (code !== slotState.code) {
+      // A new roulette starts when the item changes, or when the same item comes up again from the
+      // next box (used and replaced within one snapshot): see onState().
+      const again = !!code && slotState.again;
+      slotState.again = false;
+      if (code !== slotState.code || again) {
         // Time left on the server's roulette, minus how old this snapshot already is.
         const age = clockOffset === null ? rtt / 2 : Math.max(0, now - clockOffset - latest.t);
         if (!code) { showIcon(0); showName(''); setSlotMode('empty'); } else if (rouletteCs > 0) startRoulette(code, Math.max(350, rouletteCs * 10 - age), now);
@@ -418,7 +429,7 @@ window.Games.kart = {
 
     // ---------- HUD: ink, thunder flash, comet warning ----------
     const inkEl = q('[data-ink]');
-    let inkAt = 0;
+    let inkUntil = 0; // when the ink on my screen is gone
     // A random ink blot: a lumpy disc with drips and droplets around it.
     function blob() {
       const pts = [];
@@ -449,7 +460,7 @@ window.Games.kart = {
         <ellipse cx="38" cy="34" rx="12" ry="6" fill="#8b7bd8" opacity="0.28" transform="rotate(-30 38 34)"/></svg>`;
     }
     function splatInk(now) {
-      inkAt = now;
+      inkUntil = now + K.ITEM_FX.inkTime * 1000;
       const blots = 6 + Math.floor(Math.random() * 3);
       let html = '';
       for (let i = 0; i < blots; i++) {
@@ -463,14 +474,15 @@ window.Games.kart = {
       inkEl.classList.add('on');
       Sfx.inked?.();
     }
+    // The game:kart:ink event splats (every time, so a second ink refreshes it); the snapshot flag
+    // covers late joiners and ends the ink early (e.g. on respawn).
     function updateInk(now, inked) {
-      if (inked && !prev.inked) splatInk(now);
+      if (inked && !prev.inked && now >= inkUntil) splatInk(now);
+      if (!inked && prev.inked) inkUntil = Math.min(inkUntil, now);
       prev.inked = inked;
-      // Fade over the last second (or at once if the ink is gone early, e.g. on respawn).
-      if (inkEl.classList.contains('on') && (!inked || now > inkAt + (K.ITEM_FX.inkTime - 1) * 1000)) {
-        inkEl.classList.add('fading');
-        if (!inked) inkEl.classList.remove('on');
-      }
+      if (!inkEl.classList.contains('on')) return;
+      if (now >= inkUntil) inkEl.classList.remove('on', 'fading');
+      else if (now > inkUntil - 1000) inkEl.classList.add('fading'); // fade over the last second
     }
     function flash() {
       const f = q('[data-flash]');
@@ -688,14 +700,15 @@ window.Games.kart = {
           view3d?.shock(data.x, data.y, data.r);
           Sfx.shock?.(volumeAt(data.x, data.y));
         } else if (event === 'game:kart:thunder') {
-          // Bolts on every victim; everyone's screen flashes.
-          const pos = (idx) => latest?.k.find((r) => r[0] === idx);
-          view3d?.thunder(data.hit.map(pos).filter(Boolean).map((r) => [r[1], r[2]]));
+          // Bolts on every victim (where their kart is drawn); everyone's screen flashes.
+          view3d?.thunderHit(data.hit, new Map((latest?.k || []).map((r) => [r[0], [r[1], r[2]]])));
           flash();
           Sfx.thunder?.(1);
           if (data.hit.includes(myIdx)) hud.callout('THUNDERSTRUCK', { kind: 'small', hold: 900, sub: `by ${nameOf(data.idx)}` });
-          else if (data.idx === myIdx && data.hit.length) hud.callout('THUNDER!', { kind: 'small gold', hold: 900, sub: `Struck ${plural(data.hit.length, 'rival')}` });        } else if (event === 'game:kart:ink') {
+          else if (data.idx === myIdx && data.hit.length) hud.callout('THUNDER!', { kind: 'small gold', hold: 900, sub: `Struck ${plural(data.hit.length, 'rival')}` });
+        } else if (event === 'game:kart:ink') {
           if (data.idx === myIdx) hud.callout(data.hit.length ? 'SPLAT!' : 'NOBODY TO INK', { kind: 'small', hold: 800, sub: data.hit.length ? `Inked ${plural(data.hit.length, 'rival')}` : '' });
+          if (data.hit.includes(myIdx)) splatInk(performance.now());
           if (map?.type === 'race') for (const idx of data.hit.slice(0, 2)) hud.smash({ by: data.idx, target: idx, kind: 'ink' });
           view3d?.inkBurst?.(data.idx, data.hit);
         } else if (event === 'game:kart:block') {

@@ -11,7 +11,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { MOBILE, THEMES, tex, part, buildArena, loadMoonlit } from './kart3d/world.js';
 import { buildRace } from './kart3d/track.js';
-import { ItemFX, shieldMaterial, shieldGeometry, ghostMaterial } from './kart3d/items3d.js';
+import { ItemFX, shieldMaterial, shieldGeometry, ghostMaterial, starVariant } from './kart3d/items3d.js';
 import { buildDriver } from './kart3d/driver.js';
 
 const K = window.KartCore;
@@ -332,17 +332,17 @@ function buildKart(meta, teamColor, isMe, night) {
     group.add(label.sprite);
   }
   return {
-    group, chassis, wheels, flames, shield, label, meshes, details, near: true, ghosted: false, halo: driver.halo, hitAt: -99, lastHp: 100,
+    group, chassis, wheels, flames, shield, label, meshes, details, near: true, ghosted: false, starred: false, halo: driver.halo, hitAt: -99, lastHp: 100,
     steer: 0, lastAngle: null, smoke: 0, slide: 0, hop: 0, wasSpin: false, wasDead: false,
     hint: null, pitch: 0, roll: 0, lastY: null, vy: 0, prevAir: 0, squash: 0, trickT: -1, trickDir: 1, wasTrick: false, falling: false, fallT: 0,
     color: meta.color, fade: 1, look: 'solid', tagAlpha: 0, tagLift: 0, tagOn: false,
   };
 }
 
-// A kart is drawn solid, as a ghost (ghost item) or, while it fades out next to the lens, in a
-// see-through coat of its own colour.
+// A kart is drawn solid, as a ghost (ghost item), in rainbow versions of its own materials (star
+// power) or, while it fades out next to the lens, in a see-through coat of its own colour.
 function applyLook(kart) {
-  const look = kart.fade < 1 ? 'fade' : kart.ghosted ? 'ghost' : 'solid';
+  const look = kart.fade < 1 ? 'fade' : kart.ghosted ? 'ghost' : kart.starred ? 'star' : 'solid';
   if (look === 'fade') {
     kart.fadeMat = kart.fadeMat || new THREE.MeshStandardMaterial({ color: new THREE.Color(kart.color), roughness: 0.5, transparent: true, depthWrite: false });
     kart.fadeMat.opacity = 0.75 * kart.fade;
@@ -350,14 +350,15 @@ function applyLook(kart) {
   if (look === kart.look) return;
   kart.look = look;
   for (const m of kart.meshes) {
-    m.material = look === 'fade' ? kart.fadeMat : look === 'ghost' ? SHARED.ghost : m.userData.mat;
-    m.castShadow = look === 'solid' && !m.userData.noShadow;
+    m.material = look === 'fade' ? kart.fadeMat : look === 'ghost' ? SHARED.ghost : look === 'star' ? starVariant(m.userData.mat) : m.userData.mat;
+    m.castShadow = (look === 'solid' || look === 'star') && !m.userData.noShadow;
   }
 }
 
-function setGhost(kart, on) {
-  if (kart.ghosted === on) return;
-  kart.ghosted = on;
+function setLook(kart, ghost, star) {
+  if (kart.ghosted === ghost && kart.starred === star) return;
+  kart.ghosted = ghost;
+  kart.starred = star;
   applyLook(kart);
 }
 
@@ -492,6 +493,13 @@ export class Kart3D {
     this.karts = new Map();
     this.lastKarts = new Map(); // idx -> latest drawn position, for item effects aimed at karts
     this.items = new ItemFX(this, { items: opts.items !== false });
+    // Compile every item and aura shader with the first frame, not with a stutter mid-race.
+    // Star variants: plain kart parts, the drivers' vertex-coloured accessories and textured faces.
+    const S = sharedKartParts();
+    const faceTex = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1);
+    faceTex.needsUpdate = true;
+    const starMats = [S.dark, new THREE.MeshStandardMaterial({ vertexColors: true }), new THREE.MeshStandardMaterial({ map: faceTex })].map(starVariant);
+    this.warm = this.items.warmUp([...starMats, S.ghost, S.shield]);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -654,14 +662,15 @@ export class Kart3D {
     D.active = alive;
   }
 
+  // The lightning ring and arcs carry the shock; a spray of small, fast sparks adds the crackle.
   shock(x, z, radius) {
     const gy = this.items.ground(x, z);
     this.items.shock(x, z, radius);
     this.ring(x, z, 0xffffff, radius * 0.7, 0.3);
-    for (let i = 0; i < (MOBILE ? 40 : 90); i++) {
+    for (let i = 0; i < (MOBILE ? 16 : 36); i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = radius * (1.5 + Math.random());
-      this.fire.emit(x, gy + 10 + Math.random() * 20, z, Math.cos(a) * sp, Math.random() * 60, Math.sin(a) * sp, this.colElectric, 8, 0.45, { drag: 2.5 });
+      const sp = radius * (2.2 + Math.random() * 1.4);
+      this.fire.emit(x, gy + 8 + Math.random() * 16, z, Math.cos(a) * sp, 20 + Math.random() * 80, Math.sin(a) * sp, i % 3 ? this.colElectric : this.colSnow, 3 + Math.random() * 1.5, 0.3, { drag: 4, rise: -200 });
     }
     this.shake(x, z, 10);
   }
@@ -688,7 +697,19 @@ export class Kart3D {
     }
   }
 
-  // Thunder bolts on every victim ([[x, z], ...]).
+  // Thunder bolts on every victim, aimed where each kart is drawn (remote karts are drawn a little
+  // in the past, my own a little ahead of the server); `fallback`: idx -> [x, z] for karts not drawn yet.
+  thunderHit(idxs, fallback = new Map()) {
+    const list = [];
+    for (const idx of idxs) {
+      const k = this.lastKarts.get(idx);
+      const p = k ? [k.x, k.y] : fallback.get(idx);
+      if (p) list.push({ x: p[0], z: p[1], idx });
+    }
+    this.thunder(list);
+  }
+
+  // list: [{ x, z, idx? }]
   thunder(list) {
     this.items.thunder(list);
     if (this.focus) this.shakeAmt = Math.max(this.shakeAmt, 8);
@@ -887,7 +908,7 @@ export class Kart3D {
       }
       if (kart.falling) { kart.falling = false; kart.chassis.rotation.set(0, 0, 0); kart.prevAir = 0; this.respawnBeam(k.x, k.y); }
       kart.group.visible = !blink;
-      setGhost(kart, !!(k.flags & 1024));
+      setLook(kart, !!(k.flags & 1024), !!(k.flags & 4096));
       const drifting = k.flags & 64;
       const driftDir = k.flags & 512 ? -1 : 1;
       const driftLevel = k.flags & 256 ? 2 : k.flags & 128 ? 1 : 0;
@@ -1070,6 +1091,7 @@ export class Kart3D {
     this.updateLabels(view, dt, t);
     if (this.composer) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
+    if (this.warm) { this.items.coolDown(this.warm); this.warm = null; }
   }
 
   // Name tags, laid out in screen space after the camera has moved:

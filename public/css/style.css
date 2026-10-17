@@ -730,8 +730,10 @@ textarea { resize: vertical; min-height: 70px; }
   .kart-stage.touch .kart-top { position: static; transform: none; }
   .kart-stage.touch .kart-item { position: absolute; top: 10px; left: 50%; width: 50px; height: 50px; margin-left: -25px; border-radius: 15px; font-size: 1.6rem; }
   .kart-stage.touch .kart-item svg { width: 36px; height: 36px; }
-  /* the item name and comet warning sit under the held item at the top centre */
-  .kart-stage.touch .kart-top-sub { top: 66px; left: 50%; transform: translateX(-50%); }
+  /* The fire button shows the item, so no name under the slot (it would run into the leaderboard
+     pill); the comet warning goes under the pill, clear of the arena timer. */
+  .kart-stage.touch .kart-item-name { display: none; }
+  .kart-stage.touch .kart-top-sub { top: 104px; left: 10px; transform: none; align-items: flex-start; }
   .kart-stage.touch .kart-timer { position: absolute; top: 120px; right: 52px; height: 34px; padding: 0 10px; font-size: 18px; border-radius: 11px; }
   .kart-stage.touch:has([data-fullscreen].hidden) .kart-timer { right: 10px; }
   .kart-stage.touch .kart-tools { top: 120px; right: 10px; }
