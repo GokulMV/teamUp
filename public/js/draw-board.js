@@ -72,8 +72,8 @@
       const tool = (id, icon, label) => `<button class="tool-btn${this.tool === id ? ' active' : ''}" data-tool="${id}" title="${label}">${icon}<span>${label}</span></button>`;
       t.innerHTML = `
         <div class="tool-group colors">${swatches}<label class="swatch custom" title="Pick any colour" style="--c:${this.color}"><input type="color" value="${this.color}"></label></div>
-        <div class="tool-group">${sizes}</div>
-        <div class="tool-group">
+        <div class="tool-group sizes">${sizes}</div>
+        <div class="tool-group tools">
           ${tool('pen', '✏️', 'Pen')}${tool('fill', '🪣', 'Fill')}${tool('eraser', '🧽', 'Eraser')}
           <button class="tool-btn" data-act="undo" title="Undo (Ctrl+Z)">↩️<span>Undo</span></button>
           <button class="tool-btn" data-act="clear" title="Clear">🗑️<span>Clear</span></button>
@@ -145,6 +145,9 @@
       target.addEventListener('pointerup', end);
       target.addEventListener('pointercancel', end);
       this.keyHandler = (e) => {
+        // Ctrl+Z in the chat box undoes the typing there, not the drawing.
+        const t = e.target;
+        if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
         if (this.editable && (e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); this.undo(); }
       };
       window.addEventListener('keydown', this.keyHandler);
@@ -162,7 +165,8 @@
     }
 
     drawStroke(s, ctx = this.ctx) {
-      ctx.strokeStyle = s.color;
+      // On a picture to add to (complement mode) the eraser brings the picture back, not white.
+      ctx.strokeStyle = s.erase && this.bgPattern && ctx === this.ctx ? this.bgPattern : s.color;
       ctx.lineWidth = s.size;
       ctx.beginPath();
       ctx.moveTo(s.pts[0] * W, s.pts[1] * H);
@@ -241,7 +245,19 @@
       if (!src) return Promise.resolve();
       return new Promise((resolve) => {
         const img = new Image();
-        img.onload = () => { this.background = img; this.redraw(); resolve(); };
+        img.onload = () => {
+          this.background = img;
+          const under = document.createElement('canvas');
+          under.width = W;
+          under.height = H;
+          const u = under.getContext('2d');
+          u.fillStyle = '#ffffff';
+          u.fillRect(0, 0, W, H);
+          u.drawImage(img, 0, 0, W, H);
+          this.bgPattern = this.ctx.createPattern(under, 'no-repeat');
+          this.redraw();
+          resolve();
+        };
         img.onerror = () => resolve();
         img.src = src;
       });
@@ -260,6 +276,27 @@
 
     toDataURL() {
       return this.canvas.toDataURL('image/png');
+    }
+
+    // Nothing drawn (or everything undone): the picture underneath, if any, doesn't count.
+    isBlank() {
+      return !this.strokes.length;
+    }
+
+    // The picture as a data URL of at most about maxBytes: a PNG when it fits, else WebP (where
+    // the browser can make it), else a JPEG at falling quality. `smaller`: skip straight to JPEG.
+    exportImage(maxBytes = 1_400_000, smaller = false) {
+      if (!smaller) {
+        const png = this.canvas.toDataURL('image/png');
+        if (png.length <= maxBytes) return png;
+        const webp = this.canvas.toDataURL('image/webp', 0.9);
+        if (webp.startsWith('data:image/webp') && webp.length <= maxBytes) return webp;
+      }
+      for (const quality of [0.85, 0.7, 0.5]) {
+        const jpg = this.canvas.toDataURL('image/jpeg', quality);
+        if (jpg.length <= maxBytes) return jpg;
+      }
+      return this.canvas.toDataURL('image/jpeg', 0.35);
     }
 
     destroy() {

@@ -10,6 +10,7 @@ const { ControlRoom } = require('./games/controlroom');
 const MAX_PLAYERS = 30;
 const AVATAR_COUNT = 24; // public/js/avatars.js
 const RECONNECT_GRACE_MS = 30_000;
+const HOST_GRACE_MS = 10_000; // a host who drops out for a moment (a reload, a phone changing networks) stays host
 
 const TEAMS = [
   { id: 0, name: 'Red', color: '#ef4444' },
@@ -132,6 +133,7 @@ class Room {
     this.game = null;
     this.lastResults = null;
     this.colorIndex = 0;
+    this.hostTimer = null;
   }
 
   get channel() {
@@ -173,6 +175,7 @@ class Room {
   attach(socket, player) {
     clearTimeout(player.leaveTimer);
     player.leaveTimer = null;
+    if (player.id === this.hostId) { clearTimeout(this.hostTimer); this.hostTimer = null; }
     player.socketId = socket.id;
     player.connected = true;
     socket.data.roomCode = this.code;
@@ -250,7 +253,18 @@ class Room {
   handleDisconnect(player) {
     player.connected = false;
     this.game?.onPlayerDisconnect?.(player);
-    if (this.hostId === player.id) this.pickNewHost();
+    // The host keeps the room through a short drop-out; after that someone who's here takes over.
+    if (this.hostId === player.id) {
+      clearTimeout(this.hostTimer);
+      this.hostTimer = setTimeout(() => {
+        this.hostTimer = null;
+        const host = this.players.get(this.hostId);
+        if (host && !host.connected && this.connectedPlayers.length) {
+          this.pickNewHost();
+          this.broadcastState();
+        }
+      }, HOST_GRACE_MS);
+    }
     player.leaveTimer = setTimeout(() => this.removePlayer(player.id), RECONNECT_GRACE_MS);
     this.broadcastState();
   }
@@ -269,7 +283,11 @@ class Room {
       }
     }
     this.game?.onPlayerLeave?.(player);
-    if (this.hostId === playerId) this.pickNewHost();
+    if (this.hostId === playerId) {
+      clearTimeout(this.hostTimer);
+      this.hostTimer = null;
+      this.pickNewHost();
+    }
     if (this.players.size === 0) {
       this.destroy();
       return;
@@ -392,7 +410,12 @@ class Room {
         }
         if (data?.arenaTime !== undefined) s.arenaTime = clampInt(data.arenaTime, 60, 600, s.arenaTime);
         if (data?.kartLaps !== undefined) s.kartLaps = clampInt(data.kartLaps, 1, 10, s.kartLaps);
-        if (data?.telephoneSteps !== undefined) s.telephoneSteps = clampInt(data.telephoneSteps, 0, 30, s.telephoneSteps);
+        if (data?.telephoneSteps !== undefined) {
+          // 0 is "everyone"; an album needs at least 2 steps, so 1 steps over to the other side.
+          let n = clampInt(data.telephoneSteps, 0, 30, s.telephoneSteps);
+          if (n === 1) n = s.telephoneSteps >= 2 ? 0 : 2;
+          s.telephoneSteps = n;
+        }
         if (typeof data?.pictEveryone === 'boolean') s.pictEveryone = data.pictEveryone;
         if (data?.pictRounds !== undefined) s.pictRounds = clampInt(data.pictRounds, 1, 10, s.pictRounds);
         if (data?.wordChoices !== undefined) s.wordChoices = clampInt(data.wordChoices, 2, 5, s.wordChoices);
@@ -482,6 +505,7 @@ class Room {
   destroy() {
     this.game?.stop();
     this.game = null;
+    clearTimeout(this.hostTimer);
     for (const p of this.players.values()) clearTimeout(p.leaveTimer);
     this.manager.rooms.delete(this.code);
   }

@@ -122,7 +122,7 @@ test('telephone: full chain of write/draw/describe then reveal', async () => {
       : [once(host, 'game:tel:reveal')];
     for (let i = 0; i < players.length; i++) {
       const t = current[i];
-      const payload = t.type === 'draw' ? { image: png } : { text: `text from ${i} at ${step}` };
+      const payload = t.type === 'draw' ? { step, image: png } : { step, text: `text from ${i} at ${step}` };
       if (step > 0) assert.ok(t.prev, 'later steps see the previous entry');
       const r = await call(players[i].socket, 'game:submit', payload);
       assert.ok(r.ok);
@@ -132,14 +132,18 @@ test('telephone: full chain of write/draw/describe then reveal', async () => {
 
   let reveal = current[0];
   assert.strictEqual(reveal.bookCount, 3);
+  // A new album comes with its first entry; each page after that brings only the new one.
+  let album = reveal.entries.slice();
   const states = once(host, 'room:state', (s) => s.state === 'results', 10000);
   while (!reveal.last) {
     const nextReveal = once(host, 'game:tel:reveal');
-    await call(host, 'game:next');
+    await call(host, 'game:next', { book: reveal.bookIndex, entry: reveal.entryIndex });
     reveal = await nextReveal;
+    if (reveal.entries) album = reveal.entries.slice();
+    else album.push(reveal.entry);
   }
-  assert.strictEqual(reveal.entries.length, 3);
-  assert.deepStrictEqual(reveal.entries.map((e) => e.type), ['write', 'draw', 'describe']);
+  assert.strictEqual(album.length, 3);
+  assert.deepStrictEqual(album.map((e) => e.type), ['write', 'draw', 'describe']);
   await call(host, 'game:finish');
   await states;
   room.destroy();
@@ -152,12 +156,78 @@ test('telephone rejects image payloads that are not plain base64 data URLs', asy
   await call(host, 'game:start');
   await Promise.all(tasks);
   const drawTasks = players.map((p) => once(p.socket, 'game:tel:task'));
-  for (const p of players) await call(p.socket, 'game:submit', { text: 'hi' });
+  for (const p of players) await call(p.socket, 'game:submit', { step: 0, text: 'hi' });
   await Promise.all(drawTasks);
-  await call(players[0].socket, 'game:submit', { image: 'data:image/png;base64,AAA" onerror="alert(1)' });
+  const bad = await call(players[0].socket, 'game:submit', { step: 1, image: 'data:image/png;base64,AAA" onerror="alert(1)' });
+  assert.deepStrictEqual(bad, { ok: false, error: 'bad-image' });
   const game = room.game;
-  const entry = game.books.flatMap((b) => b.entries).find((e) => e && e.type === 'draw' && e.by === players[0].id);
-  assert.strictEqual(entry.content, null);
+  const drawn = () => game.books.flatMap((b) => b.entries).find((e) => e && e.type === 'draw' && e.by === players[0].id);
+  assert.strictEqual(drawn(), undefined, 'nothing is stored, so a good picture can still be handed in');
+  assert.ok((await call(players[0].socket, 'game:submit', { step: 1, image: 'data:image/png;base64,iVBORw0KGgo=' })).ok);
+  assert.strictEqual(drawn().content, 'data:image/png;base64,iVBORw0KGgo=');
+  room.destroy();
+});
+
+test('telephone: late hand-ins, empty prompts, drop-outs, page turns, reactions and players who left', async () => {
+  const { code, host, players, room } = await makeRoom(3);
+  await call(host, 'lobby:settings', { mode: 'telephone', telephoneSteps: 0, drawTime: 240 });
+  const tasks = players.map((p) => once(p.socket, 'game:tel:task'));
+  await call(host, 'game:start');
+  const first = await Promise.all(tasks);
+  const game = room.game;
+  assert.strictEqual(game.stepTime(1), 90, "Pictionary's draw time doesn't change Telephone's");
+  // A hand-in for another step is refused, not filed under this one.
+  assert.deepStrictEqual(await call(players[0].socket, 'game:submit', { step: 1, text: 'too soon' }), { ok: false, error: 'stale' });
+  // An empty prompt is the idea that was in the box.
+  assert.ok((await call(players[0].socket, 'game:submit', { step: 0, text: '   ' })).ok);
+  assert.strictEqual(game.bookFor(players[0].id).entries[0].content, first[0].suggestion);
+  // Someone drops out mid-step: the step waits for them instead of skipping them at once.
+  assert.ok((await call(players[1].socket, 'game:submit', { step: 0, text: 'a duck in a hat' })).ok);
+  players[2].socket.close();
+  await new Promise((r) => setTimeout(r, 150));
+  assert.strictEqual(game.step, 0);
+  assert.ok(game.awayTimer, 'waiting for the player who dropped out');
+  // They're back in time: same idea in the box, and the step carries on waiting for their answer.
+  const back = client();
+  const snap = once(back, 'game:snapshot');
+  assert.ok((await call(back, 'room:join', { code, token: players[2].token })).ok);
+  const task = (await snap).task;
+  assert.strictEqual(task.step, 0);
+  assert.strictEqual(task.submitted, false);
+  assert.strictEqual(task.suggestion, first[2].suggestion);
+  assert.strictEqual(game.awayTimer, null);
+  players[2].socket = back;
+  // Jump to the reveal.
+  game.phase = 'play';
+  game.step = game.steps - 1;
+  for (const b of game.books) for (let i = 0; i < game.steps; i++) b.entries[i] = b.entries[i] || { type: game.stepType(i), by: players[2].id, content: i % 2 ? null : 'words' };
+  const reveal = once(host, 'game:tel:reveal');
+  game.forceAdvance();
+  const rv = await reveal;
+  // Two clicks on Next for the same page turn it once.
+  const turns = [call(host, 'game:next', { book: rv.bookIndex, entry: rv.entryIndex }), call(host, 'game:next', { book: rv.bookIndex, entry: rv.entryIndex })];
+  const [a, b] = await Promise.all(turns);
+  assert.ok(a.ok);
+  assert.deepStrictEqual(b, { ok: false, error: 'stale' });
+  assert.strictEqual(game.reveal.entry, 1);
+  // One of each reaction per player per page.
+  assert.ok((await call(players[1].socket, 'game:react', { emoji: '🔥' })).ok);
+  assert.strictEqual((await call(players[1].socket, 'game:react', { emoji: '🔥' })).ok, false);
+  assert.ok((await call(players[1].socket, 'game:react', { emoji: '😂' })).ok);
+  // Someone leaves: their entries keep their name.
+  await call(players[2].socket, 'room:leave');
+  const payload = game.revealPayload(true);
+  assert.ok(payload.entries.every((e) => e.by !== 'Someone'), JSON.stringify(payload.entries.map((e) => e.by)));
+  room.destroy();
+});
+
+test('telephone chain length: 1 steps over to 2 going up and to "everyone" going down', async () => {
+  const { host, room } = await makeRoom(2);
+  await call(host, 'lobby:settings', { mode: 'telephone', telephoneSteps: 0 });
+  await call(host, 'lobby:settings', { telephoneSteps: 1 });
+  assert.strictEqual(room.settings.telephoneSteps, 2);
+  await call(host, 'lobby:settings', { telephoneSteps: 1 });
+  assert.strictEqual(room.settings.telephoneSteps, 0);
   room.destroy();
 });
 
@@ -238,7 +308,8 @@ test('game loops keep to real time: a busy server catches up instead of falling 
   await new Promise((r) => setTimeout(r, 300));
   loop.stop();
   const elapsed = (performance.now() - t0) / 1000;
-  assert.ok(Math.abs(steps - elapsed * 30) <= 2, `${steps} steps in ${elapsed.toFixed(2)} s`);
+  // The last wake-up can be up to a step before the stop; a plain setInterval would be ~7 behind.
+  assert.ok(steps >= elapsed * 30 - 3 && steps <= elapsed * 30 + 1, `${steps} steps in ${elapsed.toFixed(3)} s`);
   // A step that ends the game stops the catch-up there and then.
   let after = 0;
   const ender = fixedLoop(30, () => { after++; ender.stop(); });
@@ -636,9 +707,9 @@ test('telephone modes: knock-off is all drawing with a memorise time; speedrun i
   assert.ok(first.every((t) => t.type === 'draw' && t.memorize === 0));
   const png = 'data:image/png;base64,iVBORw0KGgo=';
   const second = players.map((p) => once(p.socket, 'game:tel:task'));
-  for (const p of players) await call(p.socket, 'game:submit', { image: png });
+  for (const p of players) await call(p.socket, 'game:submit', { step: 0, image: png });
   const t2 = await Promise.all(second);
-  assert.ok(t2.every((t) => t.type === 'draw' && t.memorize === 6 && t.prev.content === png));
+  assert.ok(t2.every((t) => t.type === 'draw' && t.memorize > 5.5 && t.memorize <= 6 && t.prev.content === png));
 
   // Jump to the reveal and react.
   const game = room.game;
@@ -652,7 +723,7 @@ test('telephone modes: knock-off is all drawing with a memorise time; speedrun i
   const react = once(host, 'game:tel:react');
   await call(players[1].socket, 'game:react', { emoji: '😂' });
   assert.strictEqual((await react).emoji, '😂');
-  const next = once(host, 'game:tel:reveal', (r) => r.entries.length === 2 || r.bookIndex === 1, 6000);
+  const next = once(host, 'game:tel:reveal', (r) => r.entryIndex === 1 || r.bookIndex === 1, 6000);
   await next; // advanced on its own
   room.destroy();
 

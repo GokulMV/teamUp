@@ -383,6 +383,7 @@ textarea { resize: vertical; min-height: 70px; }
 .results-teams { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 18px; }
 .team-score { flex: 1; min-width: 130px; border-radius: 18px; padding: 14px; background: rgba(0, 0, 0, 0.2); border-top: 4px solid var(--team); }
 .team-score b { display: block; font-family: var(--font-display); font-size: 2rem; }
+.results-label { width: 100%; text-align: center; font-weight: 700; margin-bottom: 6px; }
 .podium { display: flex; align-items: flex-end; justify-content: center; gap: 12px; margin: 10px 0 22px; min-height: 40px; }
 .podium .step { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 150px; animation: rise 0.6s both; }
 .podium .step .av { width: 74px; height: 74px; }
@@ -451,7 +452,7 @@ textarea { resize: vertical; min-height: 70px; }
 .board-paper canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 .board.editable .board-live { cursor: crosshair; }
 .board-paper.blind canvas:first-child { visibility: hidden; }
-.board-paper.blind::after { content: "🙈 Drawing blind: your picture appears in the album"; position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); font-size: 0.8rem; font-weight: 600; color: #6b7280; background: #f3f4f6; padding: 4px 10px; border-radius: 999px; pointer-events: none; }
+.board-paper.blind::after { content: "🙈 Drawing blind: your picture appears in the album"; position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); font-size: 0.8rem; font-weight: 600; color: #6b7280; background: #f3f4f6; padding: 4px 10px; border-radius: 999px; pointer-events: none; white-space: nowrap; max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis; }
 .board-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; padding: 10px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); }
 .tool-group { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .tool-group.colors { max-width: 460px; }
@@ -469,9 +470,15 @@ textarea { resize: vertical; min-height: 70px; }
 .tool-btn.done { background: var(--grad); border: 0; color: #fff; }
 
 /* Telephone */
-.tel-center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; height: 100%; width: 100%; padding: 16px; overflow-y: auto; }
+.tel-stage { padding: 12px; }
+.tel-board { height: 100%; width: 100%; }
+.tel-title { overflow-wrap: anywhere; text-align: center; min-width: 0; }
+.tel-title.long { font-size: 1.1rem; line-height: 1.25; }
+/* "safe": a tall step on a short window scrolls instead of losing its top */
+.tel-center { display: flex; flex-direction: column; align-items: center; justify-content: safe center; gap: 16px; height: 100%; width: 100%; padding: 16px; overflow-y: auto; }
+.tel-hint { margin: -6px 0 0; }
 .tel-step { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
-.tel-prompt { font-family: var(--font-display); font-size: clamp(1.4rem, 3.2vw, 2.2rem); font-weight: 800; text-align: center; max-width: 760px; line-height: 1.15; }
+.tel-prompt { font-family: var(--font-display); font-size: clamp(1.4rem, 3.2vw, 2.2rem); font-weight: 800; text-align: center; max-width: 760px; line-height: 1.15; overflow-wrap: anywhere; }
 .tel-prev img { max-width: min(560px, 100%); max-height: 46vh; border-radius: 16px; box-shadow: var(--shadow); background: #fff; display: block; }
 .tel-form { display: flex; gap: 10px; width: min(620px, 100%); }
 .tel-form input { flex: 1; font-size: 1.1rem; padding: 15px 16px !important; }
@@ -481,12 +488,14 @@ textarea { resize: vertical; min-height: 70px; }
 .waiting-avatars { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; max-width: 620px; }
 .waiting-avatars .av { width: 44px; height: 44px; opacity: 0.35; transition: opacity 0.3s, transform 0.3s; position: relative; }
 .waiting-avatars .av.done { opacity: 1; transform: translateY(-4px); }
+.waiting-avatars .away .av { filter: grayscale(1); }
 .waiting-avatars .av.done::after { content: "✓"; position: absolute; right: -4px; bottom: -4px; width: 18px; height: 18px; border-radius: 50%; background: var(--good); color: #052e1c; font-size: 0.7rem; font-weight: 800; display: grid; place-items: center; }
 .tel-album { width: min(700px, 100%); display: flex; flex-direction: column; gap: 14px; }
 .tel-entry { display: flex; gap: 12px; align-items: flex-start; animation: rise 0.4s both; }
+.tel-entry > div { min-width: 0; }
 .tel-entry .av { width: 40px; height: 40px; }
 .tel-entry .who { font-size: 0.8rem; font-weight: 700; color: var(--muted); margin-bottom: 4px; }
-.tel-entry .bubble { background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px 18px 18px 18px; padding: 12px 16px; font-size: 1.15rem; font-weight: 600; max-width: 100%; }
+.tel-entry .bubble { background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px 18px 18px 18px; padding: 12px 16px; font-size: 1.15rem; font-weight: 600; max-width: 100%; overflow-wrap: anywhere; }
 .tel-entry img { max-width: 100%; max-height: 320px; border-radius: 12px; background: #fff; display: block; }
 .tel-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; align-items: center; }
 .reactions { display: flex; gap: 6px; }
@@ -912,6 +921,26 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
   .game-card:last-child:nth-child(odd) { flex-direction: row; align-items: center; gap: 12px; }
   .word-tiles i { width: 22px; height: 32px; font-size: 1rem; }
   .game-bar .info { display: none; }
+  .tel-title { font-size: 1.05rem; line-height: 1.25; }
+  .tel-title.long { font-size: 0.92rem; }
+  /* Drawing on a phone: the paper takes the full width (4:3) and the page grows to fit the tools,
+     which shrink to two compact rows: a strip of colours, then sizes and tools as icons. */
+  #view-game.active:has(.board.editable) { height: auto; min-height: 0; }
+  .stage:has(.board.editable) { flex: none; overflow: visible; }
+  .stage:has(.board.editable) .tel-board, .board.editable { height: auto; }
+  .board.editable .board-canvas-wrap { flex: none; width: 100%; aspect-ratio: 4 / 3; }
+  .board-tools { gap: 8px; padding: 8px; border-radius: 16px; }
+  .tool-group.colors, .tool-group.extra { flex: 1 1 100%; }
+  .tool-group.colors { max-width: none; flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; padding: 5px 4px 7px; scrollbar-width: none; }
+  .tool-group.colors::-webkit-scrollbar { display: none; }
+  .tool-group.colors .swatch { flex: 0 0 30px; width: 30px; height: 30px; }
+  .tool-group.sizes, .tool-group.tools { gap: 4px; flex-wrap: nowrap; }
+  .size-btn { width: 28px; height: 32px; }
+  .tool-btn { padding: 6px 7px; min-width: 32px; justify-content: center; }
+  .tool-btn span { display: none; }
+  .tool-group.extra { justify-content: center; }
+  .tool-group.extra:empty { display: none; }
+  .tool-group.extra .tool-btn.done { flex: 1; padding: 11px; font-size: 1rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

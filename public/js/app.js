@@ -32,6 +32,9 @@
     if (BUILD && build && build !== BUILD && !staleReload(build)) toast('TeamUp was updated: refresh the page to get the new version');
   });
   window.TeamUpStale = () => staleReload(`unknown-map-${BUILD}`); // a game that meets something this code doesn't know
+  // socket.io gives up when the server closed the connection itself; nothing here means "go away"
+  // (kicks are their own message), so always come back.
+  socket.on('disconnect', (reason) => { if (reason === 'io server disconnect') setTimeout(() => socket.connect(), 800); });
 
   const MODE_NAMES = { pictionary: 'Pictionary', kart: 'Kart Battle', telephone: 'Telephone', ballchain: 'Ball & Chain', controlroom: 'Control Room' };
   const MODE_ICONS = { pictionary: '🎨', kart: '🏎️', telephone: '📞', ballchain: '⛓️', controlroom: '🎛️' };
@@ -71,7 +74,7 @@
       },
       { key: 'telPace', type: 'seg', label: 'Pace', options: [['slow', 'Relaxed'], ['normal', 'Normal'], ['fast', 'Fast']] },
       { key: 'telReveal', type: 'seg', label: 'Album reveal', options: [['host', 'Host'], ['auto', 'Auto']] },
-      { key: 'telephoneSteps', type: 'stepper', label: 'Chain length', hint: 'Steps per album', min: 0, max: 30, format: (v) => (v ? v : 'All') },
+      { key: 'telephoneSteps', type: 'stepper', label: 'Chain length', hint: 'Steps per album, at most one per player (per team member in teams)', min: 0, max: 30, format: (v) => (v ? v : 'All') },
     ],
     kart: [
       { key: 'kartMode', type: 'seg', label: 'Mode', block: true, options: [['race', '🏁 Race'], ['arena', '💥 Battle arena']] },
@@ -258,10 +261,11 @@
   async function enterRoom(res) {
     if (!res.ok) { $('home-error').textContent = res.error || 'Could not join'; return false; }
     $('home-error').textContent = '';
+    const sameRoom = state.me?.code === res.code && state.me?.playerId === res.playerId;
     state.me = { playerId: res.playerId, token: res.token, code: res.code };
     saveSession(state.me);
     history.replaceState(null, '', `?room=${res.code}`);
-    $('chat-log').innerHTML = '';
+    if (!sameRoom) $('chat-log').innerHTML = ''; // a reconnect keeps the conversation
     structureSig = ''; peopleSig = ''; meSig = '';
     showScreen('screen-room');
     render();
@@ -356,6 +360,8 @@
     } else if (room.state === 'playing') {
       showView('view-game');
       mountGame(room.settings.mode);
+      // Games that show host-only buttons or who's here hear about every change (a new host).
+      try { state.game?.instance.onRoomState?.(room); } catch (err) { console.error(err); }
     } else if (room.state === 'results') {
       unmountGame();
       showView('view-results');
@@ -750,10 +756,14 @@
 
     if (r.mode === 'telephone') {
       $('results-title').textContent = `📞 That's a wrap! ${r.albums} albums`;
-      $('results-teams').innerHTML = '';
-      $('podium').innerHTML = (r.favorites || []).length
-        ? `<div class="muted" style="width:100%">Most loved albums</div>${r.favorites.map((f, i) => `<div class="step ${['first', 'second', 'third'][i]}">${avatarHtml(f.avatar)}<span class="nm">${escapeHtml(f.owner)}</span><span class="pts">${f.reactions} reactions</span></div>`).join('')}`
-        : '';
+      const loved = r.favorites || [];
+      $('results-teams').innerHTML = loved.length ? '<div class="muted results-label">Most loved albums</div>' : '';
+      // Podium order: second, first, third (like the other games).
+      $('podium').innerHTML = [1, 0, 2].map((i, slot) => {
+        const f = loved[i];
+        if (!f) return '';
+        return `<div class="step ${['second', 'first', 'third'][slot]}">${avatarHtml(f.avatar)}<span class="nm">${escapeHtml(f.owner)}</span><span class="pts">${f.reactions} reaction${f.reactions === 1 ? '' : 's'}</span><div class="block">${i + 1}</div></div>`;
+      }).join('');
       $('results-players').innerHTML = '';
       return;
     }
