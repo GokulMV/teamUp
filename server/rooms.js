@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const KartCore = require('../public/js/shared/kart-core');
 const { Pictionary } = require('./games/pictionary');
 const { KartBattle } = require('./games/kart');
+const { playtest } = require('./games/kart-playtest');
 const { Telephone } = require('./games/telephone');
 const { BallChain } = require('./games/ballchain');
 const { ControlRoom } = require('./games/controlroom');
@@ -484,10 +485,53 @@ class Room {
   }
 }
 
+KartCore.setWeeklyCheck(playtest);
+
 class RoomManager {
   constructor(io) {
     this.io = io;
     this.rooms = new Map();
+    this.weeklyTimer = null;
+  }
+
+  // The weekly arena: make this week's now (so lobbies show its name and layout straight away),
+  // then the next one as each Monday (UTC) comes round. CPU drivers play-test every layout first.
+  startWeekly() {
+    this.refreshWeekly(false);
+    const next = () => {
+      const wait = KartCore.Weekly.nextWeekAt() - Date.now() + 2000;
+      this.weeklyTimer = setTimeout(() => {
+        this.refreshWeekly(true);
+        next();
+      }, Math.max(1000, wait));
+      this.weeklyTimer.unref?.();
+    };
+    next();
+  }
+
+  // Make this week's arena if it isn't yet; `announce`: tell every room about it, and refresh the
+  // lobbies' map lists.
+  refreshWeekly(announce, now = Date.now()) {
+    const t = Date.now();
+    const map = KartCore.weeklyMap(now);
+    if (!map) {
+      console.warn('[weekly] no layout passed the checks this week');
+      return null;
+    }
+    console.log(`[weekly] ${map.name} (${map.id}) ready in ${Date.now() - t} ms`);
+    for (const tr of KartCore.weeklyTries()) console.log(`[weekly]   layout ${tr.attempt} turned down: ${tr.why.join('; ')}`);
+    if (announce) {
+      for (const room of this.rooms.values()) {
+        room.systemMessage(`🗓️ New weekly arena: ${map.emoji} ${map.name}. It's in Kart Battle's arenas until next Monday.`);
+        if (room.state !== 'playing') room.broadcastState();
+      }
+    }
+    return map;
+  }
+
+  stopWeekly() {
+    clearTimeout(this.weeklyTimer);
+    this.weeklyTimer = null;
   }
 
   roomOf(socket) {

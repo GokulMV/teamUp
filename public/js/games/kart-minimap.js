@@ -32,6 +32,14 @@
     bridge: '#7a5432', keep: '#958c7b', roof: '#70737b', tent: '#a83430', crate: '#946030', stair: '#857c6c',
     tower: '#a39885', pillar: '#958c7b', stone: '#7d7a72',
     crypt: '#4c4959', gallery: '#5f5b6c', slate: '#3b4053', tomb: '#8d8d93', fence: '#1d1d24', deadtree: '#3d3530',
+    deck: '#7a5432', terrace: '#4a7a3e', column: '#958c7b',
+  };
+  // The weekly arena's looks paint the same kinds their own colours.
+  const THEME_KINDS = {
+    graveyard: { ground: '#2c3a2c', terrace: '#3a4a38', stone: '#56536a', tower: '#5f5b6c', wall: '#4c4959', merlon: '#5f5b6c', column: '#6b6876', pillar: '#6b6876' },
+    ruins: { ground: '#c8a06a', terrace: '#d9b27c', stone: '#a87a48', tower: '#b4844f', wall: '#9a6e40', merlon: '#bd8d58', stair: '#b98a57', column: '#bd8d58', pillar: '#bd8d58' },
+    glacier: { ground: '#d5e0eb', terrace: '#e8f0f7', stone: '#8eacc4', tower: '#9fbbd2', wall: '#7f9db6', merlon: '#9fbbd2', stair: '#94b1c8', column: '#9fbbd2', pillar: '#9fbbd2' },
+    basalt: { ground: '#2f2826', terrace: '#3d3532', stone: '#6c5c59', tower: '#76696a', wall: '#5c4e4c', merlon: '#7d6d6b', stair: '#7d6d6b', column: '#6c5c59', pillar: '#6c5c59' },
   };
   // Rolling ground, low to high (layered arenas with hills).
   const LAND = { grass: ['#1d2a1f', '#3c5236'] };
@@ -282,9 +290,10 @@
         c.imageSmoothingEnabled = true;
         c.drawImage(img, fx, fy, (L.n - 1) * L.cell * s, (L.n - 1) * L.cell * s);
       }
+      const palette = THEME_KINDS[map.theme] || {};
       const colour = (kind, z) => {
         const u = (z - lo) / (hi - lo || 1);
-        const [r, gg, b] = rgb(LAYER_KINDS[kind] || LAYER_KINDS.stone);
+        const [r, gg, b] = rgb(palette[kind] || LAYER_KINDS[kind] || LAYER_KINDS.stone);
         const f = 0.82 + 0.42 * u;
         return `rgb(${Math.min(255, r * f) | 0},${Math.min(255, gg * f) | 0},${Math.min(255, b * f) | 0})`;
       };

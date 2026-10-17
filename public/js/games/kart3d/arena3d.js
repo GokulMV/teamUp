@@ -165,10 +165,10 @@ const TEX = {
     speckle(c, w, h, 600, ['rgba(0,0,0,0.07)', 'rgba(255,255,255,0.1)'], 2, 51);
   }),
   // Stone steps rising along v: a lit tread and a dark riser shadow per step.
-  steps: () => canvasTexture(128, 128, (c, w, h) => {
+  steps: (base = '#a39883') => canvasTexture(128, 128, (c, w, h) => {
     const r = rng(61);
     for (let y = 0; y < h; y += 32) {
-      c.fillStyle = shade('#a39883', 0.9 + r() * 0.15); c.fillRect(0, y, w, 32);
+      c.fillStyle = shade(base, 0.9 + r() * 0.15); c.fillRect(0, y, w, 32);
       c.fillStyle = 'rgba(255,255,255,0.16)'; c.fillRect(0, y + 26, w, 4);
       c.fillStyle = 'rgba(0,0,0,0.35)'; c.fillRect(0, y, w, 4);
     }
@@ -208,6 +208,63 @@ const TEX = {
       const x = r() * w; const y = r() * h;
       c.strokeStyle = r() < 0.5 ? 'rgba(10,20,14,0.5)' : 'rgba(110,140,110,0.35)';
       c.beginPath(); c.moveTo(x, y); c.lineTo(x + (r() - 0.5) * 3, y - 3 - r() * 4); c.stroke();
+    }
+  }),
+  // Sand: warm, with wind ripples and grit.
+  sand: () => canvasTexture(256, 256, (c, w, h) => {
+    c.fillStyle = '#d6ae76'; c.fillRect(0, 0, w, h);
+    const r = rng(111);
+    for (let i = 0; i < 30; i++) {
+      const x = r() * w; const y = r() * h; const rr = 20 + r() * 40;
+      wrapped(c, w, h, x, y, rr, (px, py) => {
+        const g = c.createRadialGradient(px, py, 0, px, py, rr);
+        g.addColorStop(0, r() < 0.5 ? 'rgba(240,206,150,0.4)' : 'rgba(170,120,70,0.25)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+        c.fillStyle = g; c.fillRect(px - rr, py - rr, rr * 2, rr * 2);
+      });
+    }
+    c.lineWidth = 1.5;
+    for (let y = 4; y < h; y += 11 + Math.floor(r() * 6)) {
+      c.strokeStyle = r() < 0.5 ? 'rgba(150,104,58,0.28)' : 'rgba(255,230,180,0.3)';
+      c.beginPath(); c.moveTo(0, y);
+      for (let x = 0; x <= w; x += 16) c.lineTo(x, y + Math.sin((x / w) * TAU * 2 + y) * 3);
+      c.stroke();
+    }
+    speckle(c, w, h, 2600, ['#c49a62', '#e6c08a', '#b88c58', '#efd3a2'], 2, 112);
+  }),
+  // Snow: soft blue-white drifts with a sparkle.
+  snow: () => canvasTexture(256, 256, (c, w, h) => {
+    c.fillStyle = '#e4edf5'; c.fillRect(0, 0, w, h);
+    const r = rng(121);
+    for (let i = 0; i < 36; i++) {
+      const x = r() * w; const y = r() * h; const rr = 18 + r() * 44;
+      wrapped(c, w, h, x, y, rr, (px, py) => {
+        const g = c.createRadialGradient(px, py, 0, px, py, rr);
+        g.addColorStop(0, r() < 0.5 ? 'rgba(255,255,255,0.6)' : 'rgba(150,178,210,0.3)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+        c.fillStyle = g; c.fillRect(px - rr, py - rr, rr * 2, rr * 2);
+      });
+    }
+    speckle(c, w, h, 1800, ['#d3e0ec', '#f6faff', '#c4d4e4', '#ffffff'], 2, 122);
+  }),
+  // Volcanic ash and basalt grit, with a few hot cracks.
+  ash: () => canvasTexture(256, 256, (c, w, h) => {
+    c.fillStyle = '#332c29'; c.fillRect(0, 0, w, h);
+    const r = rng(131);
+    for (let i = 0; i < 34; i++) {
+      const x = r() * w; const y = r() * h; const rr = 16 + r() * 40;
+      wrapped(c, w, h, x, y, rr, (px, py) => {
+        const g = c.createRadialGradient(px, py, 0, px, py, rr);
+        g.addColorStop(0, r() < 0.5 ? 'rgba(80,70,64,0.4)' : 'rgba(10,8,8,0.35)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+        c.fillStyle = g; c.fillRect(px - rr, py - rr, rr * 2, rr * 2);
+      });
+    }
+    speckle(c, w, h, 3000, ['#2a2422', '#3e3532', '#231e1c', '#4a403b'], 2, 132);
+    c.lineWidth = 1.6;
+    for (let i = 0; i < 9; i++) {
+      let x = r() * w; let y = r() * h;
+      c.strokeStyle = 'rgba(255,96,32,0.5)';
+      c.beginPath(); c.moveTo(x, y);
+      for (let k = 0; k < 6; k++) { x += (r() - 0.5) * 30; y += (r() - 0.5) * 30; c.lineTo(x, y); }
+      c.stroke();
     }
   }),
   // Slate roof tiles: rows of overlapping, slightly uneven tiles.
@@ -290,9 +347,43 @@ KITS.graveyard = {
   stone: { top: ['flag', ['#4d4a57'], 200], side: ['ashlar', ['#5d5a68', '#2b2933'], 150] },
   ground: { top: ['nightGrass', [], 260], side: ['dirt', [], 200] },
 };
+Object.assign(KITS.keep, {
+  deck: { top: ['planks', [], 110, 'across'], side: ['timber', [], 110], bottom: ['planks', [], 110] },
+  terrace: { top: ['grass', [], 300], side: ['ashlar', [], 150] },
+  column: { top: ['ashlar', ['#c2b8a3', '#7b7262'], 150], side: ['ashlar', ['#c2b8a3', '#7b7262'], 150] },
+});
+Object.assign(KITS.graveyard, {
+  deck: { top: ['planks', [], 110, 'across'], side: ['timber', [], 110], bottom: ['timber', [], 110] },
+  terrace: { top: ['nightGrass', [], 260], side: ['ashlar', ['#5d5a68', '#2b2933'], 150] },
+  tower: { top: ['flag', ['#4d4a57'], 200], side: ['ashlar', ['#5d5a68', '#2b2933', 26], 150] },
+  wall: { top: ['flag', ['#4d4a57'], 200], side: ['ashlar', ['#5d5a68', '#2b2933'], 150] },
+  merlon: { top: ['ashlar', ['#5d5a68', '#2b2933'], 150], side: ['ashlar', ['#5d5a68', '#2b2933'], 150] },
+  bridge: { top: ['planks', [], 110, 'across'], side: ['timber', [], 110], bottom: ['timber', [], 110] },
+  crate: { top: ['crate', [], 0], side: ['crate', [], 0] },
+  column: { top: ['ashlar', ['#6b6876', '#34313d'], 150], side: ['ashlar', ['#6b6876', '#34313d'], 150] },
+});
+// The weekly arena's other looks (shared/kart-weekly.js): the same kinds of solid in each.
+const lookKit = (ground, stone, mortar, flag, steps) => ({
+  ground: { top: [ground, [], 260], side: ['ashlar', [stone, mortar], 150] },
+  terrace: { top: [ground, [], 260], side: ['ashlar', [stone, mortar], 150] },
+  stone: { top: ['flag', [flag], 200], side: ['ashlar', [stone, mortar], 150] },
+  tower: { top: ['flag', [flag], 200], side: ['ashlar', [stone, mortar, 26], 150] },
+  wall: { top: ['flag', [flag], 200], side: ['ashlar', [stone, mortar], 150] },
+  merlon: { top: ['ashlar', [stone, mortar], 150], side: ['ashlar', [stone, mortar], 150] },
+  deck: { top: ['planks', [], 110, 'across'], side: ['timber', [], 110], bottom: ['planks', [], 110] },
+  bridge: { top: ['planks', [], 110, 'across'], side: ['timber', [], 110], bottom: ['planks', [], 110] },
+  stair: { top: ['steps', [steps], 22, 'steps'], side: ['ashlar', [stone, mortar], 150] },
+  crate: { top: ['crate', [], 0], side: ['crate', [], 0] },
+  pillar: { top: ['ashlar', [stone, mortar], 150], side: ['ashlar', [stone, mortar], 150] },
+  column: { top: ['ashlar', [stone, mortar], 150], side: ['ashlar', [stone, mortar], 150] },
+});
+// Stone a few shades off the ground, so the shapes read from up high.
+KITS.ruins = lookKit('sand', '#bd8d58', '#76522f', '#c89e68', '#b98a57');
+KITS.glacier = lookKit('snow', '#9fbbd2', '#5d7b94', '#c4d7e7', '#94b1c8');
+KITS.basalt = lookKit('ash', '#6c5c59', '#2a2123', '#76696a', '#7d6d6b');
 // Kinds drawn by their own builders instead of as plain blocks.
 const SPECIAL = new Set(['tomb', 'fence', 'deadtree']);
-const ROUGH = { planks: 0.85, timber: 0.9, tent: 0.95, grass: 1, dirt: 1, nightGrass: 1, slate: 0.7 };
+const ROUGH = { planks: 0.85, timber: 0.9, tent: 0.95, grass: 1, dirt: 1, nightGrass: 1, slate: 0.7, sand: 1, snow: 0.8, ash: 1 };
 
 // Shared materials, one per texture setup (roofs get their own copies so each can fade alone).
 const matCache = {};

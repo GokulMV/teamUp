@@ -624,17 +624,35 @@ function deadly(map, x, y, z, t) {
   const f = map.floorAt(x, y, z + K.Layers.STEP, t);
   return !Number.isFinite(f) || !!map.hazardAt(x, y, f);
 }
+// Drive (in thought) from where the kart is straight towards (x, y) for `dist`, following the
+// floor as the kart would: up ramps, and off ledges (just off one it is still up in the air, clear
+// of the side it fell from). Blocked by a wall at the height it would be at by then (`pad` wide),
+// or a drop to its doom. (Testing at the kart's own height instead, a kart halfway up a ramp sees
+// the top of it, and the floor it leads onto, as walls.)
+function lineBlocked(map, k, x, y, dist, pad, t) {
+  const L = Math.hypot(x - k.x, y - k.y) || 1;
+  const ux = (x - k.x) / L;
+  const uy = (y - k.y) / L;
+  const n = Math.max(2, Math.ceil(dist / 20));
+  const stepLen = dist / n;
+  let z = k.z || 0;
+  let airZ = z;
+  let air = 0;
+  for (let i = 1; i <= n; i++) {
+    const px = k.x + (ux * dist * i) / n;
+    const py = k.y + (uy * dist * i) / n;
+    const f = map.floorAt(px, py, z + K.Layers.STEP, t);
+    if (!Number.isFinite(f) || map.hazardAt(px, py, f)) return true;
+    if (f < z - K.Layers.STEP) { airZ = Math.max(airZ, z); air = 70; }
+    z = f;
+    if (map.blocked(px, py, pad, air > 0 ? airZ : z, t)) return true;
+    air -= stepLen;
+  }
+  return false;
+}
 // Can a kart drive straight from where it is to (x, y) on its floor (no wall, no drop to its doom)?
 function clearLine(map, k, x, y, t) {
-  const kz = k.z || 0;
-  const d = Math.hypot(x - k.x, y - k.y);
-  const n = Math.ceil(d / 22);
-  for (let i = 1; i <= n; i++) {
-    const px = k.x + ((x - k.x) * i) / n;
-    const py = k.y + ((y - k.y) * i) / n;
-    if (deadly(map, px, py, kz, t) || map.blocked(px, py, K.Layers.KART_R + 5, kz, t)) return false;
-  }
-  return true;
+  return !lineBlocked(map, k, x, y, Math.hypot(x - k.x, y - k.y), K.Layers.KART_R + 5, t);
 }
 
 function layeredDrive(game, k, ai, sk, input) {
@@ -678,12 +696,15 @@ function layeredDrive(game, k, ai, sk, input) {
     const P = ai.path;
     while (ai.pi < P.length - 1) {
       const id = P[ai.pi];
-      if (Math.hypot(nav.xs[id] - k.x, nav.ys[id] - k.y) < 56 && Math.abs(nav.zs[id] - kz) < 30) ai.pi++;
+      // Passed only on its own level: beside a ramp, a node a little way up it isn't reached yet.
+      if (Math.hypot(nav.xs[id] - k.x, nav.ys[id] - k.y) < 56 && Math.abs(nav.zs[id] - kz) < 16) ai.pi++;
       else break;
     }
     const cur = P[ai.pi];
     const off = Math.hypot(nav.xs[cur] - k.x, nav.ys[cur] - k.y);
-    ai.offPath = off > 170 || Math.abs(nav.zs[cur] - kz) > 45 ? ai.offPath + 1 / 30 : 0;
+    // Off the path: too far away, or on the ground beside (or under) where it goes (not in mid air,
+    // dropping or flying, when the height is bound to be wrong for a moment).
+    ai.offPath = !(k.air > 0) && (off > 170 || Math.abs(nav.zs[cur] - kz) > 24) ? ai.offPath + 1 / 30 : 0;
     const look = 70 + v * 0.22;
     let j = ai.pi;
     let along = Math.hypot(nav.xs[cur] - k.x, nav.ys[cur] - k.y);
@@ -737,18 +758,9 @@ function layeredDrive(game, k, ai, sk, input) {
   let want = Math.atan2(vy, vx);
   // Probe ahead: never drive into a wall, the moat, lava or off into the void.
   const probe = 60 + v * 0.3;
-  const STEP = K.Layers.STEP;
-  const bad = (a) => {
-    for (const f of [0.35, 0.7, 1]) {
-      const px = k.x + Math.cos(a) * probe * f;
-      const py = k.y + Math.sin(a) * probe * f;
-      if (map.blocked(px, py, 20, kz, t) || deadly(map, px, py, kz, t)) return true;
-    }
-    return false;
-  };
+  const bad = (a) => lineBlocked(map, k, k.x + Math.cos(a), k.y + Math.sin(a), probe, 20, t);
   // Backing up (to turn onto a rival, or out of a corner) is only safe with floor behind.
   const behindSafe = () => !deadly(map, k.x - Math.cos(k.angle) * 70, k.y - Math.sin(k.angle) * 70, kz, t);
-  void STEP;
   if (bad(want)) {
     if (!bad(want + 0.7)) want += 0.7;
     else if (!bad(want - 0.7)) want -= 0.7;
@@ -771,21 +783,22 @@ function layeredDrive(game, k, ai, sk, input) {
   // Where the kart will actually go: a turn at speed is a wide arc (and so is going straight on).
   // If that arc crosses the moat or the void, turn the other way round, or brake till it doesn't.
   // (Checked for the turn as steered and a wider one, since the kart's heading lags its nose.)
-  const arcBad = (dir) => {
-    for (const rate of [1, 0.6]) {
+  const arc = (dir, rates, steps, hit) => {
+    for (const rate of rates) {
       let x = k.x;
       let y = k.y;
       let h = k.heading ?? k.angle;
       const sp = Math.max(v, 90);
-      for (let i = 1; i <= 9; i++) {
+      for (let i = 1; i <= steps; i++) {
         h += dir * K.PHYS.turnRate * rate * 0.07;
         x += Math.cos(h) * sp * 0.07;
         y += Math.sin(h) * sp * 0.07;
-        if (deadly(map, x, y, kz, t)) return true;
+        if (hit(x, y)) return true;
       }
     }
     return false;
   };
+  const arcBad = (dir) => arc(dir, [1, 0.6], 9, (x, y) => deadly(map, x, y, kz, t));
   const turn = Math.abs(err) > 0.25 ? Math.sign(err) : 0;
   if (v > 50 && arcBad(turn)) {
     if (turn && !arcBad(-turn) && Math.abs(err) > 1.6) err = -turn; // the long way round, on land
@@ -793,6 +806,9 @@ function layeredDrive(game, k, ai, sk, input) {
     else if (!turn && !arcBad(-1)) err = -1;
     else { input.up = false; input.down = true; }
   }
+  // Turning hard at speed with a wall in the way of the arc (a U-turn beside a tower, a corner cut
+  // too tight): brake as well as steer, rather than plough into it.
+  if (v > 170 && turn && Math.abs(err) > 0.9 && arc(turn, [1], 6, (x, y) => map.blocked(x, y, 18, kz, t))) { input.up = false; input.down = true; }
   if (ai.mode === 'hunt' && gunning && dist < 230 && v > 140) input.up = false;
   if (ai.mode === 'box' && dist < 240 && Math.abs(err) > 0.9 && v > 170) { input.up = false; input.down = true; }
   if (Math.abs(err) > 2 && v > 250) { input.up = false; input.down = true; }

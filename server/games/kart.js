@@ -143,11 +143,12 @@ function segmentDist2(ax, ay, bx, by, x, y) {
 class KartBattle {
   static minPlayers = 1;
 
-  constructor(room) {
+  // opts.map: play on this map instead of the one the settings name (the weekly arena's play test).
+  constructor(room, opts = {}) {
     this.room = room;
     const s = room.settings;
     const type = s.kartMode === 'arena' ? 'arena' : 'race';
-    this.map = K.getMap(s.kartMap, type, { reverse: type === 'race' && s.kartReverse === true });
+    this.map = opts.map || K.getMap(s.kartMap, type, { reverse: type === 'race' && s.kartReverse === true });
     this.arena = this.map.type === 'arena';
     this.layered = !!this.map.layered; // floors at several heights: everything carries a z
     this.reverse = !!this.map.reverse;

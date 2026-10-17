@@ -65,6 +65,7 @@ if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`TeamUp running on http://localhost:${PORT}`);
   });
+  rooms.startWeekly();
   // Hosts like Railway send SIGTERM before replacing the container: stop cleanly.
   for (const sig of ['SIGTERM', 'SIGINT']) {
     process.on(sig, () => {

@@ -420,15 +420,18 @@
   }
 
   // The overview's inset is the in-game minimap (same colours and outline), drawn once per map.
+  // The weekly arena's entry names the exact layout the server made this week.
+  const mapIdOf = (m) => (m.weekly && m.weekly.mapId) || m.id;
   const insetCache = new Map();
   function mapInset(m) {
-    let url = insetCache.get(m.id);
+    const id = mapIdOf(m);
+    let url = insetCache.get(id);
     if (!url) {
       try {
         const c = document.createElement('canvas');
-        window.KartMinimap.create(c, window.KartCore.getMap(m.id, m.type), { cssSize: 132, dpr: 2 }).draw({ time: 0 });
+        window.KartMinimap.create(c, window.KartCore.getMap(id, m.type), { cssSize: m.weekly ? 200 : 132, dpr: 2 }).draw({ time: 0 });
         url = c.toDataURL();
-        insetCache.set(m.id, url);
+        insetCache.set(id, url);
       } catch {
         return mapOutline(m);
       }
@@ -436,8 +439,15 @@
     return `<img class="map-inset" src="${url}" alt="">`;
   }
 
+  // "3d 4h" until the next weekly arena.
+  function untilNext(ms) {
+    const h = Math.max(0, Math.floor((ms - Date.now()) / 3600000));
+    return h >= 24 ? `${Math.floor(h / 24)}d ${h % 24}h` : h >= 1 ? `${h}h` : 'under an hour';
+  }
+
   function mapStats(m) {
-    const map = window.KartCore?.MAPS?.[m.id];
+    if (m.weekly && !m.weekly.mapId) return [];
+    const map = m.weekly ? window.KartCore?.getMap(mapIdOf(m), 'arena') : window.KartCore?.MAPS?.[m.id];
     if (!map) return [];
     const stats = [];
     if (map.type === 'race') {
@@ -479,17 +489,18 @@
     const maps = (state.room.kartMaps || []).filter((m) => m.type === (state.room.settings.kartMode || 'race'));
     const cur = maps.find((m) => m.id === v) || maps[0];
     if (!cur) return '';
+    const wk = cur.weekly;
     return `<div class="map-overview" style="--art:url('/img/maps/${cur.id}.jpg')">
-        <div class="mo-art">${mapInset(cur)}</div>
+        <div class="mo-art ${wk ? `weekly wk-${wk.theme}` : ''}">${mapInset(cur)}${wk ? `<span class="mo-ribbon">New this week · ${escapeHtml(wk.week.slice(5))}</span>` : ''}</div>
         <div class="mo-info">
-          <span class="mo-kicker">${cur.type === 'race' ? 'Race track' : 'Battle arena'}</span>
+          <span class="mo-kicker">${wk ? `Weekly arena · next one in ${untilNext(wk.next)}` : cur.type === 'race' ? 'Race track' : 'Battle arena'}</span>
           <h4>${cur.emoji} ${escapeHtml(cur.name)}</h4>
           <p>${escapeHtml(cur.blurb || '')}</p>
           <div class="mo-chips">${mapStats(cur).map((t) => `<span>${t}</span>`).join('')}</div>
         </div>
       </div>
-      <div class="map-thumbs">${maps.map((m) => `<button class="map-thumb ${m.id === cur.id ? 'on' : ''}" data-key="kartMap" data-value="${m.id}" ${host ? '' : 'disabled'} style="--art:url('/img/maps/${m.id}.jpg')" title="${escapeHtml(m.name)}">
-        <span class="mt-name">${m.emoji} ${escapeHtml(m.name)}</span></button>`).join('')}</div>`;
+      <div class="map-thumbs">${maps.map((m) => `<button class="map-thumb ${m.id === cur.id ? 'on' : ''} ${m.weekly ? `weekly wk-${m.weekly.theme}` : ''}" data-key="kartMap" data-value="${m.id}" ${host ? '' : 'disabled'} style="--art:url('/img/maps/${m.id}.jpg')" title="${escapeHtml(m.name)}">
+        ${m.weekly ? '<span class="mt-tag">Weekly</span>' : ''}<span class="mt-name">${m.emoji} ${escapeHtml(m.name)}</span></button>`).join('')}</div>`;
   }
 
   function controlInner(def, s, host) {

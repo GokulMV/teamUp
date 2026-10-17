@@ -1,12 +1,13 @@
 // Maps and kart physics shared by the server (authoritative simulation)
 // and the browser (prediction for your own kart + rendering).
-// Layered arenas (floors at several heights) come from kart-layers.js, loaded first in the browser.
+// Layered arenas (floors at several heights) come from kart-layers.js and the weekly arena from
+// kart-weekly.js, both loaded first in the browser.
 (function (root, factory) {
   const node = typeof module === 'object' && module.exports;
-  const api = factory(node ? require('./kart-layers') : root.KartLayers);
+  const api = factory(node ? require('./kart-layers') : root.KartLayers, node ? require('./kart-weekly') : root.KartWeekly);
   if (node) module.exports = api;
   else root.KartCore = api;
-})(typeof self !== 'undefined' ? self : this, function (Layers) {
+})(typeof self !== 'undefined' ? self : this, function (Layers, Weekly) {
   const KART_RADIUS = 16;
   const WALL_PAD = 160; // race tracks: hard wall this far outside the asphalt
   const CURB = 18; // painted curb outside the asphalt; still counts as road
@@ -979,10 +980,59 @@
     });
   }
 
+  // The weekly arena (kart-weekly.js): 'weekly' is this week's, made and checked on first use (the
+  // server does it at start-up and as each week begins); 'weekly-YYYY-WW-aN' is one week's layout N
+  // exactly as the server checked it (what the server tells players to load), made without checking.
+  const WEEKLY_ID = /^weekly-(\d{4}-\d{2})-a(\d+)$/;
+  const weeklyMaps = new Map(); // the last few weeks' arenas by id
+  let thisWeek = { key: null, map: null };
+  let weeklyCheck = null; // the server's play test: (def, map) -> {ok, why}
+  const setWeeklyCheck = (fn) => { weeklyCheck = fn; };
+  const weeklyTries = () => thisWeek.tries || []; // why this week's earlier layouts were turned down
+  function rememberWeekly(map) {
+    weeklyMaps.set(map.id, map);
+    while (weeklyMaps.size > 4) weeklyMaps.delete(weeklyMaps.keys().next().value);
+    return map;
+  }
+  function weeklyMap(now = Date.now()) {
+    if (!Weekly) return null;
+    const key = Weekly.weekKey(Weekly.weekOf(now));
+    if (thisWeek.key !== key) {
+      const res = Weekly.weeklyArena(key, weeklyCheck);
+      thisWeek = { key, map: res ? rememberWeekly(res.map) : null, tries: res ? res.tries : [] };
+    }
+    return thisWeek.map;
+  }
+  function weeklyById(id) {
+    const m = Weekly && WEEKLY_ID.exec(id || '');
+    if (!m) return null;
+    const known = weeklyMaps.get(id);
+    if (known) return known;
+    const def = Weekly.weeklyDef(m[1], +m[2]);
+    return def ? rememberWeekly(Layers.makeLayeredArena(def)) : null;
+  }
+  // The lobby's entry: the week's name straight away; its blurb and exact id once the arena is made.
+  function weeklyInfo(now = Date.now()) {
+    const key = Weekly.weekKey(Weekly.weekOf(now));
+    const w = Weekly.weeklyInfo(key);
+    const made = thisWeek.key === key && thisWeek.map;
+    return {
+      id: 'weekly', name: w.name, emoji: w.emoji, type: 'arena',
+      blurb: made ? made.blurb : 'A new arena every Monday, made up for the week.',
+      weekly: { week: w.week, theme: w.theme, mapId: made ? made.id : null, next: Weekly.nextWeekAt(now) },
+    };
+  }
+  if (Weekly) {
+    INFO.weekly = weeklyInfo();
+    Object.defineProperty(MAPS, 'weekly', { enumerable: true, get: () => weeklyMap() });
+  }
+
   const DEFAULT_MAP = { race: 'grandprix', arena: 'colosseum' };
   const REVERSED = {};
   // opts.reverse: race tracks only, a cached variant driven the other way.
   function getMap(id, type, opts) {
+    const w = weeklyById(id) || (id === 'weekly' && (!type || type === 'arena') ? weeklyMap() : null);
+    if (w) return w;
     const known = INFO[id] && (!type || INFO[id].type === type);
     const m = MAPS[known ? id : DEFAULT_MAP[type || 'race']];
     if (opts && opts.reverse && m.type === 'race' && RACE_DEFS[m.id]) {
@@ -992,10 +1042,17 @@
     return m;
   }
   function mapList() {
+    if (Weekly) INFO.weekly = weeklyInfo();
     return Object.values(INFO).filter((m) => !m.hidden).map((m) => ({ ...m }));
   }
   // Name, type and blurb of a map without building it (null for an unknown id).
   function mapInfo(id) {
+    if (id === 'weekly' && Weekly) return (INFO.weekly = weeklyInfo());
+    const m = Weekly && WEEKLY_ID.exec(id || '');
+    if (m) {
+      const w = Weekly.weeklyInfo(m[1]);
+      return w ? { id, name: w.name, emoji: w.emoji, type: 'arena', blurb: '', weekly: { week: w.week, theme: w.theme, mapId: id } } : null;
+    }
     return INFO[id] || null;
   }
   const mapsBuilt = () => built.slice(); // race maps built so far, in order
@@ -1467,8 +1524,8 @@
   }
 
   return {
-    KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP, Layers,
-    getMap, mapList, mapInfo, mapsBuilt, stepKart, driftLevel, itemSpeed, bombLead, respawnOnTrack, makeRaceMap, timeToLand,
+    KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP, Layers, Weekly,
+    getMap, mapList, mapInfo, mapsBuilt, weeklyMap, setWeeklyCheck, weeklyTries, stepKart, driftLevel, itemSpeed, bombLead, respawnOnTrack, makeRaceMap, timeToLand,
     noise: { vnoise, fbm, smoothstep, polyDist },
   };
 });

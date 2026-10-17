@@ -469,6 +469,22 @@ export const THEMES = {
     ground: () => tex.ground('#5c9a43', ['#4f8c3a', '#6aab4e']),
     trees: ['almond', 'casuarina'], bushes: ['grape'], grass: true, clouds: 26, hills: 0x5f8f55, water: 0x35706f,
   },
+  // The weekly arena's other looks (with keep and graveyard above).
+  ruins: {
+    sky: [0x3f8fde, 0xf8e3bf], fog: [0xf3dcb4, 2200, 7800], hemi: [0xffe9c8, 0xa06a3a, 1.2], sun: [0xffe2b0, 2.9],
+    ground: () => tex.ground('#d9a86a', ['#cf9c5c', '#e2b57a', '#c8925a', '#e8c088']),
+    cacti: true, clouds: 10, hills: 0xc8794a, water: 0x2a9db0,
+  },
+  glacier: {
+    sky: [0x6f9fdc, 0xe3edf8], fog: [0xdfe9f4, 2200, 7800], hemi: [0xeaf3ff, 0x8ea6c0, 1.1], sun: [0xfff8ee, 2.5],
+    ground: () => tex.ground('#e3ebf3', ['#d5e0eb', '#f1f6fb', '#cbd8e5', '#eef4fa']),
+    trees: ['casuarina'], frost: true, pines: true, snowfall: true, clouds: 26, cloudTint: 0xdde5ee, hills: 0xf2f6fb, water: 0x3d7fa3,
+  },
+  basalt: {
+    sky: [0x40161a, 0xff8a52], fog: [0x7a3626, 1900, 6800], hemi: [0xffc29a, 0x5a2a1c, 1.3], sun: [0xffc28a, 2.4],
+    ground: () => tex.ground('#2f2826', ['#29221f', '#382f2b', '#221c1a', '#433834']),
+    deadTrees: ['almond', 'casuarina'], embers: true, hills: 0x3a2722,
+  },
 };
 
 // ---------- moonlit-cove trees ----------

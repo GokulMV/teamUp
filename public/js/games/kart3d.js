@@ -888,7 +888,7 @@ export class Kart3D {
   // and beach, earth on grass, snow on ice, a violet haze on neon streets.
   dustColor() {
     if (!this.dustCol) {
-      const byTheme = { desert: 0xd9b68a, coast: 0xe8d5a8, meadow: 0x9c8a62, snow: 0xffffff, neon: 0x9d8cff, lava: 0x4a403b, volcano: 0x4a403b, keep: 0xa8957a, graveyard: 0x5a5148 };
+      const byTheme = { desert: 0xd9b68a, coast: 0xe8d5a8, meadow: 0x9c8a62, snow: 0xffffff, neon: 0x9d8cff, lava: 0x4a403b, volcano: 0x4a403b, keep: 0xa8957a, graveyard: 0x5a5148, ruins: 0xd9b68a, glacier: 0xffffff, basalt: 0x4a403b };
       this.dustCol = new THREE.Color(byTheme[this.map.theme] ?? (this.theme.snowfall ? 0xffffff : this.theme.night ? 0x9d8cff : 0xc8b48a));
     }
     return this.dustCol;

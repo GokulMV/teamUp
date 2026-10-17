@@ -449,7 +449,9 @@ test('map selection follows the kart mode and every map can be played', async ()
     await call(host, 'lobby:settings', { kartMap: id });
     const init = once(host, 'game:kart:init');
     await call(host, 'game:start');
-    assert.strictEqual((await init).mapId, id);
+    // The weekly arena is sent by the exact week and layout.
+    if (id === 'weekly') assert.match((await init).mapId, /^weekly-\d{4}-\d{2}-a\d+$/);
+    else assert.strictEqual((await init).mapId, id);
     const game = room.game;
     game.stop();
     game.phase = 'racing';
@@ -1463,10 +1465,10 @@ test('race maps are built on first use, not when kart-core loads', () => {
   const r = JSON.parse(out);
   assert.strictEqual(r.before, 0, 'nothing built on load');
   assert.strictEqual(r.after, 0, 'the catalogue and map info build nothing');
-  assert.strictEqual(r.n, 10);
+  assert.strictEqual(r.n, 11);
   assert.deepStrictEqual(r.info, { id: 'coast', name: 'Coral Coast', emoji: r.info.emoji, type: 'race', blurb: r.info.blurb });
   assert.deepStrictEqual(r.built, ['coast'], 'only the map asked for');
-  assert.ok(r.same && r.keys === 10, 'MAPS still lists every map and caches what it built');
+  assert.ok(r.same && r.keys === 11, 'MAPS still lists every map and caches what it built');
 });
 
 test('CPU drivers lap every race track, forward and reversed', async () => {
@@ -2284,4 +2286,7 @@ test('page assets: every kart ES module is versioned and every classic script is
   assert.ok(html.indexOf('kart-hud.js') < html.indexOf('/js/games/kart.js'), 'the HUD kit loads before kart.js');
   assert.ok(html.includes('/js/shared/kart-layers.js?v='), 'kart-layers.js is loaded');
   assert.ok(html.indexOf('/js/shared/kart-layers.js') < html.indexOf('/js/shared/kart-core.js'), 'layered arenas load before kart-core, which needs them');
+  assert.ok(html.includes('/js/shared/kart-weekly.js?v='), 'kart-weekly.js is loaded');
+  assert.ok(html.indexOf('/js/shared/kart-layers.js') < html.indexOf('/js/shared/kart-weekly.js')
+    && html.indexOf('/js/shared/kart-weekly.js') < html.indexOf('/js/shared/kart-core.js'), 'the weekly arena loads after the layers it builds on and before kart-core');
 });
