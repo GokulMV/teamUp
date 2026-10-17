@@ -44,8 +44,9 @@ class BallChain {
 
   // Team mode uses the room's teams as they are, so check them before starting.
   static canStart(room) {
-    const players = room.connectedPlayers;
-    if (players.length < 2) return 'Ball & Chain needs at least 2 players';
+    if (room.connectedPlayers.length < 2) return 'Ball & Chain needs at least 2 players';
+    // Someone whose phone just dropped is still in the room, and gets a place on a team.
+    const players = [...room.players.values()];
     if (!room.settings.teamMode) return null;
     const bad = room.teamList()
       .map((t) => ({ t, n: players.filter((p) => p.team === t.id).length }))
@@ -76,8 +77,10 @@ class BallChain {
   }
 
   // ---------- setup ----------
+  // Everyone in the room plays, including anyone dropped out for a moment at the start (they
+  // begin as gone and take their place when they're back).
   formTeams() {
-    const players = this.room.connectedPlayers;
+    const players = [...this.room.players.values()];
     let groups;
     if (this.room.settings.teamMode) {
       groups = this.room.teamList()
@@ -128,6 +131,7 @@ class BallChain {
     this.phaseT = i === 0 ? FIRST_COUNTDOWN_S : COUNTDOWN_S;
     this.finishCount = 0;
     this.graceUntil = null;
+    this.emptySince = null;
     this.cpClaimed = new Set();
     this.byId.clear();
     for (const t of this.teams) {
@@ -350,7 +354,12 @@ class BallChain {
     const live = this.liveTeams();
     const allDone = live.length > 0 && live.every((t) => t.finish);
     const timeUp = el >= this.limit || (this.graceUntil !== null && el >= this.graceUntil);
-    if (allDone || timeUp || !live.length) this.endCourse();
+    // Everyone gone at once (a shared Wi-Fi dropping, phones locking): give them as long as the
+    // room does to come back before the course is called off.
+    if (!live.length) this.emptySince ??= this.time;
+    else this.emptySince = null;
+    const deserted = this.emptySince !== null && this.time - this.emptySince >= 30;
+    if (allDone || timeUp || deserted) this.endCourse();
   }
 
   endCourse() {

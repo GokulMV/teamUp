@@ -133,7 +133,8 @@
       build(b) {
         b.floor(-HALF, HALF, 0, 780, 'slope');
         b.wall(-HALF - 16, -HALF, 0, 780, 'rail');
-        b.zone(-HALF, HALF, 70, 710, { type: 'slope', gx: 340 });
+        // Flat for the first stretch: a team put back at the checkpoint gets its footing first.
+        b.zone(-HALF, HALF, 160, 710, { type: 'slope', gx: 340 });
         for (const y of [220, 420, 620]) b.post(-170, y, 26, 'pillar');
       },
     },
@@ -446,7 +447,7 @@
     return team.rope;
   }
 
-  // Ball on the checkpoint, the team fanned out behind it.
+  // Ball on the checkpoint, the team fanned out in front of it.
   function spawnTeam(team, C, cpIndex) {
     const cp = C.checkpoints[Math.max(0, Math.min(C.checkpoints.length - 1, cpIndex))];
     Object.assign(team.ball, { x: cp.spawnX, y: cp.spawnY, z: 0, vx: 0, vy: 0, vz: 0, air: false });
@@ -454,15 +455,39 @@
     list.forEach((p, i) => placeNearBall(team, C, p, i, list.length, 0));
   }
 
+  // A player (re)appears beside the ball on the side it has to go (+y), so the rope already pulls
+  // the right way: fanned out ahead first, then straight ahead, then beside it, behind only when
+  // nothing else has a floor. On a narrow bridge, the ball's own floor wins; never inside a post,
+  // a wall or a closed gate. (Behind the ball a player only shoves it back, and on a plank can't
+  // get past it at all.)
   function placeNearBall(team, C, p, i, n, t) {
     const b = team.ball;
     const spread = n > 1 ? i / (n - 1) - 0.5 : 0;
-    const a = -Math.PI / 2 + spread * 2.2; // behind the ball (toward -y)
-    const d = PHYS.ballR + 70;
-    let x = b.x + Math.cos(a) * d;
-    let y = b.y + Math.sin(a) * d;
-    if (!floorAt(C, x, y, t, false)) { x = b.x + (spread || 0.3) * 120; y = b.y; }
-    if (!floorAt(C, x, y, t, false)) { x = b.x; y = b.y - PHYS.ballR - 20; }
+    const d = Math.max(PHYS.ballR + 50, Math.min(team.rope.rest * 0.85, PHYS.ballR + 110));
+    const ballFloor = floorAt(C, b.x, b.y, t, false);
+    const open = team.gates.map((g) => g.open);
+    const near = PHYS.ballR + PHYS.playerR + 12;
+    const tries = [
+      [Math.PI / 2 + spread * 1.6, d],
+      [Math.PI / 2 + spread * 0.7, d],
+      [Math.PI / 2 + spread * 0.3, near],
+      [spread < 0 ? Math.PI : 0, near],
+      [spread < 0 ? 0 : Math.PI, near],
+      [-Math.PI / 2 + spread * 1.2, PHYS.ballR + 70],
+    ];
+    let best = null;
+    for (const [a, r] of tries) {
+      const x = b.x + Math.cos(a) * r;
+      const y = b.y + Math.sin(a) * r;
+      const f = floorAt(C, x, y, t, false);
+      if (!f) continue;
+      const e = { x, y, vx: 0, vy: 0 };
+      collideStatic(C, e, PHYS.playerR, open, false);
+      if (Math.hypot(e.x - x, e.y - y) > 0.5) continue; // inside something
+      if (f === ballFloor) { best = { x, y }; break; }
+      if (!best) best = { x, y };
+    }
+    const { x, y } = best || { x: b.x, y: b.y - PHYS.ballR - 20 };
     Object.assign(p, { x, y, px: x, py: y, vx: 0, vy: 0, wraps: [], dirs: [], wrapVer: p.wrapVer + 1, yank: 0 });
   }
 
@@ -933,9 +958,19 @@
     const onPlate = C.plates.map((pl) => team.players.some((p) => p.state === 'ok'
       && (p.x - pl.x) ** 2 + (p.y - pl.y) ** 2 <= (pl.r + PHYS.playerR * 0.4) ** 2));
     team.plates = onPlate;
+    // A team left short-handed (partners gone or asleep) can still get through: when there aren't
+    // hands for every plate and one more to pull the ball, one plate is enough; and someone alone
+    // (who can't hold a plate and pull too) finds the gate opening as the ball rolls up to it.
+    const hands = team.players.filter((p) => p.state !== 'gone' && !p.afk).length;
+    const b = team.ball;
     C.gates.forEach((g, i) => {
       const st = team.gates[i];
-      const pressed = g.all ? g.plates.every((k) => onPlate[k]) : g.plates.some((k) => onPlate[k]);
+      let pressed = g.all && hands > g.plates.length ? g.plates.every((k) => onPlate[k]) : g.plates.some((k) => onPlate[k]);
+      if (!pressed && hands <= 1) {
+        const gx = (g.x0 + g.x1) / 2;
+        const gy = (g.y0 + g.y1) / 2;
+        pressed = (b.x - gx) ** 2 + (b.y - gy) ** 2 < 230 * 230;
+      }
       if (pressed) { st.open = true; st.t = g.hold; return; }
       if (!st.open) return;
       st.t -= dt;

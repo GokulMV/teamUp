@@ -849,16 +849,20 @@ export function buildClouds(scene, length, width, themeName) {
   const n = MOBILE ? 46 : 90;
   for (let i = 0; i < n; i++) {
     const below = i < n * 0.6;
-    const mat = new THREE.SpriteMaterial({ map: kartTex.cloud(i % 6), transparent: true, opacity: below ? 0.95 : 0.8, depthWrite: false, fog: true });
+    const opacity = below ? 0.95 : 0.8;
+    const mat = new THREE.SpriteMaterial({ map: kartTex.cloud(i % 6), transparent: true, opacity, depthWrite: false, fog: true });
     const s = new THREE.Sprite(mat);
     const w = below ? 900 + r() * 1400 : 500 + r() * 700;
-    s.scale.set(w, w * 0.5, 1);
-    const x = (r() - 0.5) * (width + 5000);
-    const y = below ? -300 - r() * 700 : -120 + r() * 600;
-    // Keep the drifting puffs off the lanes themselves.
-    const xx = !below && Math.abs(x) < width / 2 + 500 ? Math.sign(x || 1) * (width / 2 + 500 + r() * 1200) : x;
-    s.position.set(xx, y, -(r() * (length + 3000) - 1500));
+    const h = w * 0.5;
+    s.scale.set(w, h, 1);
+    // The puffs up at course height keep to one side and drift along it, never across the lanes;
+    // the ones below stay wholly under the floor.
+    const side = i % 2 ? 1 : -1;
+    const x = below ? (r() - 0.5) * (width + 5000) : side * (width / 2 + 500 + w / 2 + r() * 2000);
+    const y = below ? -420 - h / 2 - r() * 600 : -120 + r() * 600;
+    s.position.set(x, y, -(r() * (length + 3000) - 1500));
     s.userData.speed = 6 + r() * 14;
+    s.userData.opacity = opacity;
     group.add(s);
     sprites.push(s);
   }
@@ -897,10 +901,15 @@ export function buildClouds(scene, length, width, themeName) {
   scene.add(group);
   return {
     group,
-    update(dt) {
+    // camera: puffs it is about to fly through fade away instead of whiting out the screen.
+    update(dt, camera) {
       for (const s of sprites) {
-        s.position.x += s.userData.speed * dt;
-        if (s.position.x > width / 2 + 3000) s.position.x -= width + 6000;
+        s.position.z -= s.userData.speed * dt;
+        if (s.position.z < -(length + 1500)) s.position.z += length + 3000;
+        if (camera) {
+          const d = s.position.distanceTo(camera.position) - s.scale.x * 0.5;
+          s.material.opacity = s.userData.opacity * Math.max(0, Math.min(1, (d - 150) / 650));
+        }
       }
     },
     dispose() {

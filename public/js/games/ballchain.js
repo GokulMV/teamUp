@@ -34,6 +34,8 @@ window.Games = window.Games || {};
     const t = Math.max(0, Math.ceil(s));
     return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
   };
+  // Writes only when the text changes: the HUD runs every frame, and each write costs a layout.
+  const setText = (el, text) => { if (el && el.textContent !== text) el.textContent = text; };
   const fmtTime = (s) => (s === null || s === undefined ? 'DNF' : `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`);
 
   window.Games.ballchain = {
@@ -172,7 +174,7 @@ window.Games = window.Games || {};
       function heave() {
         if (myIdx < 0 || !latest || latest.ph !== PH.run) return;
         const now = performance.now() / 1000;
-        if (now - lastHeave < 0.95) return;
+        if (now - lastHeave < 1.05) return; // the server's cooldown is 1 s, counted in 1/30 s ticks
         lastHeave = now;
         q('[data-heave]').classList.add('fired');
         setTimeout(() => q('[data-heave]')?.classList.remove('fired'), 180);
@@ -180,7 +182,8 @@ window.Games = window.Games || {};
       }
       const typing = (e) => /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
       function onKey(e, down) {
-        if (typing(e)) return;
+        // Typing in the chat starts no moves, but a key let go still counts (or W stays held).
+        if (typing(e) && down) return;
         if (e.code === 'Space') {
           e.preventDefault();
           if (down && !e.repeat) heave();
@@ -494,16 +497,21 @@ window.Games = window.Games || {};
           <div class="bc-mate ${st[1]}${me ? ' me' : ''}">${api.avatarHtml(p.avatar)}<span>${esc(me ? 'You' : p.name)}</span><i>${st[0]}</i></div>`).join('')}`;
       }
 
+      // One pip per teammate who's here (not offline or asleep), lit for a moment when they heave:
+      // heaves landing together light up together and stack into a sync.
       function renderSync(now) {
         if (myTeam === null || !info) return;
-        const n = info.teams[myTeam].members.length;
+        const rows = latest ? new Map(latest.p.map((r) => [r[0], r[5]])) : new Map();
+        const crew = info.teams[myTeam].members.filter((i) => !((rows.get(i) || 0) & (32 | 512)));
         const live = now - sync.at < 450;
         if (!live) { sync.ids.clear(); sync.k = 0; }
         const pips = q('[data-pips]');
-        if (pips.children.length !== n) pips.innerHTML = '<i></i>'.repeat(n);
-        [...pips.children].forEach((pip, i) => pip.classList.toggle('on', i < sync.k));
+        const sig = crew.join(',');
+        if (pips.dataset.sig !== sig) { pips.dataset.sig = sig; pips.innerHTML = crew.map(() => '<i></i>').join(''); }
+        [...pips.children].forEach((pip, k) => pip.classList.toggle('on', sync.ids.has(crew[k])));
         q('[data-sync]').classList.toggle('active', sync.k >= 2);
-        q('[data-sync-label]').textContent = sync.k >= 2 ? `SYNC x${sync.k}` : 'SYNC';
+        const need = crew.length >= 4 ? 3 : 2;
+        setText(q('[data-sync-label]'), sync.k >= 2 ? `SYNC x${sync.k}!` : crew.length > 1 ? `HEAVE TOGETHER · ${need}` : 'HEAVE');
         // Heave cooldown ring.
         const cd = Math.max(0, Math.min(1, (now / 1000 - lastHeave) / 1));
         const ring = q('[data-cd]');
@@ -602,12 +610,12 @@ window.Games = window.Games || {};
         // Timer.
         const timer = q('[data-timer]');
         if (s.ph === PH.run && s.tl !== null) {
-          q('[data-timer-val]').textContent = fmt(s.tl);
+          setText(q('[data-timer-val]'), fmt(s.tl));
           timer.classList.toggle('urgent', s.tl <= 15);
           if (prev.tl !== null && Math.ceil(s.tl) !== Math.ceil(prev.tl) && s.tl <= 10 && s.tl > 0) Sfx.tick();
           prev.tl = s.tl;
         } else if (s.ph === PH.countdown) {
-          q('[data-timer-val]').textContent = fmt(info.limit);
+          setText(q('[data-timer-val]'), fmt(info.limit));
           timer.classList.remove('urgent');
         }
         // Section banner when my ball enters a new section.
@@ -616,8 +624,8 @@ window.Games = window.Games || {};
           let si = 0;
           C.sections.forEach((sec, i) => { if (ball.y >= sec.y0) si = i; });
           const sec = C.sections[si];
-          q('[data-sec-icon]').textContent = sec.icon;
-          q('[data-sec-name]').textContent = sec.name;
+          setText(q('[data-sec-icon]'), sec.icon);
+          setText(q('[data-sec-name]'), sec.name);
           if (si !== prev.section) {
             if (prev.section >= 0 && s.ph === PH.run && sec.hint && myTeam !== null) banner(sec.icon, sec.name, sec.hint);
             prev.section = si;
@@ -665,7 +673,12 @@ window.Games = window.Games || {};
             const u0 = performance.now();
             view3d.update({
               t: v.t, phase: latest?.ph, intro, balls: v.balls, players: v.players, wraps, mods,
-              focus: { team: focusTeam, x: fb.x, y: Math.max(fb.y, 0), mx: meV?.x, my: meV?.y, snap: snapCam }, rope: info.rope,
+              focus: {
+                team: focusTeam, x: fb.x, y: Math.max(fb.y, 0), mx: meV?.x, my: meV?.y, snap: snapCam,
+                // Everyone on the team who's on the course: the camera keeps them all in shot.
+                crew: v.players.filter((p) => p.team === focusTeam && !(p.flags & (4 | 32))).map((p) => ({ x: p.x, y: p.y })),
+              },
+              rope: info.rope,
             }, dt, now);
             snapCam = false;
             window.__bcStats.updateMs = performance.now() - u0;

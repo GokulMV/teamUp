@@ -478,7 +478,7 @@ export class BallChain3D {
 
     // Course animation (gates, plates, sweepers, hammers, fans, bridges, belts).
     this.world.update(view.t, dt, this.teams.map((tm) => ballState.get(tm.idx) || {}), this.camPos ? { z: this.camPos.z, focusZ: this.camLook.z + 140 } : null);
-    this.clouds.update(dt);
+    this.clouds.update(dt, this.camera);
 
     // Balls.
     for (const b of this.balls) {
@@ -704,10 +704,16 @@ export class BallChain3D {
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
     const wantW = aspect < 0.8 ? 600 : aspect < 1.3 ? 760 : 880;
     let dist = wantW / (2 * Math.tan(hfov / 2));
-    dist = Math.max(480, Math.min(1400, dist));
+    // The whole team stays in shot: a teammate behind the ball (back from a fall, stuck, holding a
+    // plate) pulls the view back toward them, and a spread-out team pulls the camera up.
+    let lo = f.y;
+    let hi = f.y;
+    for (const p of f.crew || []) { lo = Math.min(lo, p.y); hi = Math.max(hi, p.y); }
+    dist = Math.max(480, Math.min(1400, Math.max(dist, (hi - lo) * 1.15)));
     const pitch = aspect < 0.8 ? 0.98 : 0.84;
     const fx = f.x + (f.mx !== undefined ? (f.mx - f.x) * 0.3 : 0);
-    const fy = f.y + 140 + (f.my !== undefined ? (f.my - f.y) * 0.25 : 0);
+    const ahead = f.y + 90 + (f.my !== undefined ? (f.my - f.y) * 0.25 : 0);
+    const fy = Math.min(ahead, lo + dist * 0.3 - 50);
     const gh = this.H(fx, Math.min(fy, this.C.len)) * 0.8;
     const look = new THREE.Vector3(lx + fx, gh + 20, -fy);
     let desired = new THREE.Vector3(look.x, look.y + Math.sin(pitch) * dist, look.z + Math.cos(pitch) * dist);

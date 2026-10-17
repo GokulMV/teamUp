@@ -122,6 +122,15 @@
 .bc-crew.show { opacity: 1; transform: translate(-50%, 0) scale(1); }
 .bc-crew b { font-family: var(--font-display); font-size: 1.05rem; letter-spacing: 0.02em; }
 .bc-crew span { font-size: 0.86rem; font-weight: 700; color: rgba(255, 255, 255, 0.92); max-width: 46vw; overflow: hidden; text-overflow: ellipsis; }
+/* narrow screens: the reason wraps to a second line instead of being cut off */
+@media (max-width: 760px) {
+  .bc-crew { white-space: normal; width: max-content; max-width: min(92vw, 520px); border-radius: 18px; }
+  .bc-crew span { max-width: none; line-height: 1.25; }
+}
+/* medium widths: section banners drop below the race strip instead of covering its names */
+@media (min-width: 761px) and (max-width: 1100px) {
+  .bc-banner { top: 186px; }
+}
 .bc-crew.me.show { animation: bc-nudge 0.9s ease-in-out infinite; }
 .bc-crew.me b { font-size: 1.3rem; }
 @keyframes bc-nudge { 50% { transform: translate(-50%, 0) scale(1.07); } }

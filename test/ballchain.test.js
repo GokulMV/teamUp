@@ -792,3 +792,80 @@ test('ball & chain: every section type can be played: the ball reaches the goal 
     for (const def of B.planMatch(seed, 5, 'long', 2)) assert.ok(!def.sections.some((s) => s.type === 'twin'));
   }
 });
+
+test('spawns put the team in front of the ball, on its floor, clear of posts and walls', async () => {
+  const ctx = await bcGame(3); // teams off: one team of 3
+  const s = ctx.game.teams[0].sim;
+  const C = ctx.game.course;
+  for (const p of s.players) {
+    assert.ok(p.y > s.ball.y + 20, `player at ${Math.round(p.x)},${Math.round(p.y)} is ahead of the ball at ${Math.round(s.ball.x)},${Math.round(s.ball.y)}`);
+    assert.ok(B.floorAt(C, p.x, p.y, 0, false), 'on a floor');
+  }
+  // Every checkpoint of every course: never inside scenery, on a floor.
+  for (const def of ctx.game.plan) {
+    const course = B.buildCourse(def);
+    course.checkpoints.forEach((cp, i) => {
+      const team = B.makeTeam(course, s.players.map((p) => ({ id: p.id, idx: p.idx })), B.ROPES.normal);
+      B.spawnTeam(team, course, i);
+      for (const p of team.players) {
+        assert.ok(B.floorAt(course, p.x, p.y, 0, false), `${def.name} checkpoint ${i}: on a floor`);
+        const e = { x: p.x, y: p.y, vx: 0, vy: 0 };
+        B.collideStatic(course, e, B.PHYS.playerR, team.gates.map((g) => g.open), false);
+        assert.ok(Math.hypot(e.x - p.x, e.y - p.y) < 1, `${def.name} checkpoint ${i}: not inside anything`);
+      }
+    });
+  }
+  ctx.room.destroy();
+});
+
+test('a player offline at the start gets a place and plays when back; a team that all drops out gets 30 s', async () => {
+  const ctx = await makeRoom(3);
+  await call(ctx.host, 'lobby:settings', { mode: 'ballchain' });
+  const p2 = ctx.players[2];
+  p2.socket.close();
+  await wait(150);
+  const init = once(ctx.host, 'game:bc:init');
+  assert.ok((await call(ctx.host, 'game:start')).ok);
+  await init;
+  const game = ctx.room.game;
+  game.stop();
+  const sp2 = game.byId.get(p2.id);
+  assert.ok(sp2, 'the player who was offline has a place');
+  assert.strictEqual(sp2.state, 'gone');
+  const back = client();
+  assert.ok((await call(back, 'room:join', { code: ctx.code, token: p2.token })).ok);
+  await wait(100);
+  assert.strictEqual(sp2.state, 'ok', 'and plays once back');
+  // Everyone drops out at once: the course waits instead of ending as a DNF.
+  game.phase = 'run'; game.phaseT = 0; game.runStart = game.time;
+  for (const sp of game.teams.flatMap((t) => t.sim.players)) game.setGone(sp, true);
+  for (let i = 0; i < 30 * 5; i++) game.simulate(1 / 30);
+  assert.strictEqual(game.phase, 'run', 'still running after 5 s with nobody there');
+  for (let i = 0; i < 30 * 26; i++) game.simulate(1 / 30);
+  assert.strictEqual(game.phase, 'end', 'called off after 30 s');
+  ctx.room.destroy();
+});
+
+test('a team left with one player can still open gates: one plate is enough, and alone the gate opens for the ball', () => {
+  const def = { name: 'Gates', theme: 'candy', seed: 3, sections: [{ type: 'start' }, { type: 'twin', seed: 1 }, { type: 'goal' }] };
+  const C = B.buildCourse(def);
+  if (!C.gates.length) return; // no gated section in this build
+  const team = B.makeTeam(C, [{ id: 'a', idx: 0 }, { id: 'b', idx: 1 }, { id: 'c', idx: 2 }], B.ROPES.normal);
+  const g = C.gates[0];
+  const plate = C.plates[g.plates[0]];
+  const [a, b, c] = team.players;
+  // Two left (one gone): a twin gate needs only the plate they can hold.
+  c.state = 'gone';
+  Object.assign(a, { x: plate.x, y: plate.y, state: 'ok' });
+  Object.assign(b, { x: plate.x + 400, y: plate.y + 400, state: 'ok' });
+  team.ball.x = 0; team.ball.y = g.y0 - 600;
+  B.tickTeam(team, C, 1, 1 / 30, []);
+  assert.strictEqual(team.gates[0].open, true, g.all ? 'one plate opens a twin gate for two players' : 'the plate opens it');
+  // Alone: the gate opens as the ball rolls up.
+  b.state = 'gone';
+  a.x = plate.x + 500; a.y = plate.y + 500;
+  team.gates[0].open = false; team.gates[0].t = 0;
+  team.ball.x = (g.x0 + g.x1) / 2; team.ball.y = g.y0 - 150;
+  B.tickTeam(team, C, 2, 1 / 30, []);
+  assert.strictEqual(team.gates[0].open, true, 'alone, the gate opens for the ball');
+});
