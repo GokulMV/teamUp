@@ -15,6 +15,7 @@ const DARK = '#2b2d33';
 const STEEL = '#3a3f48';
 const YELLOW = '#ffcf33';
 const WHITE = '#f4f6fb';
+const _up = new THREE.Vector3(0, 1, 0);
 
 // ---------- containers ----------
 // Doors on both ends (a frame, two leaves, four locking bars), corner castings on top, a white
