@@ -1307,6 +1307,78 @@ test('falling into water, lava or a gap fishes you back onto the road', async ()
   room.destroy();
 });
 
+test('after riding the curb or the grass, a fall puts you back beside where you fell in', () => {
+  const K = require('../public/js/shared/kart-core');
+  const coast = K.MAPS.coast;
+  const n = coast.n;
+  // Lateral 1.06-1.5: curb, run-off and grass; then off the beach into the sea near the end of the lap.
+  for (const lateral of [1.06, 1.1, 1.5]) {
+    const st = Math.floor(n * 0.5);
+    const [x, y] = coast.centerline[st];
+    const t = coast.tangents[st];
+    const kart = { x, y, angle: Math.atan2(t[1], t[0]), speed: 300, boost: 0, spin: 0, trackIndex: st };
+    let fellAt = null;
+    for (let s = 0; s < 30 * 60 && fellAt === null; s++) {
+      const f = kart.trackIndex / n;
+      const q = coast.nearestIndex(kart.x, kart.y, kart.trackIndex);
+      const a = coast.trackPoint(q.index + 6, f > 0.5 && f < 0.97 ? lateral : 3.5);
+      let e = Math.atan2(a[1] - kart.y, a[0] - kart.x) - kart.angle;
+      e = Math.atan2(Math.sin(e), Math.cos(e));
+      K.stepKart(kart, { up: true, left: e < -0.04, right: e > 0.04 }, 1 / 30, coast);
+      if (kart.fall > 0) fellAt = kart.trackIndex;
+    }
+    assert.ok(fellAt !== null, 'slid into the sea');
+    for (let s = 0; s < 60 && kart.fall > 0; s++) K.stepKart(kart, {}, 1 / 30, coast);
+    const back = (fellAt - kart.trackIndex + n) % n;
+    assert.ok(back < 25, `lateral ${lateral}: put back ${back} samples behind (not half a lap)`);
+  }
+});
+
+test('the finish grace scales with the lap: about three quarters of a lap, never under 25 s', async () => {
+  const K = require('../public/js/shared/kart-core');
+  for (const [kartClass, mul] of [['chill', 0.82], ['turbo', 1.18]]) {
+    const { room, game } = await kartGame(1, { kartMap: 'neon', kartClass });
+    const lap = game.map.length / (K.PHYS.maxSpeed * mul);
+    assert.ok(game.finishGrace >= 25 && game.finishGrace > lap * 0.55 && game.finishGrace < lap * 1.1, `${kartClass}: ${game.finishGrace.toFixed(1)} s for a ~${lap.toFixed(0)} s lap`);
+    room.destroy();
+  }
+  // Two humans: the second one is still out on the track when the first finishes.
+  const { room, game, players } = await kartGame(2, { kartMap: 'grandprix', kartLaps: 1 });
+  const human = game.karts.get(players[0].id);
+  human.lap = game.laps + 1;
+  game.trackLaps(human, human.trackIndex);
+  game.time = game.firstFinishAt + 26;
+  game.phase = 'racing';
+  game.tick(0);
+  assert.strictEqual(game.phase, 'racing', 'still racing 26 s after the winner');
+  game.time = game.firstFinishAt + game.finishGrace + 0.1;
+  game.tick(0);
+  assert.notStrictEqual(game.phase, 'racing', 'over once the grace runs out');
+  room.destroy();
+});
+
+test('race maps are built on first use, not when kart-core loads', () => {
+  const { execFileSync } = require('child_process');
+  const path = require('path');
+  const core = path.join(__dirname, '..', 'public', 'js', 'shared', 'kart-core.js');
+  const out = execFileSync(process.execPath, ['-e', `
+    const K = require(${JSON.stringify(core)});
+    const before = K.mapsBuilt().length;
+    const list = K.mapList();
+    const info = K.mapInfo('coast');
+    const after = K.mapsBuilt().length;
+    const m = K.getMap('coast', 'race');
+    console.log(JSON.stringify({ before, after, n: list.length, info, built: K.mapsBuilt(), same: K.MAPS.coast === m, keys: Object.keys(K.MAPS).length }));
+  `]).toString();
+  const r = JSON.parse(out);
+  assert.strictEqual(r.before, 0, 'nothing built on load');
+  assert.strictEqual(r.after, 0, 'the catalogue and map info build nothing');
+  assert.strictEqual(r.n, 8);
+  assert.deepStrictEqual(r.info, { id: 'coast', name: 'Coral Coast', emoji: r.info.emoji, type: 'race', blurb: r.info.blurb });
+  assert.deepStrictEqual(r.built, ['coast'], 'only the map asked for');
+  assert.ok(r.same && r.keys === 8, 'MAPS still lists every map and caches what it built');
+});
+
 test('CPU drivers lap every race track, forward and reversed', async () => {
   for (const id of raceIds()) {
     for (const kartReverse of [false, true]) {

@@ -747,10 +747,26 @@
   }
 
   // ---------- Map catalogue ----------
+  // Race maps are built on first use (MAPS.x is a getter), so loading this file on the home page or
+  // in the lobby costs next to nothing; mapList() and mapInfo() never build one.
   const MAPS = {};
   const RACE_DEFS = {};
-  const add = (m) => { MAPS[m.id] = m; };
-  const addRace = (def) => { RACE_DEFS[def.id] = def; add(makeRaceMap(def)); };
+  const INFO = {};
+  const built = [];
+  const info = (m, type) => { INFO[m.id] = { id: m.id, name: m.name, emoji: m.emoji, type, blurb: m.blurb }; };
+  const add = (m) => { MAPS[m.id] = m; info(m, m.type); };
+  const addRace = (def) => {
+    RACE_DEFS[def.id] = def;
+    info(def, 'race');
+    let map = null;
+    Object.defineProperty(MAPS, def.id, {
+      enumerable: true,
+      get() {
+        if (!map) { map = makeRaceMap(def); built.push(def.id); }
+        return map;
+      },
+    });
+  };
 
   addRace({
     id: 'grandprix', name: 'Grand Prix', emoji: '🏁', theme: 'meadow', width: 290,
@@ -940,8 +956,8 @@
   const REVERSED = {};
   // opts.reverse: race tracks only, a cached variant driven the other way.
   function getMap(id, type, opts) {
-    let m = MAPS[id];
-    if (!m || (type && m.type !== type)) m = MAPS[DEFAULT_MAP[type || 'race']];
+    const known = INFO[id] && (!type || INFO[id].type === type);
+    const m = MAPS[known ? id : DEFAULT_MAP[type || 'race']];
     if (opts && opts.reverse && m.type === 'race' && RACE_DEFS[m.id]) {
       if (!REVERSED[m.id]) REVERSED[m.id] = makeRaceMap(RACE_DEFS[m.id], true);
       return REVERSED[m.id];
@@ -949,8 +965,13 @@
     return m;
   }
   function mapList() {
-    return Object.values(MAPS).map((m) => ({ id: m.id, name: m.name, emoji: m.emoji, type: m.type, blurb: m.blurb }));
+    return Object.values(INFO).map((m) => ({ ...m }));
   }
+  // Name, type and blurb of a map without building it (null for an unknown id).
+  function mapInfo(id) {
+    return INFO[id] || null;
+  }
+  const mapsBuilt = () => built.slice(); // race maps built so far, in order
 
   // ---------- Physics ----------
   // Wall contact: drop only the part of the velocity that goes into the wall,
@@ -1102,7 +1123,9 @@
           return;
         }
       }
-      if (q.dist <= half && !map.gap[q.index]) kart.safeIndex = q.index;
+      // Safe ground (road, curb, grass or run-off inside the walls): a fall from here puts you back
+      // on the road right beside it, not where you last touched the asphalt.
+      if (q.dist <= map.wallAt(q) && !map.gap[q.index]) kart.safeIndex = q.index;
     }
   }
 
@@ -1247,7 +1270,7 @@
 
   return {
     KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP,
-    getMap, mapList, stepKart, driftLevel, itemSpeed, respawnOnTrack, makeRaceMap, timeToLand,
+    getMap, mapList, mapInfo, mapsBuilt, stepKart, driftLevel, itemSpeed, respawnOnTrack, makeRaceMap, timeToLand,
     noise: { vnoise, fbm, smoothstep, polyDist },
   };
 });

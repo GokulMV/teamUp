@@ -360,11 +360,11 @@ class Room {
         if (data?.drawTime !== undefined) s.drawTime = clampInt(data.drawTime, 15, 240, s.drawTime);
         if (data?.kartMode === 'race' || data?.kartMode === 'arena') {
           s.kartMode = data.kartMode;
-          if (KartCore.MAPS[s.kartMap]?.type !== s.kartMode) s.kartMap = KartCore.DEFAULT_MAP[s.kartMode];
+          if (KartCore.mapInfo(s.kartMap)?.type !== s.kartMode) s.kartMap = KartCore.DEFAULT_MAP[s.kartMode];
         }
-        if (typeof data?.kartMap === 'string' && KartCore.MAPS[data.kartMap]) {
+        if (typeof data?.kartMap === 'string' && KartCore.mapInfo(data.kartMap)) {
           s.kartMap = data.kartMap;
-          s.kartMode = KartCore.MAPS[data.kartMap].type;
+          s.kartMode = KartCore.mapInfo(data.kartMap).type;
         }
         if (data?.arenaTime !== undefined) s.arenaTime = clampInt(data.arenaTime, 60, 600, s.arenaTime);
         if (data?.kartLaps !== undefined) s.kartLaps = clampInt(data.kartLaps, 1, 10, s.kartLaps);

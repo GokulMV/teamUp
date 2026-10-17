@@ -4,7 +4,7 @@ const Bots = require('./kart-bots');
 const TICK_HZ = 30;
 const SEND_EVERY = 2; // broadcast at 15 Hz
 const COUNTDOWN_S = 4;
-const FINISH_GRACE_S = 25;
+const FINISH_GRACE_S = 25; // at least; on long tracks three quarters of a lap (see finishGrace)
 const MAX_KARTS = 30;
 const SPIN_TIME = 1.4;
 const SHIELD_TIME = 4;
@@ -118,6 +118,8 @@ class KartBattle {
     this.laps = s.kartLaps;
     this.duration = s.arenaTime;
     this.speedMul = CLASS_SPEED[s.kartClass] || 1;
+    // After the first human finishes, the rest get about three quarters of a lap to cross the line.
+    this.finishGrace = this.arena ? FINISH_GRACE_S : Math.max(FINISH_GRACE_S, (0.75 * this.map.length) / (K.PHYS.maxSpeed * 0.85 * this.speedMul));
     this.items = allowedItems(s);
     this.boxRespawn = BOX_RESPAWN[s.kartBoxRespawn] || BOX_RESPAWN.normal;
     this.catchup = s.kartCatchup !== false;
@@ -565,7 +567,7 @@ class KartBattle {
       } else {
         // Bots never hold up the end: once every connected human is done, so is the race.
         const allDone = [...this.karts.values()].every((k) => k.finished || k.bot || !this.room.players.get(k.id)?.connected);
-        const graceOver = this.firstFinishAt !== null && this.time - this.firstFinishAt > FINISH_GRACE_S;
+        const graceOver = this.firstFinishAt !== null && this.time - this.firstFinishAt > this.finishGrace;
         const hardLimit = elapsed > this.laps * 120 + 60;
         if (allDone || graceOver || hardLimit) this.endRace();
       }
