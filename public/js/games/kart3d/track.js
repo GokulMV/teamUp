@@ -304,13 +304,17 @@ function buildBridges(scene, map, theme, ctx, R) {
   const near = (arr, i, k) => { for (let o = -k; o <= k; o++) if (arr[(i + o + n) % n]) return true; return false; };
   const deckAt = (i) => near(map.bridge, i, 1) && !map.gap[i] && !map.gap[(i + 1) % n];
   const railAt = (i) => map.railed[i] && map.railed[(i + 1) % n] && !map.gap[i] && !map.gap[(i + 1) % n];
-  const edge = half + K.RAIL + 6;
-  const inner = half + K.CURB + 6;
+  // The physics wall holds a kart's centre at half + RAIL; karts are ~18 units wide, so the
+  // parapet's inner face sits just outside that (karts rub it rather than sink into it) and runs
+  // out to the deck edge the physics uses.
+  const inner = half + K.RAIL + 16;
+  const edge = half + K.DECK;
   const deckMat = new THREE.MeshStandardMaterial({ map: tex.concrete(style.deck), roughness: 0.85 });
-  // Deck: walkway either side of the curbs, then the slab's sides and underside.
+  const underMat = new THREE.MeshStandardMaterial({ map: tex.concrete(style.deck), color: 0x6b6b6b, roughness: 0.95 });
+  // Deck: walkway either side of the curbs, then the slab's sides and a darker underside.
   addMesh(scene, sweep(R, [[half + K.CURB, 1.1], [edge, 1.1]], deckAt, { vScale: 64 }), deckMat);
   addMesh(scene, sweep(R, [[-edge, 1.1], [-half - K.CURB, 1.1]], deckAt, { vScale: 64 }), deckMat);
-  addMesh(scene, sweep(R, [[edge, 1.1], [edge, -30], [-edge, -30], [-edge, 1.1]], deckAt, { vScale: 128 }), deckMat, { cast: true });
+  addMesh(scene, sweep(R, [[edge, 1.1], [edge, -30], [-edge, -30], [-edge, 1.1]], deckAt, { vScale: 128 }), underMat, { cast: true });
 
   // Parapets along every railed stretch (bridges included).
   const railH = 30;
@@ -319,17 +323,90 @@ function buildBridges(scene, map, theme, ctx, R) {
     : style.glow
       ? new THREE.MeshStandardMaterial({ color: style.rail, transparent: theme.bridge === 'neon', opacity: 0.7, roughness: 0.3, metalness: 0.5, side: THREE.DoubleSide })
       : new THREE.MeshStandardMaterial({ map: tex.concrete(style.rail), roughness: 0.8 });
+  const steel = theme.bridge === 'steel';
   const r1 = [[inner, 0], [inner, railH], [edge, railH], [edge, -2]];
   const r2 = [[-edge, -2], [-edge, railH], [-inner, railH], [-inner, 0]];
-  for (const prof of [r1, r2]) addMesh(scene, sweep(R, prof, railAt, { vScale: 96 }), railMat, { cast: !style.glass });
+  // Steel bridges get an open truss (posts and diagonals) on the bridge itself instead of a wall.
+  const solidAt = steel ? (i) => railAt(i) && !deckAt(i) : railAt;
+  for (const prof of [r1, r2]) addMesh(scene, sweep(R, prof, solidAt, { vScale: 96 }), railMat, { cast: !style.glass });
   // A bright cap along the top of each parapet.
   const capMat = style.glow ? new THREE.MeshBasicMaterial({ color: style.top }) : new THREE.MeshStandardMaterial({ color: style.top, roughness: 0.5 });
   for (const [a, b] of [[inner - 1, edge + 1], [-edge - 1, -inner + 1]]) addMesh(scene, sweep(R, [[a, railH + 2], [b, railH + 2]], railAt), capMat);
 
-  // Piers down to the ground below (the natural terrain under a bridge).
+  // Bridge furniture along both parapets: truss members on steel, lamp posts on the others.
+  const along = [];
+  for (let i = 0; i < n; i++) if (map.bridge[i] && deckAt(i)) along.push(i);
+  if (steel && along.length) {
+    const beamMat = new THREE.MeshStandardMaterial({ color: 0x9a4a2a, metalness: 0.55, roughness: 0.45 });
+    const posts = [];
+    const diags = [];
+    for (const i of along) {
+      if (i % 2) continue;
+      for (const sgn of [1, -1]) posts.push([i, sgn]);
+      if (i % 4 === 0) for (const sgn of [1, -1]) diags.push([i, sgn]);
+    }
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const mid = (inner + edge) / 2;
+    const postIm = new THREE.InstancedMesh(new THREE.BoxGeometry(6, 1, 6), beamMat, posts.length);
+    posts.forEach(([i, sgn], k) => {
+      const p = R.pts[i];
+      const t = map.tangents[i];
+      q.setFromAxisAngle(UP, -Math.atan2(t[1], t[0]));
+      m4.compose(new THREE.Vector3(p[0] + R.N[i][0] * mid * sgn, R.H[i] + railH * 1.6 / 2, p[1] + R.N[i][1] * mid * sgn), q, new THREE.Vector3(1, railH * 1.6, 1));
+      postIm.setMatrixAt(k, m4);
+    });
+    postIm.castShadow = true;
+    scene.add(postIm);
+    const span = map.spacing * 4;
+    const diagIm = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 4, 4), beamMat, diags.length);
+    diags.forEach(([i, sgn], k) => {
+      const j = (i + 2) % n;
+      const p = R.pts[j];
+      const t = map.tangents[j];
+      e.set(0, -Math.atan2(t[1], t[0]), Math.atan2(railH * 1.6, span / 2) * sgn, 'YXZ');
+      q.setFromEuler(e);
+      m4.compose(new THREE.Vector3(p[0] + R.N[j][0] * mid * sgn, R.H[j] + railH * 0.8, p[1] + R.N[j][1] * mid * sgn), q, new THREE.Vector3(Math.hypot(span / 2, railH * 1.6), 1, 1));
+      diagIm.setMatrixAt(k, m4);
+    });
+    diagIm.castShadow = true;
+    scene.add(diagIm);
+    // Top chord along the posts.
+    addMesh(scene, sweep(R, [[mid - 3, railH * 1.6], [mid + 3, railH * 1.6]], (i) => deckAt(i) && map.bridge[i]), beamMat);
+    addMesh(scene, sweep(R, [[-mid - 3, railH * 1.6], [-mid + 3, railH * 1.6]], (i) => deckAt(i) && map.bridge[i]), beamMat);
+  } else if (along.length) {
+    const lampSpots = along.filter((i) => i % 12 === 0);
+    const poleMat = new THREE.MeshStandardMaterial({ color: theme.night ? 0x2a2540 : 0x4b5563, metalness: 0.6, roughness: 0.4 });
+    const lampMat = new THREE.MeshStandardMaterial({ color: 0xfff7d6, emissive: 0xffe6a3, emissiveIntensity: theme.night ? 2.2 : 0.6 });
+    const poleIm = new THREE.InstancedMesh(new THREE.CylinderGeometry(2.2, 2.8, 1, 8), poleMat, lampSpots.length * 2);
+    const lampIm = new THREE.InstancedMesh(new THREE.BoxGeometry(18, 5, 9), lampMat, lampSpots.length * 2);
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    let k = 0;
+    for (const i of lampSpots) {
+      const p = R.pts[i];
+      const t = map.tangents[i];
+      q.setFromAxisAngle(UP, -Math.atan2(t[1], t[0]));
+      for (const sgn of [1, -1]) {
+        const o = (inner + edge) / 2;
+        m4.compose(new THREE.Vector3(p[0] + R.N[i][0] * o * sgn, R.H[i] + railH + 40, p[1] + R.N[i][1] * o * sgn), q, new THREE.Vector3(1, 80, 1));
+        poleIm.setMatrixAt(k, m4);
+        m4.compose(new THREE.Vector3(p[0] + R.N[i][0] * (o - 7) * sgn, R.H[i] + railH + 80, p[1] + R.N[i][1] * (o - 7) * sgn), q, new THREE.Vector3(1, 1, 1));
+        lampIm.setMatrixAt(k, m4);
+        k++;
+      }
+    }
+    poleIm.castShadow = true;
+    scene.add(poleIm, lampIm);
+  }
+
+  // Piers down to the ground below (the natural terrain under a bridge): twin columns under a cap
+  // beam, spaced out on long bridges, so you see water and sky between them, not a dam.
   const piers = [];
+  const every = along.length > 120 ? 10 : 6;
   for (let i = 0; i < n; i++) {
-    if (!map.bridge[i] || !map.bridge[(i + 3) % n] || !map.bridge[(i - 3 + n) % n] || i % 5) continue;
+    if (!map.bridge[i] || !map.bridge[(i + 3) % n] || !map.bridge[(i - 3 + n) % n] || i % every) continue;
     const p = R.pts[i];
     const ground = map.natural(p[0], p[1]);
     const top = R.H[i] - 28;
@@ -341,7 +418,10 @@ function buildBridges(scene, map, theme, ctx, R) {
     const pierMat = new THREE.MeshStandardMaterial({ map: tex.concrete(style.pier), roughness: 0.85 });
     const geo = theme.bridge === 'neon' || theme.bridge === 'ice'
       ? mergeGeometries([part(new THREE.CylinderGeometry(0.5, 0.5, 1, 14), 0, 0.5, -0.32), part(new THREE.CylinderGeometry(0.5, 0.5, 1, 14), 0, 0.5, 0.32)])
-      : mergeGeometries([part(new THREE.BoxGeometry(1, 1, 1), 0, 0.5, 0), part(new THREE.BoxGeometry(1.5, 0.08, 1.12), 0, 0.97, 0)]);
+      : mergeGeometries([
+        part(new THREE.BoxGeometry(1, 1, 0.16), 0, 0.5, -0.3), part(new THREE.BoxGeometry(1, 1, 0.16), 0, 0.5, 0.3),
+        part(new THREE.BoxGeometry(1.4, 0.06, 0.92), 0, 0.97, 0),
+      ]);
     const im = new THREE.InstancedMesh(geo, pierMat, piers.length);
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
