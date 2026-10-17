@@ -493,12 +493,12 @@ export const THEMES = {
   },
   // The weekly arena's other looks (with keep and graveyard above).
   ruins: {
-    sky: [0x3f8fde, 0xf8e3bf], fog: [0xf3dcb4, 2200, 7800], hemi: [0xffe9c8, 0xa06a3a, 1.2], sun: [0xffe2b0, 2.9],
+    sky: [0x3b8be0, 0xf6dcae], fog: [0xf4dfb8, 3200, 13000], hemi: [0xffe9c8, 0xa06a3a, 1.2], sun: [0xffe2b0, 2.9],
     ground: () => tex.ground('#d9a86a', ['#cf9c5c', '#e2b57a', '#c8925a', '#e8c088']),
     cacti: true, clouds: 10, hills: 0xc8794a, water: 0x2a9db0,
   },
   glacier: {
-    sky: [0x6f9fdc, 0xe3edf8], fog: [0xdfe9f4, 2200, 7800], hemi: [0xeaf3ff, 0x8ea6c0, 1.1], sun: [0xfff8ee, 2.5],
+    sky: [0x4f8fe0, 0xd6e8f8], fog: [0xd2e6f7, 3200, 13000], hemi: [0xeaf3ff, 0x8ea6c0, 1.1], sun: [0xfff8ee, 2.5],
     ground: () => tex.ground('#e3ebf3', ['#d5e0eb', '#f1f6fb', '#cbd8e5', '#eef4fa']),
     trees: ['casuarina'], frost: true, pines: true, snowfall: true, clouds: 26, cloudTint: 0xdde5ee, hills: 0xf2f6fb, water: 0x3d7fa3,
   },

@@ -12,6 +12,7 @@ import { buildHarbour } from './harbour3d.js';
 import { buildSkyGardens } from './skygarden3d.js';
 import { buildKeep } from './keep3d.js';
 import { buildGraveyard } from './graveyard3d.js';
+import { buildWeekly } from './weekly3d.js';
 
 // Bright arenas' own set dressing (and models for their moving obstacles), by theme.
 const DRESSINGS = { harbour: buildHarbour, skygarden: buildSkyGardens, keep: buildKeep, graveyard: buildGraveyard };
@@ -550,7 +551,9 @@ export function buildLayered(scene, map, theme, ctx) {
   const sculpted = !!(map.terrain && map.terrain.style === 'lowpoly');
   // Bright arenas (clean colour blocks, painted rims): kart3d/bright3d.js draws their solids and water.
   const bright = map.look === 'bright';
-  const dress = bright && DRESSINGS[map.theme] ? DRESSINGS[map.theme](scene, map, ctx) : null;
+  // (A weekly arena's layout is made, not drawn by hand: it gets the generic dressing for its look.)
+  const dressing = bright ? (map.generated ? buildWeekly : DRESSINGS[map.theme]) : null;
+  const dress = dressing ? dressing(scene, map, ctx) : null;
   if (bright) roofs.push(...buildBrightSolids(scene, map, ctx, dress?.skip).roofs);
   for (const s of bright ? [] : map.solids) {
     if (s.kind === 'bumper' || s.kind === 'hub') continue; // drawn with their bumper / sweeper
@@ -620,7 +623,7 @@ export function buildLayered(scene, map, theme, ctx) {
 
   // Moat / lava lake: one sheet at the liquid's level (only seen through the holes in the floor).
   // (A sculpted arena's lava fills its craters: sculpt3d.js.)
-  if (map.liquid && !sculpted && !bright) {
+  if (map.liquid && !sculpted && (!bright || map.liquid.kind === 'lava')) {
     if (map.liquid.kind === 'lava') {
       const lt = tex.lava().clone();
       lt.needsUpdate = true;

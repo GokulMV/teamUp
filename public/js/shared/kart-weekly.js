@@ -82,29 +82,50 @@
   const snap = (v, to = 10) => Math.round(v / to) * to;
 
   // ---------- looks: a theme, the solids' kinds, what fills the pits, and names ----------
+  // Each in the bright look (kart3d/bright3d.js), with a palette for the kinds the pieces use.
+  const brightKit = (o) => ({
+    ground: { top: o.ground[0], side: o.side, top2: o.ground[1], pattern: 'checker', cell: 160, round: 0 },
+    stone: { top: o.stone[0], side: o.stone[1], top2: o.stone[2], side2: o.stone[2], pattern: 'slabs', cell: 40, sidePattern: 'slabs', sideCell: 36, round: 3, foot: 0.85 },
+    wall: { top: o.stone[0], side: o.stone[1], top2: o.stone[2], side2: o.stone[2], pattern: 'slabs', cell: 40, sidePattern: 'slabs', sideCell: 36, round: 3, foot: 0.85 },
+    tower: { top: o.stone[0], side: o.stone[1], top2: o.stone[2], side2: o.stone[2], pattern: 'slabs', cell: 40, sidePattern: 'slabs', sideCell: 34, round: 3, foot: 0.85 },
+    merlon: { top: o.stone[0], side: o.stone[1], side2: o.stone[2], sidePattern: 'slabs', sideCell: 30, round: 3 },
+    terrace: { top: o.terrace[0], side: o.stone[1], top2: o.terrace[1], side2: o.stone[2], pattern: 'checker', cell: 80, sidePattern: 'bands', sideCell: 18, round: 3, foot: 0.85 },
+    stair: { top: o.stone[0], side: o.stone[2], top2: o.chevron, pattern: 'chevrons', cell: 42, round: 0 },
+    bridge: { top: o.wood[0], side: o.wood[1], top2: o.wood[1], pattern: 'planks', cell: 20, angle: 1, round: 3 },
+    crate: { top: '#d49a5c', side: '#c98c50', top2: '#a8703e', side2: '#a8703e', pattern: 'planks', cell: 16, sidePattern: 'planks', sideCell: 16, round: 3 },
+    column: { top: o.stone[0], side: o.stone[0], side2: o.stone[2], sidePattern: 'bands', sideCell: 30 },
+    pillar: { top: o.stone[0], side: o.stone[0], side2: o.stone[2], sidePattern: 'bands', sideCell: 30 },
+    rim: o.rim, hazardRim: o.rim,
+    water: o.water,
+  });
   const LOOKS = [
     {
       theme: 'keep', emoji: '🛡️', liquid: 'water', pool: null,
+      palette: brightKit({ ground: ['#78c85c', '#6bbd51'], side: '#b98a5a', stone: ['#ecd3a6', '#f2dbb2', '#dfc292'], terrace: ['#7fcf62', '#70c055'], chevron: '#ffffff', wood: ['#cf945c', '#9f6b3f'], rim: ['#ffffff', '#e5484d'], water: { shallow: '#3cc6c9', deep: '#1c7aa0', line: '#d4fbff' } }),
       first: ['Old', 'High', 'Broken', 'Windy', 'Twin', 'Iron', 'Red', 'Copper'],
       second: ['Bastion', 'Ramparts', 'Citadel', 'Stronghold', 'Bailey', 'Barbican', 'Redoubt', 'Watch'],
     },
     {
       theme: 'ruins', emoji: '🏜️', liquid: 'water', pool: null,
+      palette: brightKit({ ground: ['#efcd90', '#e7c282'], side: '#d9a866', stone: ['#e9a066', '#de8e52', '#cc7c42'], terrace: ['#f4dca8', '#ecd096'], chevron: '#ffffff', wood: ['#b9783f', '#8f5d34'], rim: ['#ffffff', '#ff7a45'], water: { shallow: '#2fd0c8', deep: '#14839a', line: '#d6fffb' } }),
       first: ['Sunken', 'Golden', 'Forgotten', 'Scorched', 'Buried', 'Shifting', 'Lost', 'Amber'],
       second: ['Ziggurat', 'Temple', 'Oasis', 'Ruins', 'Sanctum', 'Colonnade', 'Terraces', 'Steps'],
     },
     {
       theme: 'glacier', emoji: '❄️', liquid: 'water', pool: null,
+      palette: brightKit({ ground: ['#e4effa', '#d6e6f6'], side: '#a9cbe6', stone: ['#a6d9f3', '#8bc8ec', '#6db3e0'], terrace: ['#f7fbff', '#e8f2fc'], chevron: '#4fa8de', wood: ['#a8703e', '#7a5232'], rim: ['#ffffff', '#3c9ae0'], water: { shallow: '#3aa4dc', deep: '#1a5f9e', line: '#e2f6ff' } }),
       first: ['Frozen', 'Glacial', 'Frostbite', 'Shivering', 'Polar', 'Silver', 'Hailstone', 'Whiteout'],
       second: ['Fjord', 'Icefall', 'Bastion', 'Glacier', 'Hollow', 'Crown', 'Terraces', 'Fortress'],
     },
     {
       theme: 'basalt', emoji: '🔥', liquid: 'lava', pool: 'lava',
+      palette: brightKit({ ground: ['#5b5464', '#524b5c'], side: '#3d3846', stone: ['#7a7088', '#6a6178', '#585066'], terrace: ['#6a6178', '#615870'], chevron: '#ff8a3c', wood: ['#8f5d34', '#6a4426'], rim: ['#ffd23f', '#ff6a2a'], water: null }),
       first: ['Molten', 'Ashen', 'Smouldering', 'Obsidian', 'Burning', 'Cinder', 'Brimstone', 'Sulphur'],
       second: ['Forge', 'Caldera', 'Crucible', 'Foundry', 'Pits', 'Throne', 'Anvil', 'Furnace'],
     },
     {
       theme: 'graveyard', emoji: '🦇', liquid: 'water', pool: 'acid',
+      palette: brightKit({ ground: ['#2f7a56', '#3a8a62'], side: '#56684c', stone: ['#cec6e3', '#bdb5d6', '#aaa1c6'], terrace: ['#3f9a62', '#368c58'], chevron: '#ffffff', wood: ['#b47d50', '#8a5a36'], rim: ['#ffffff', '#9b6bff'], water: { shallow: '#2f8f9a', deep: '#173f63', line: '#bdeaff' } }),
       first: ['Moonlit', 'Silent', 'Restless', 'Hollow', 'Crooked', 'Whispering', 'Midnight', 'Weeping'],
       second: ['Barrows', 'Catacombs', 'Ossuary', 'Necropolis', 'Mausoleum', 'Tombs', 'Crypts', 'Vigil'],
     },
@@ -554,7 +575,7 @@
     const S = planName === 'open' ? rnd.pick([2800, 3200]) : 3200;
     const C = S / 2;
     const def = {
-      size: S, edge: 'wall', deathZ: -320, theme: look.theme,
+      size: S, edge: 'wall', deathZ: -320, theme: look.theme, look: 'bright', palette: look.palette, generated: true,
       ground: { z: 0, kind: 'ground', holes: [] },
       blocks: [], ramps: [], cyls: [], pads: [], bumpers: [], boosts: [], hazards: [], movers: [], boxes: [], spawns: [], deco: [],
     };

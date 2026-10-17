@@ -155,7 +155,7 @@ function drawbridge(scene, map, m) {
 // ---------- quintains ----------
 // A striped post with an arm turning on top: a red shield with a gold boss on one end, a sack of
 // sand on the other.
-function quintain(scene, m) {
+export function quintain(scene, m) {
   const parts = [];
   for (let k = 0; k < 4; k++) parts.push(post(m.x, m.y, m.z + k * 14, m.z + (k + 1) * 14, m.hub * (0.95 - k * 0.04), k % 2 ? WHITE : RED, 16, m.hub * (0.95 - (k + 1) * 0.04)));
   parts.push(ball(m.x, m.y, m.z + m.hi + 30, m.hub * 0.5, GOLD, 12));
@@ -195,7 +195,7 @@ function addPennants(scene, list) {
   }
   return (t) => { for (const f of flags) f.rotation.y = 0.6 + Math.sin(t * 2.2 + f.userData.ph) * 0.35; };
 }
-function crown(scene, d) {
+export function crown(scene, d) {
   const g = new THREE.Group();
   const parts = [flatGeo(new THREE.CylinderGeometry(26, 24, 16, 24, 1, true), GOLD)];
   for (let i = 0; i < 6; i++) {

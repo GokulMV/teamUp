@@ -27,7 +27,7 @@ const pick = (x, y, k) => Math.abs(Math.sin(x * 12.9898 + y * 78.233 + k * 37.71
 // ---------- headstones ----------
 // Each tomb block becomes a headstone of one of three shapes, facing along its thin side, a shade of
 // stone of its own, some of them mossy: a round-topped slab, a cross, or an obelisk.
-function headstone(s, parts) {
+export function headstone(s, parts) {
   const w = s.x1 - s.x0;
   const d = s.y1 - s.y0;
   const alongX = w >= d;
@@ -62,7 +62,7 @@ function headstone(s, parts) {
 // ---------- iron fences ----------
 // Spear railings along each fence block: a top and bottom rail, bars every 14 with gold tips, a
 // stone pier at each end.
-function fence(s, parts) {
+export function fence(s, parts) {
   const w = s.x1 - s.x0;
   const d = s.y1 - s.y0;
   const alongX = w >= d;
@@ -89,7 +89,7 @@ function fence(s, parts) {
 
 // ---------- dead trees ----------
 // A twisted trunk splitting into crooked branches, each forking again; a lantern hanging from one.
-function deadTree(c, parts, lanterns) {
+export function deadTree(c, parts, lanterns) {
   const r = rng(Math.round(c.x * 7 + c.y * 3));
   const z = c.z0 + 24;
   const H = (c.z1 - z) * 0.9;
@@ -218,7 +218,7 @@ function brazier(scene, d, parts) {
 // ---------- the scythe ----------
 // The atrium's sweeper: a violet post with a gold cap, two long handles turning on top, a silver
 // crescent blade on the end of each.
-function scythe(scene, m) {
+export function scythe(scene, m) {
   const parts = [];
   parts.push(post(m.x, m.y, m.z, m.z + m.hi + 30, m.hub * 0.75, '#4b3a7a', 14, m.hub * 0.6));
   parts.push(post(m.x, m.y, m.z + m.hi + 22, m.z + m.hi + 30, m.hub * 0.85, GOLD, 14));
