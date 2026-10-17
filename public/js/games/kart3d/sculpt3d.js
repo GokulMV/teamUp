@@ -66,7 +66,9 @@ function groundColour(h, up, crater, n, inBowl) {
   return g.offsetHSL(0, 0, (n - 0.5) * 0.05);
 }
 
-export function buildLowPolyLand(scene, map) {
+// colourOf(h, up, x, y, n): an arena's own colour for a face (height, steepness, where it is, a
+// little noise), or none for the Cinder Bowl's.
+export function buildLowPolyLand(scene, map, colourOf = null) {
   const land = map.land;
   const { n, cell: c, h } = land;
   const crater = (map.terrain.craters || [])[0];
@@ -89,7 +91,7 @@ export function buildLowPolyLand(scene, map) {
     const cz = (a[2] + b[2] + d[2]) / 3;
     const cr = crater ? Math.hypot(cx - crater.x, cz - crater.y) / crater.r : 9;
     const inBowl = !!bowl && Math.hypot(cx - bowl.x, cz - bowl.y) < bowl.r + 40;
-    const cc = groundColour(mh, up, cr, hash(i, j, t), inBowl);
+    const cc = colourOf ? colourOf(mh, up, cx, cz, hash(i, j, t)) : groundColour(mh, up, cr, hash(i, j, t), inBowl);
     for (const p of v) {
       pos[o] = p.x; pos[o + 1] = p.y; pos[o + 2] = p.z;
       colour[o] = cc.r; colour[o + 1] = cc.g; colour[o + 2] = cc.b;
@@ -136,7 +138,7 @@ export function buildLowPolyLand(scene, map) {
   const skirt = new THREE.BufferGeometry();
   skirt.setAttribute('position', new THREE.Float32BufferAttribute(sk, 3));
   skirt.computeVertexNormals();
-  scene.add(new THREE.Mesh(skirt, new THREE.MeshLambertMaterial({ color: rockCol, side: THREE.DoubleSide })));
+  scene.add(new THREE.Mesh(skirt, new THREE.MeshLambertMaterial({ color: colourOf ? colourOf(-200, 0, 0, 0, 0.5) : rockCol, side: THREE.DoubleSide })));
   return mesh;
 }
 

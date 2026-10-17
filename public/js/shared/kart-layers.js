@@ -1291,7 +1291,7 @@
     const plots = [0, 1, 2, 3].map((k) => turn({ x: 600, y: 1000 }, S, k));
     const pre = makeTerrain({ size: S, terrain: { ...base, flats: [plaza] } });
     const def = {
-      id: 'graveyard', name: 'The Graveyard', emoji: '🪦', theme: 'graveyard', size: S,
+      id: 'graveyard', name: 'The Graveyard', emoji: '🪦', theme: 'graveyard', size: S, look: 'bright',
       blurb: 'Hills of headstones, acid graves and a two-storey crypt with a scythe in it.',
       edge: 'wall', deathZ: -320,
       terrain: { ...base, flats: [plaza, ...plots.map((p) => ({ x: p.x, y: p.y, r: 230, z: Math.round(pre.at(p.x, p.y)), soft: 0.75 }))] },
@@ -1386,6 +1386,19 @@
     for (const p of placed.spawns) def.spawns.push({ ...p, z: hAt(p.x, p.y) });
     for (const d of placed.deco) def.deco.push({ ...d, z: d.z ?? hAt(d.x, d.y) });
     // The fences on each plot's levelled ground lie flat: no need for anything else.
+    // A moonlit night, but bright: teal grass, lilac flagstones round a lilac stone crypt under violet
+    // slates, white and violet rims on every edge.
+    def.palette = {
+      land: { grass: ['#2a7553', '#43995f'], earth: '#56684c', paving: ['#cdc4e2', '#bdb3d6'], plaza, noise: 0.025 },
+      crypt: { top: '#bdb5d6', side: '#cec6e3', top2: '#aaa1c6', side2: '#bab1d4', pattern: 'slabs', cell: 40, sidePattern: 'slabs', sideCell: 40, round: 3, foot: 0.85 },
+      slate: { top: '#6a59b0', side: '#cec6e3', top2: '#5a4a9c', pattern: 'tiles', cell: 34, round: 3 },
+      gallery: { top: '#b47d50', side: '#8a5a36', top2: '#96663f', pattern: 'planks', cell: 18, round: 2 },
+      stair: { top: '#cec6e3', side: '#bab1d4', top2: '#ffffff', pattern: 'chevrons', cell: 40, round: 0 },
+      pillar: { top: '#dcd5ec', side: '#dcd5ec', side2: '#c4bbdc', sidePattern: 'bands', sideCell: 30 },
+      tomb: { top: '#c9c4d8', side: '#b9b3cb' },
+      fence: { top: '#2b2840', side: '#2b2840' },
+      rim: ['#ffffff', '#9b6bff'], hazardRim: ['#ffffff', '#9b6bff'],
+    };
     return def;
   }
 

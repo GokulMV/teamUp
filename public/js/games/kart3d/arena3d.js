@@ -6,14 +6,15 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { tex, canvasTexture, rng, MOBILE, boostPad, decorate, addHills, addMoonlitTrees } from './world.js';
-import { buildSculpted, buildTyres, SCULPTED_KINDS } from './sculpt3d.js';
-import { buildBrightSolids } from './bright3d.js';
+import { buildSculpted, buildTyres, buildLowPolyLand, SCULPTED_KINDS } from './sculpt3d.js';
+import { buildBrightSolids, landColour } from './bright3d.js';
 import { buildHarbour } from './harbour3d.js';
 import { buildSkyGardens } from './skygarden3d.js';
 import { buildKeep } from './keep3d.js';
+import { buildGraveyard } from './graveyard3d.js';
 
 // Bright arenas' own set dressing (and models for their moving obstacles), by theme.
-const DRESSINGS = { harbour: buildHarbour, skygarden: buildSkyGardens, keep: buildKeep };
+const DRESSINGS = { harbour: buildHarbour, skygarden: buildSkyGardens, keep: buildKeep, graveyard: buildGraveyard };
 
 const K = window.KartCore;
 const L = K.Layers;
@@ -587,6 +588,7 @@ export function buildLayered(scene, map, theme, ctx) {
     scene.add(mesh);
   }
   if (sculpted) buildSculpted(scene, map, ctx);
+  else if (map.land && bright) buildLowPolyLand(scene, map, landColour(map));
   else if (map.land) buildLand(scene, map, kit);
   if (special.tomb.length) buildTombs(scene, map, special.tomb);
   if (special.fence.length) buildFences(scene, map, special.fence);

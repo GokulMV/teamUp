@@ -856,6 +856,24 @@ function foamRing(x, y, r, z) {
   return mergeGeometries(parts);
 }
 
+// ---------- rolling ground ----------
+// The colour of one face of an arena's hills (for sculpt3d's low-poly land), from its palette's
+// land: { grass: [dark, light], earth, paving: [a, b], plaza: {x, y, r} } — flagstones on the
+// plaza, grass lighter up the hills, bare earth on the steep bits.
+export function landColour(map) {
+  const L = (map.palette && map.palette.land) || {};
+  const [g0, g1] = (L.grass || ['#48b052', '#7fd86f']).map((h) => new THREE.Color(h));
+  const earth = new THREE.Color(L.earth || '#8c6239');
+  const [p0, p1] = (L.paving || ['#cfc8bd', '#bdb5a8']).map((h) => new THREE.Color(h));
+  const plaza = L.plaza;
+  const k = L.noise ?? 0.05; // how much each face's shade varies
+  return (h, up, x, y, n) => {
+    if (plaza && Math.hypot(x - plaza.x, y - plaza.y) < plaza.r - 30) return p0.clone().lerp(p1, n);
+    if (up < 0.8) return earth.clone().lerp(g0, Math.max(0, (up - 0.6) / 0.2)).offsetHSL(0, 0, (n - 0.5) * k * 0.8);
+    return g0.clone().lerp(g1, Math.min(1, Math.max(0, 0.3 + h / 120))).offsetHSL(0, 0, (n - 0.5) * k);
+  };
+}
+
 // ---------- the whole arena ----------
 // Draws every static solid, the rims and the paint, the water and its foam. Solids big enough to
 // drive under come back as roofs (each its own mesh and material, so it can fade like arena3d's).
@@ -879,7 +897,8 @@ export function buildBrightSolids(scene, map, ctx, skip = new Set()) {
       const mat = makeMaterial();
       const mesh = new THREE.Mesh(geo, mat);
       mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      // (Not receiving: its underside, seen from beneath, would shimmer with shadow acne.)
+      mesh.receiveShadow = false;
       const group = new THREE.Group();
       group.add(mesh);
       scene.add(group);
