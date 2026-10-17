@@ -561,6 +561,59 @@ function buildPads(scene, map, theme, ctx) {
 }
 
 // ---------- water, ice and lava ----------
+// GLSL value noise + fbm, shared by the lava and water shaders.
+const NOISE_GLSL = `
+  float lqHash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  float lqNoise(vec2 p) {
+    vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(lqHash(i), lqHash(i + vec2(1.0, 0.0)), f.x), mix(lqHash(i + vec2(0.0, 1.0)), lqHash(i + vec2(1.0, 1.0)), f.x), f.y);
+  }
+  float lqFbm(vec2 p) { float v = 0.0; float a = 0.5; for (int i = 0; i < 4; i++) { v += a * lqNoise(p); p *= 2.03; a *= 0.5; } return v; }
+`;
+
+// Flowing lava: dark cooled crust plates with glowing cracks between them, drifting along the
+// ribbon's v (flow) direction, darker towards the banks (u = 0 / 1). Unlit, fogged, bright enough
+// in the cracks to bloom. `radial`: for round pools (crater lake), banks are at the rim instead.
+function lavaMaterial(ctx, { scale = [3, 6], radial = false } = {}) {
+  return new THREE.ShaderMaterial({
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTime: { value: 0 } }]),
+    vertexShader: `
+      varying vec2 vUv;
+      #include <fog_pars_vertex>
+      void main() {
+        vUv = uv;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader: `
+      uniform float uTime;
+      varying vec2 vUv;
+      #include <fog_pars_fragment>
+      ${NOISE_GLSL}
+      void main() {
+        vec2 p = vec2(vUv.x * ${scale[0].toFixed(1)}, vUv.y * ${scale[1].toFixed(1)});
+        float flow = uTime * 0.16;
+        float plates = lqFbm(p * 1.3 + vec2(0.0, -flow));
+        float r = 1.0 - abs(2.0 * lqNoise(p * 3.1 + vec2(1.7, -flow * 1.4)) - 1.0); // ridged: thin bright lines
+        float cracks = smoothstep(0.78, 0.97, r);
+        float hotZone = smoothstep(0.52, 0.72, plates);
+        float heat = clamp(max(cracks, hotZone * 0.85), 0.0, 1.0);
+        ${radial ? 'float bank = smoothstep(0.5, 0.36, length(vUv - 0.5));' : 'float bank = smoothstep(0.0, 0.2, vUv.x) * smoothstep(1.0, 0.8, vUv.x);'}
+        heat *= mix(0.25, 1.0, bank);
+        vec3 crust = mix(vec3(0.06, 0.025, 0.02), vec3(0.16, 0.06, 0.03), plates);
+        vec3 hot = mix(vec3(0.85, 0.16, 0.03), vec3(1.0, 0.5, 0.1), smoothstep(0.65, 1.0, heat));
+        float pulse = 0.85 + 0.15 * sin(uTime * 1.6 + vUv.y * 23.0 + plates * 6.0);
+        vec3 col = mix(crust, hot * (1.05 + 0.35 * pulse), heat);
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+        #include <fog_fragment>
+      }`,
+    fog: true,
+  });
+}
+
 function buildLiquids(scene, map, theme, ctx, R) {
   const b = map.bounds;
   if (map.water !== null && map.water !== undefined) {
@@ -571,12 +624,47 @@ function buildLiquids(scene, map, theme, ctx, R) {
       color: theme.water || 0x2e86c1, roughness: 0.06, metalness: 0.15, transparent: true, opacity: 0.84,
       normalMap: normal, normalScale: new THREE.Vector2(0.55, 0.55), depthWrite: false,
     });
-    const size = Math.max(b.maxX - b.minX, b.maxY - b.minY) + 16000;
-    const water = new THREE.Mesh(new THREE.PlaneGeometry(size, size, 1, 1).rotateX(-Math.PI / 2), mat);
+    mat.opacity = 0.95;
+    // Each vertex knows how deep the water is there, so the shore fades softly instead of following
+    // the terrain triangles in steps, shallow water is turquoise and deep water blue, with foam.
+    const span = Math.max(b.maxX - b.minX, b.maxY - b.minY) + 3000;
+    const cells = Math.min(220, Math.ceil(span / 50));
+    const geo = new THREE.PlaneGeometry(span, span, cells, cells).rotateX(-Math.PI / 2);
+    const pos = geo.attributes.position;
+    const depth = new Float32Array(pos.count);
+    for (let k = 0; k < pos.count; k++) {
+      const x = pos.getX(k) + map.center[0];
+      const z = pos.getZ(k) + map.center[1];
+      depth[k] = map.water - map.terrainAt(x, z);
+    }
+    geo.setAttribute('aDepth', new THREE.BufferAttribute(depth, 1));
+    const uTime = ctx.uniforms.uTime;
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = uTime;
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nattribute float aDepth;\nvarying float vDepth;\nvarying vec2 vWXZ;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvDepth = aDepth;\nvWXZ = (modelMatrix * vec4(position, 1.0)).xz;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>\nuniform float uTime;\nvarying float vDepth;\nvarying vec2 vWXZ;\n${NOISE_GLSL}`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          float wd = vDepth;
+          diffuseColor.rgb = mix(vec3(0.33, 0.86, 0.80), diffuseColor.rgb, smoothstep(3.0, 80.0, wd));
+          float foamN = lqNoise(vWXZ * 0.035 + vec2(uTime * 0.25, uTime * 0.18));
+          float foam = (1.0 - smoothstep(0.0, 9.0 + foamN * 6.0, wd)) * (0.55 + 0.45 * sin(uTime * 1.8 + wd * 0.9 + foamN * 6.0));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.97, 0.99, 1.0), clamp(foam, 0.0, 0.85));
+          diffuseColor.a *= smoothstep(-0.5, 3.0, wd);`);
+    };
+    const water = new THREE.Mesh(geo, mat);
     water.position.set(map.center[0], map.water, map.center[1]);
     water.receiveShadow = true;
     water.renderOrder = 1;
     scene.add(water);
+    // Open sea beyond the detailed patch: always deep.
+    const outer = new THREE.Mesh(new THREE.RingGeometry(span * 0.7, span * 6, 48, 1).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({
+      color: theme.water || 0x2e86c1, roughness: 0.08, metalness: 0.15, normalMap: normal, normalScale: new THREE.Vector2(0.55, 0.55),
+    }));
+    outer.position.set(map.center[0], map.water - 0.5, map.center[1]);
+    scene.add(outer);
     ctx.water.push(normal);
   }
   // Frozen rivers (ice) in the snow theme: flat beds of trenches with a level.
@@ -592,14 +680,12 @@ function buildLiquids(scene, map, theme, ctx, R) {
   const lavas = map.liquids.filter((l) => l.kind === 'lava');
   if (lavas.length) {
     for (const l of lavas) {
-      const lt = tex.lava().clone();
-      lt.needsUpdate = true;
-      lt.repeat.set(2, 1);
       const surf = (x, z) => map.natural(x, z) + l.depth * 0.38;
-      const geo = ribbonAlong(l.pts, l.w * 0.78, surf, 40, 110);
-      const lava = addMesh(scene, geo, new THREE.MeshStandardMaterial({ map: lt, emissive: 0xffffff, emissiveMap: lt, emissiveIntensity: 1.4, roughness: 0.5 }));
+      const geo = ribbonAlong(l.pts, l.w * 0.78, surf, 40, 220);
+      const mat = lavaMaterial(ctx);
+      mat.uniforms.uTime = ctx.uniforms.uTime;
+      const lava = addMesh(scene, geo, mat);
       lava.receiveShadow = false;
-      ctx.lava.push(lt);
     }
     // A couple of warm lights where lava passes the road.
     for (const l of lavas.slice(0, 3)) {
@@ -853,13 +939,33 @@ function buildLandmarks(scene, map, theme, ctx, R) {
   if (map.crater) {
     const c = map.crater;
     const floor = map.natural(c.x, c.y);
-    const lt = tex.lava().clone();
-    lt.needsUpdate = true;
-    lt.repeat.set(3, 3);
-    const lake = new THREE.Mesh(new THREE.CircleGeometry(c.r * 0.75, 40).rotateX(-Math.PI / 2), new THREE.MeshStandardMaterial({ map: lt, emissive: 0xffffff, emissiveMap: lt, emissiveIntensity: 1.6 }));
+    const lakeMat = lavaMaterial(ctx, { scale: [5, 5], radial: true });
+    lakeMat.uniforms.uTime = ctx.uniforms.uTime;
+    const lake = new THREE.Mesh(new THREE.CircleGeometry(c.r * 0.75, 48).rotateX(-Math.PI / 2), lakeMat);
     lake.position.set(c.x, floor + 40, c.y);
     scene.add(lake);
-    ctx.lava.push(lt);
+    // The crater's rim hides the lake from the road, so a soft column of glow and heat rises out of
+    // it: brightest at the bottom and in the middle, fading upwards and at its edges (no hard tube).
+    const plume = new THREE.Mesh(new THREE.CylinderGeometry(c.r * 0.55, c.r * 0.35, 1700, 32, 1, true), new THREE.ShaderMaterial({
+      uniforms: { uTime: ctx.uniforms.uTime },
+      vertexShader: `
+        varying vec2 vUv; varying float vFacing;
+        void main() {
+          vUv = uv;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          vFacing = abs(dot(normalize(normalMatrix * normal), normalize(-mv.xyz)));
+          gl_Position = projectionMatrix * mv;
+        }`,
+      fragmentShader: `
+        uniform float uTime; varying vec2 vUv; varying float vFacing;
+        void main() {
+          float a = pow(1.0 - vUv.y, 2.2) * pow(vFacing, 1.6) * (0.85 + 0.15 * sin(uTime * 1.3));
+          gl_FragColor = vec4(vec3(1.0, 0.45, 0.14) * a * 0.9, 1.0);
+        }`,
+      transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    }));
+    plume.position.set(c.x, floor + 850, c.y);
+    scene.add(plume);
     const light = new THREE.PointLight(0xff5a1a, 6, 3000, 1);
     light.position.set(c.x, floor + 300, c.y);
     scene.add(light);
