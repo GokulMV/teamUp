@@ -248,6 +248,18 @@ test('game loops keep to real time: a busy server catches up instead of falling 
   assert.strictEqual(after, 1);
 });
 
+test('a second start while a game runs is refused and the running game carries on', async () => {
+  const { host, room } = await makeRoom(3);
+  await call(host, 'lobby:settings', { mode: 'pictionary' });
+  assert.ok((await call(host, 'game:start')).ok);
+  const game = room.game;
+  const again = await call(host, 'game:start');
+  assert.strictEqual(again.ok, false);
+  assert.match(again.error, /already running/);
+  assert.strictEqual(room.game, game);
+  room.destroy();
+});
+
 // Arena tests play on the flat Colosseum (the controlled bed: no hills, no bridges) unless they ask.
 async function arenaGame(n, settings = {}) {
   const ctx = await makeRoom(n);

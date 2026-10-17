@@ -459,6 +459,8 @@ class Room {
       }
       case 'game:start': {
         if (!this.isHost(player)) return reply({ ok: false, error: 'Only the host can start' });
+        // A double click (or a second tab) must not throw away the game that just started.
+        if (this.state === 'playing') return reply({ ok: false, error: 'A game is already running' });
         return reply(this.startGame());
       }
       case 'game:stop': {

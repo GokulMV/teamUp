@@ -341,7 +341,18 @@ test('layers: snapshots carry every height; respawns use the spawn point height'
   assert.strictEqual(b.z, spawn.z);
 });
 
-test('layers: CPU drivers on The Keep collect boxes, use the jump pads and keep out of the moat', () => {
+// CPU drivers roll dice: seed them, so a test gives the same verdict on every run.
+function seeded(seed, fn) {
+  const real = Math.random;
+  Math.random = K.Weekly.random(seed).next;
+  try {
+    return fn();
+  } finally {
+    Math.random = real;
+  }
+}
+
+test('layers: CPU drivers on The Keep collect boxes, use the jump pads and keep out of the moat', () => seeded(1, () => {
   const Bots = require('../server/games/kart-bots');
   const events = [];
   const room = {
@@ -374,9 +385,9 @@ test('layers: CPU drivers on The Keep collect boxes, use the jump pads and keep 
   assert.ok(pads >= 1, `${pads} jump pad launches`);
   assert.ok(high > 5, `${high.toFixed(0)} kart-seconds up on the walls, the roof or a tower`);
   assert.ok(drowned <= 5, `${drowned} karts drove into the moat by themselves`);
-});
+}));
 
-test('layers: CPU drivers on The Cinder Bowl collect boxes, drive the viaduct and keep out of the lava', () => {
+test('layers: CPU drivers on The Cinder Bowl collect boxes, drive the viaduct and keep out of the lava', () => seeded(1, () => {
   const Bots = require('../server/games/kart-bots');
   const events = [];
   const room = {
@@ -406,13 +417,13 @@ test('layers: CPU drivers on The Cinder Bowl collect boxes, drive the viaduct an
   assert.ok(boxes >= 20, `${boxes} boxes picked up`);
   assert.ok(high > 3, `${high.toFixed(0)} kart-seconds up on the viaduct`);
   assert.ok(burnt <= 3, `${burnt} karts drove into the lava by themselves`);
-});
+}));
 
 test('layers: The Keep, The Graveyard, The Cinder Bowl, Harbour Havoc and Sky Gardens: every spawn and box stands on its floor, and each is reachable from every other', () => {
   for (const id of ['keep', 'graveyard', 'cinder', 'harbour', 'skygardens']) checkArena(K.getMap(id, 'arena'));
 });
 
-test('layers: CPU drivers on Harbour Havoc work the yard, climb the pyramid, use the pads and mostly stay dry', () => {
+test('layers: CPU drivers on Harbour Havoc work the yard, climb the pyramid, use the pads and mostly stay dry', () => seeded(1, () => {
   const Bots = require('../server/games/kart-bots');
   const events = [];
   const room = {
@@ -443,7 +454,7 @@ test('layers: CPU drivers on Harbour Havoc work the yard, climb the pyramid, use
   assert.ok(high > 3, `${high.toFixed(0)} kart-seconds up on the pyramid`);
   assert.ok(events.some(([e]) => e === 'game:kart:pad'), 'somebody took a jump pad');
   assert.ok(wet <= 3, `${wet} karts drove into the water by themselves`);
-});
+}));
 
 test('layers: Harbour Havoc: the bascule bridges lift in turn, and the crane\'s load swings down to kart height', () => {
   const map = K.getMap('harbour', 'arena');
@@ -460,7 +471,7 @@ test('layers: Harbour Havoc: the bascule bridges lift in turn, and the crane\'s 
   assert.ok(low < L.KART_H && low > 0, `the load comes down to ${low.toFixed(0)} (karts are ${L.KART_H} tall)`);
 });
 
-test('layers: CPU drivers on Sky Gardens ride the ring, take the pads up to the high islands and seldom fall off', () => {
+test('layers: CPU drivers on Sky Gardens ride the ring, take the pads up to the high islands and seldom fall off', () => seeded(1, () => {
   const Bots = require('../server/games/kart-bots');
   const events = [];
   const room = {
@@ -491,7 +502,7 @@ test('layers: CPU drivers on Sky Gardens ride the ring, take the pads up to the 
   assert.ok(high > 3, `${high.toFixed(0)} kart-seconds up on the high islands`);
   assert.ok(events.some(([e]) => e === 'game:kart:pad'), 'somebody took a jump pad');
   assert.ok(fell <= 5, `${fell} karts drove off the edge by themselves`);
-});
+}));
 
 test('layers: Sky Gardens: the boardwalks climb between the low and high islands, railed on the outside only; the towers drive through; the sprinkler sweeps the dais', () => {
   const map = K.getMap('skygardens', 'arena');
