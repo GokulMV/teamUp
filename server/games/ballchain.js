@@ -201,6 +201,8 @@ class BallChain {
         if (p.state === 'gone') f |= 32;
         if (t.finish) f |= 64;
         if (b.state === 'frozen') f |= 128;
+        if (p.helping) f |= 256;
+        if (p.afk) f |= 512;
         players.push([p.idx, r(p.x), r(p.y), r(p.vx), r(p.vy), f, r((p.aim * 180) / Math.PI)]);
         if (this.sentWraps.get(p.idx) !== p.wrapVer) {
           this.sentWraps.set(p.idx, p.wrapVer);
@@ -245,6 +247,7 @@ class BallChain {
       if (this.phaseT <= 0) {
         this.phase = 'run';
         this.runStart = this.time;
+        for (const t of this.teams) for (const sp of t.sim.players) sp.activeAt = this.time;
         this.fx({ type: 'go' });
       }
     } else if (this.phase === 'run') {
@@ -427,6 +430,7 @@ class BallChain {
     if (sp.state !== 'gone') return;
     const team = this.teams.find((t) => t.sim.players.includes(sp));
     sp.state = 'ok';
+    sp.activeAt = this.time;
     B.placeNearBall(team.sim, this.course, sp, team.sim.players.indexOf(sp), team.sim.players.length, this.time);
   }
 
@@ -457,12 +461,14 @@ class BallChain {
       const input = B.cleanInput(data);
       if (!input) return reply({ ok: false });
       sp.input = input;
+      if (input.brace || Math.hypot(input.x, input.y) > 0.2) sp.activeAt = this.time;
       return reply({ ok: true });
     }
     if (event === 'heave') {
       if (!sp || this.phase !== 'run') return reply({ ok: false });
       const team = this.teams.find((t) => t.sim.players.includes(sp));
       if (team.finish) return reply({ ok: false });
+      sp.activeAt = this.time;
       const res = B.heave(team.sim, this.course, sp, this.time);
       if (!res) return reply({ ok: false });
       this.fx({ type: 'heave', idx: sp.idx, team: team.idx, k: res.k, need: res.need, launch: res.launch });

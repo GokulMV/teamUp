@@ -366,6 +366,32 @@ export class Figures {
 }
 
 // Name tag: avatar face + name on a pill in the team colour.
+// A red "!" bubble over a teammate who isn't pulling while the ball is stuck. One texture for all.
+let alertTex = null;
+export function alertBadge() {
+  if (!alertTex) {
+    const c = document.createElement('canvas');
+    c.width = 96; c.height = 96;
+    const ctx = c.getContext('2d');
+    ctx.fillStyle = '#ff3d71';
+    ctx.beginPath(); ctx.arc(48, 44, 38, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(38, 76); ctx.lineTo(58, 76); ctx.lineTo(48, 92); ctx.closePath(); ctx.fill();
+    ctx.lineWidth = 6; ctx.strokeStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(48, 44, 35, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '900 54px "Bricolage Grotesque", "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('!', 48, 47);
+    alertTex = new THREE.CanvasTexture(c);
+    alertTex.colorSpace = THREE.SRGBColorSpace;
+  }
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: alertTex, transparent: true, depthWrite: false, depthTest: false }));
+  sprite.center.set(0.5, 0);
+  sprite.renderOrder = 21;
+  sprite.visible = false;
+  return sprite;
+}
+
 export function nameTag(name, teamColor, avatar, isMe) {
   const c = document.createElement('canvas');
   c.width = 320; c.height = 84;

@@ -687,11 +687,17 @@
     const key = JSON.stringify(r).length + r.mode;
     if (key !== state.lastResultsKey) { state.lastResultsKey = key; confetti(); window.Sfx?.finish?.(); }
 
-    // Games can draw their own results (e.g. Control Room's mission report).
+    // Games can draw their own results (Control Room's mission report, Ball & Chain's standings).
+    // A renderer that throws falls back to the plain ranking below, never a blank screen.
     const custom = window.Games?.[r.mode]?.renderResults;
     if (custom) {
-      custom(r, { title: $('results-title'), teams: $('results-teams'), podium: $('podium'), list: $('results-players') }, api);
-      return;
+      try {
+        custom(r, { title: $('results-title'), teams: $('results-teams'), podium: $('podium'), list: $('results-players'), $, avatarHtml, escapeHtml, teamById }, api);
+        return;
+      } catch (err) {
+        console.error(err);
+        window.reportError?.(err);
+      }
     }
 
     if (r.mode === 'telephone') {
@@ -701,10 +707,6 @@
         ? `<div class="muted" style="width:100%">Most loved albums</div>${r.favorites.map((f, i) => `<div class="step ${['first', 'second', 'third'][i]}">${avatarHtml(f.avatar)}<span class="nm">${escapeHtml(f.owner)}</span><span class="pts">${f.reactions} reactions</span></div>`).join('')}`
         : '';
       $('results-players').innerHTML = '';
-      return;
-    }
-    if (Games[r.mode]?.renderResults) {
-      Games[r.mode].renderResults(r, { $, avatarHtml, escapeHtml, teamById });
       return;
     }
     const arena = r.mode === 'kart' && r.map === 'arena';

@@ -57,6 +57,7 @@ window.Games = window.Games || {};
               <div class="bc-alerts" data-alerts></div>
               <div class="bc-roster" data-roster></div>
               <div class="bc-sync" data-sync><div class="bc-pips" data-pips></div><span data-sync-label>SYNC</span></div>
+              <div class="bc-crew" data-crew></div>
               <div class="bc-keys" data-keys><span><kbd>WASD</kbd>move</span><span><kbd>Space</kbd>heave</span><span><kbd>Shift</kbd>brace (hold)</span></div>
               <div class="bc-spectate hidden" data-spectate>👀 Spectating · you’ll join the next match</div>
             </div>
@@ -97,6 +98,9 @@ window.Games = window.Games || {};
       let clockOffset = null;
       let rtt = 80;
       let local = null;
+      // Rope wraps (post ids per player): what the server last said, and what gets drawn (the same,
+      // except my own rope, which follows my predicted player).
+      const srvWraps = new Map();
       const wraps = new Map();
       const mods = new Map();
       const input = { x: 0, y: 0, brace: false };
@@ -244,8 +248,9 @@ window.Games = window.Games || {};
         const mine = players.find((p) => p.id === api.myId());
         myIdx = mine ? mine.idx : -1;
         myTeam = mine ? mine.team : null;
+        srvWraps.clear();
         wraps.clear();
-        for (const [idx, ...ids] of data.wraps || []) wraps.set(idx, ids);
+        for (const [idx, ...ids] of data.wraps || []) { srvWraps.set(idx, ids); wraps.set(idx, ids); }
         mods.clear();
         data.teams.forEach((t) => { if (t.mods) mods.set(t.idx, t.mods); });
         if (newCourse) {
@@ -274,50 +279,41 @@ window.Games = window.Games || {};
         while (snaps.length > 30) snaps.shift();
         latest = s;
         latestAt = now;
-        if (s.w) for (const [idx, ...ids] of s.w) wraps.set(idx, ids);
-        reconcile(s);
+        if (s.w) for (const [idx, ...ids] of s.w) { srvWraps.set(idx, ids); wraps.set(idx, ids); }
+        reconcile(s, now);
       }
 
       const myBall = (s = latest) => s?.b.find((r) => r[0] === myTeam);
-      function reconcile(s) {
+      function reconcile(s, now) {
         if (myIdx < 0) return;
         const row = s.p.find((r) => r[0] === myIdx);
         if (!row) return;
         const [, x, y, vx, vy, flags] = row;
         const special = flags & (4 | 8 | 32 | 128) || s.ph !== PH.run;
-        const serverWraps = wraps.get(myIdx) || [];
+        // My rope bends round the posts the server says it does. Guessing wraps locally drifted:
+        // a bend guessed differently stuck, and with it a different rope length and position.
+        const serverWraps = srvWraps.get(myIdx) || [];
         if (!local || special) {
-          local = { x, y, px: x, py: y, vx, vy, wraps: serverWraps.slice(), dirs: [], wrapVer: 0, braced: !!(flags & 1), input };
-          deriveDirs();
+          local = { x, y, px: x, py: y, vx, vy, wraps: serverWraps.slice(), dirs: [], wrapVer: 0, braced: !!(flags & 1), input, offSince: 0 };
           return;
         }
+        local.wraps = serverWraps.slice();
         const lead = Math.min(0.2, rtt / 2000);
         const sx = x + vx * lead;
         const sy = y + vy * lead;
         const ex = sx - local.x;
         const ey = sy - local.y;
-        if (Math.hypot(ex, ey) > 110) {
-          Object.assign(local, { x: sx, y: sy, vx, vy });
+        const err = Math.hypot(ex, ey);
+        // Small errors melt away; a big one, or a medium one that won't go away, snaps back to the
+        // server so everyone sees you where you really are.
+        local.offSince = err > 30 ? local.offSince || now : 0;
+        if (err > 100 || (local.offSince && now - local.offSince > 300)) {
+          Object.assign(local, { x: sx, y: sy, vx, vy, offSince: 0 });
         } else {
-          local.x += ex * 0.16; local.y += ey * 0.16;
-          local.vx += (vx - local.vx) * 0.2; local.vy += (vy - local.vy) * 0.2;
+          local.x += ex * 0.25; local.y += ey * 0.25;
+          local.vx += (vx - local.vx) * 0.25; local.vy += (vy - local.vy) * 0.25;
         }
-        if (s.w && s.w.some((r) => r[0] === myIdx)) { local.wraps = serverWraps.slice(); deriveDirs(); }
       }
-      // The server only sends which posts a rope is wrapped round; work out which way it bends.
-      function deriveDirs() {
-        const ball = myBall();
-        if (!local || !ball) return;
-        const pts = [{ x: ball[1], y: ball[2] }, ...local.wraps.map((id) => C.posts[id]), local];
-        local.dirs = local.wraps.map((_, i) => {
-          const P = pts[i];
-          const W = pts[i + 1];
-          const N = pts[i + 2];
-          const s = (N.x - P.x) * (W.y - P.y) - (N.y - P.y) * (W.x - P.x);
-          return s >= 0 ? 1 : -1;
-        });
-      }
-
       // Predict my own player with the shared physics so moving feels instant.
       function predict(dt) {
         if (!local || !latest || latest.ph !== PH.run || myIdx < 0) return;
@@ -352,7 +348,6 @@ window.Games = window.Games || {};
           const d = Math.hypot(dx, dy);
           const min = B.PHYS.ballR + B.PHYS.playerR;
           if (d < min && d > 0.01 && b.z < 40) { local.x = b.x + (dx / d) * min; local.y = b.y + (dy / d) * min; }
-          B.updateWraps(C, local, b);
           B.limitRope(C, local, b, rope, local.braced ? 0 : 1, 0);
         }
         if (local.acc > h) local.acc = 0;
@@ -424,6 +419,7 @@ window.Games = window.Games || {};
             <div><i>🕹️</i><b>Move</b><small>${MOBILE ? 'Left thumb stick' : 'WASD / arrows'}</small></div>
             <div><i>💪</i><b>Heave</b><small>${MOBILE ? 'HEAVE button' : 'Space'} · sync with your team for a big pull</small></div>
             <div><i>⚓</i><b>Brace</b><small>${MOBILE ? 'Hold BRACE' : 'Hold Shift'} · become an anchor</small></div>
+            <div><i>⛓️</i><b>All hands</b><small>The ball digs in unless <em>everyone</em> pulls</small></div>
           </div>` : ''}
           <div class="bc-count" data-count></div>
         </div>`;
@@ -462,7 +458,10 @@ window.Games = window.Games || {};
         const items = t.members.map((i) => {
           const p = byIdx.get(i);
           const f = rows.get(i)?.[5] || 0;
-          const st = f & 32 ? ['💤', 'offline'] : f & 4 ? ['☁️', 'fell'] : f & 8 ? ['💫', 'dizzy'] : f & 1 ? ['⚓', 'brace'] : f & 2 ? ['💪', 'heave'] : ['', ''];
+          const running = latest?.ph === PH.run;
+          const st = f & 32 ? ['💤', 'offline'] : f & 512 ? ['😴', 'away'] : f & 4 ? ['☁️', 'fell'] : f & 8 ? ['💫', 'dizzy']
+            : f & 1 ? ['⚓', 'brace'] : f & 2 ? ['💪', 'heave'] : !running ? ['', ''] : f & 256 ? ['✅', 'pulling']
+              : crewWarn.slack.has(i) ? ['⚠️', 'slack'] : ['', ''];
           return { p, st, me: i === myIdx };
         });
         const sig = JSON.stringify(items.map((x) => [x.p?.idx, x.st[1]]));
@@ -521,6 +520,42 @@ window.Games = window.Games || {};
         q('[data-alerts]').innerHTML = list.map(([k, left]) => `<span class="bc-alert ${k}"><i>${SABOTAGE[k][0]}</i>${SABOTAGE[k][1].replace('!', '')}<b>${Math.ceil(left)}s</b></span>`).join('');
       }
 
+      // All hands: when anyone on my team isn't pulling, the ball digs in. Say who, after a moment
+      // (so a rope going slack for a blink doesn't flash a warning).
+      const crewWarn = { since: 0, show: false, sig: '', slack: new Set() };
+      function renderCrew(now) {
+        const box = q('[data-crew]');
+        crewWarn.slack.clear();
+        let slackers = [];
+        if (myTeam !== null && latest && info && latest.ph === PH.run) {
+          const rows = new Map(latest.p.map((r) => [r[0], r]));
+          const ball = myBall();
+          const members = info.teams[myTeam].members;
+          const finished = (rows.get(myIdx)?.[5] || 0) & 64;
+          slackers = members.filter((i) => {
+            const f = rows.get(i)?.[5] || 0;
+            return !(f & (32 | 512 | 256));
+          });
+          if (!ball || ball[6] !== 0 || finished) slackers = [];
+        }
+        if (slackers.length) crewWarn.since ||= now;
+        else crewWarn.since = 0;
+        crewWarn.show = !!crewWarn.since && now - crewWarn.since > 700;
+        if (crewWarn.show) slackers.forEach((i) => crewWarn.slack.add(i));
+        const meSlack = crewWarn.show && slackers.includes(myIdx);
+        const others = slackers.filter((i) => i !== myIdx).map((i) => byIdx.get(i)?.name || '?');
+        const sig = crewWarn.show ? `${meSlack}|${others.join(',')}` : '';
+        if (sig === crewWarn.sig) return;
+        crewWarn.sig = sig;
+        box.classList.toggle('show', crewWarn.show);
+        box.classList.toggle('me', meSlack);
+        if (!crewWarn.show) return;
+        const list = others.length > 2 ? `${others.slice(0, 2).map(esc).join(', ')} +${others.length - 2}` : others.map(esc).join(' & ');
+        box.innerHTML = meSlack
+          ? `<b>💪 PULL!</b><span>The ball won't budge unless you pull too</span>`
+          : `<b>⛓️ Ball stuck</b><span>Waiting for ${list}</span>`;
+      }
+
       function updateHud(now, viewState) {
         if (!latest || !info) return;
         const s = latest;
@@ -567,6 +602,7 @@ window.Games = window.Games || {};
         }
         renderRace(now, viewState ? viewState.balls : []);
         renderSync(now);
+        renderCrew(now);
         if (now - alertsAt > 300) { alertsAt = now; renderAlerts(); }
         renderRoster(false);
       }
@@ -588,6 +624,8 @@ window.Games = window.Games || {};
         if (!info || !C) return;
         predict(dt);
         const v = interpolated();
+        window.__bcStats.view = v; // what this screen shows (tests compare it across players)
+        window.__bcStats.local = local;
         if (v) {
           const meV = v.players.find((p) => p.idx === myIdx);
           if (meV && local && latest?.ph === PH.run && !(meV.flags & (4 | 8 | 32))) {
@@ -595,6 +633,7 @@ window.Games = window.Games || {};
             if (local.braced) meV.flags |= 1;
             wraps.set(myIdx, local.wraps);
           }
+          for (const p of v.players) p.slack = crewWarn.slack.has(p.idx);
           const focusTeam = myTeam ?? leadTeam();
           const fb = v.balls.find((b) => b.team === focusTeam);
           const intro = latest && latest.ph === PH.countdown ? Math.max(0, Math.min(1, 1 - (latest.pt - 0.4) / ((info.courseIdx === 0 ? 7 : 5) - 1.4))) : 1;
@@ -713,6 +752,11 @@ window.Games = window.Games || {};
             info.teams.forEach((t) => { const st = e.standings.find((s) => s.idx === t.idx); if (st) t.points = st.points; });
             break;
           case 'gone': case 'back': renderRoster(true); break;
+          case 'afk':
+            if (e.team === myTeam && e.on && e.idx !== myIdx) banner('😴', `${byIdx.get(e.idx)?.name || 'A teammate'} is away`, 'The ball stops waiting for them until they move again', 'warn');
+            else if (e.idx === myIdx && e.on) banner('😴', 'You went quiet', 'Your team carries on without you. Move to join back in.', 'warn');
+            renderRoster(true);
+            break;
           default: break;
         }
       }

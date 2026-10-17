@@ -8,7 +8,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { MOBILE, canvasTexture, tex as kartTex } from './kart3d/world.js';
 import { buildCourse, buildSky, buildClouds, THEMES } from './ballchain3d/course.js';
-import { Figures, nameTag } from './ballchain3d/figures.js';
+import { Figures, nameTag, alertBadge } from './ballchain3d/figures.js';
 
 const BC = window.BallChainCore;
 const R = BC.PHYS.ballR;
@@ -327,10 +327,14 @@ export class BallChain3D {
     const teamColor = new Map(this.teams.map((t) => [t.idx, t.color]));
     this.figures = new Figures(scene, m.players.map((p) => ({ idx: p.idx, color: p.color, team: p.team, teamColor: teamColor.get(p.team), avatar: p.avatar })), { mobile: MOBILE });
     this.tags = new Map();
+    this.badges = new Map();
     for (const p of m.players) {
       const tag = nameTag(p.name, teamColor.get(p.team), p.avatar || 0, p.idx === m.myIdx);
       scene.add(tag);
       this.tags.set(p.idx, tag);
+      const badge = alertBadge();
+      scene.add(badge);
+      this.badges.set(p.idx, badge);
     }
     // A glowing ring under your own feet.
     this.meRing = new THREE.Mesh(new THREE.RingGeometry(17, 23, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthWrite: false }));
@@ -363,6 +367,7 @@ export class BallChain3D {
     for (const mtl of this.ropeMats.values()) { mtl.map.dispose(); mtl.dispose(); }
     this.figures.dispose();
     for (const t of this.tags.values()) { scene.remove(t); t.material.map.dispose(); t.material.dispose(); }
+    for (const b of this.badges.values()) { scene.remove(b); b.material.dispose(); } // the badge texture is shared
     scene.remove(this.meRing);
     this.world = null;
   }
@@ -587,9 +592,11 @@ export class BallChain3D {
       }, dt, t);
       const rope = this.ropes.get(p.idx);
       const tag = this.tags.get(p.idx);
+      const badge = this.badges.get(p.idx);
       if (!pose) {
         rope.mesh.visible = false;
         tag.visible = false;
+        badge.visible = false;
         continue;
       }
       if (!falling) this.splashed.delete(p.idx);
@@ -600,6 +607,13 @@ export class BallChain3D {
       const d = this.camera.position.distanceTo(tag.position);
       const w = Math.max(56, Math.min(170, d * 0.105)) * (p.idx === this.myIdx ? 0.85 : 1);
       tag.scale.set(w, w * (84 / 320), 1);
+      // Not pulling while the ball is stuck: a bobbing "!" over the name.
+      badge.visible = !!p.slack && !falling;
+      if (badge.visible) {
+        const bw = w * 0.3 * (1 + Math.sin(t * 9) * 0.06);
+        badge.position.set(pose.head.x, pose.head.y + 16 + w * (84 / 320) + 2 + Math.abs(Math.sin(t * 4)) * w * 0.05, pose.head.z);
+        badge.scale.set(bw, bw, 1);
+      }
       if (p.idx === this.myIdx) {
         this.meRing.visible = !falling;
         this.meRing.position.set(lx + p.x, ground + 1.2, -p.y);

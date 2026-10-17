@@ -29,6 +29,11 @@
     playerFallTime: 1.0,
     stunTime: 0.6,
     stepDt: 1 / 60,
+    // All hands: the ball digs in unless everyone is helping. Its mass is multiplied by this for
+    // 0, 1, 2+ teammates not pulling their weight, so one slacker leaves the rest crawling.
+    crewDig: [1, 14, 40],
+    helpTaut: 0.95, // a rope this close to its rest length (or longer) is doing some pulling
+    afkTime: 25, // seconds without input before a player stops counting toward the crew
   };
 
   const ROPES = {
@@ -91,7 +96,7 @@
     },
     plates: {
       name: 'Airlock Gate', icon: '🔐', len: 740, diff: 2, tags: ['coord'],
-      hint: 'Stand on a glowing plate to hold the gate open for the ball.',
+      hint: 'Stand on a glowing plate to hold the gate open (that counts as pulling).',
       build(b) {
         b.floor(-HALF, HALF, 0, 740, 'pad');
         b.wall(-HALF, -80, 370, 402, 'wall'); b.wall(80, HALF, 370, 402, 'wall');
@@ -395,9 +400,46 @@
   }
 
   const activePlayers = (team) => team.players.filter((p) => p.state !== 'gone');
-  function ballMass(team, t) {
+  // The ball's weight for the team on the course (more players, heavier ball, so every team size
+  // pulls at the same speed), then how deep it has dug in because someone isn't helping.
+  function baseMass(team, t) {
     const n = Math.max(1, activePlayers(team).length);
     return PHYS.ballMassPer * n * (team.mods.heavy > t ? 1.8 : 1);
+  }
+  const ballMass = (team, t) => baseMass(team, t) * (team.crew ? team.crew.dig : 1);
+
+  // ---------- all hands ----------
+  // A player is helping when they pull on a taut rope (any pull away from the ball counts, so
+  // steering from the side does too), have just heaved, brace against a taut rope, or hold a
+  // pressure plate. Stunned or falling players aren't helping; offline and AFK ones don't count.
+  function onAnyPlate(C, p) {
+    return C.plates.some((pl) => (p.x - pl.x) ** 2 + (p.y - pl.y) ** 2 <= (pl.r + PHYS.playerR * 0.4) ** 2);
+  }
+  function isHelping(team, C, p, rope) {
+    if (p.state !== 'ok') return false;
+    if (p.heaveCd > PHYS.heaveCd - 0.8) return true;
+    if (onAnyPlate(C, p)) return true;
+    const pts = ropePoints(C, p, team.ball);
+    if (pathLen(pts) < rope.rest * PHYS.helpTaut) return false;
+    if (p.braced) return true;
+    const m = Math.hypot(p.input.x, p.input.y);
+    if (m < 0.3) return false;
+    const [ax, ay] = dirTo(pts[pts.length - 2], pts[pts.length - 1]); // from the rope's anchor to the player
+    return (p.input.x * ax + p.input.y * ay) / m > 0.1;
+  }
+  function crewCheck(team, C, t) {
+    const rope = ropeFor(team, t);
+    let n = 0;
+    let h = 0;
+    for (const p of team.players) {
+      if (p.state === 'gone' || p.afk) { p.helping = false; continue; }
+      n++;
+      p.helping = isHelping(team, C, p, rope);
+      if (p.helping) h++;
+    }
+    const missing = n - h;
+    team.crew = { n, h, missing, dig: PHYS.crewDig[Math.min(PHYS.crewDig.length - 1, missing)] };
+    return team.crew;
   }
   function ropeFor(team, t) {
     if (team.mods.snarl > t) return { rest: team.rope.rest * 0.62, max: team.rope.max * 0.7 };
@@ -690,6 +732,7 @@
   function stepTeam(team, C, t, dt, events) {
     const b = team.ball;
     const rope = ropeFor(team, t);
+    crewCheck(team, C, t);
     const mB = ballMass(team, t);
     const invMb = 1 / mB;
     const ballLive = b.state === 'ok';
@@ -872,6 +915,13 @@
         if (p.braced) p.stats.brace += dt;
         if (Math.hypot(p.input.x, p.input.y) > 0.2) p.aim = Math.atan2(p.input.y, p.input.x);
       }
+      // Nobody can hold a whole team hostage: after a while without any input a player stops
+      // counting toward the crew (the server stamps activeAt whenever they move or heave).
+      const afk = p.state !== 'gone' && p.activeAt !== undefined && t - p.activeAt > PHYS.afkTime;
+      if (afk !== !!p.afk) {
+        p.afk = afk;
+        events.push({ type: 'afk', team: team.id, idx: p.idx, on: afk });
+      }
     });
     updateGates(team, C, dt);
     const m = team.mods;
@@ -921,13 +971,14 @@
     const mult = 1 + PHYS.syncStep * (k - 1);
     const out = { k, launch: false, need: Math.max(1, Math.min(n, n >= 4 ? 3 : 2)) };
     if (b.state !== 'ok') return out;
+    const crew = crewCheck(team, C, t); // the heave itself counts as helping
     const rope = ropeFor(team, t);
     const pts = ropePoints(C, p, b);
     const L = pathLen(pts);
     const taut = clamp((L - rope.rest * 0.6) / (rope.rest * 0.4), 0, 1);
     if (taut > 0.05) {
       const [bx, by] = dirTo(pts[0], pts[1]);
-      const dv = (PHYS.heaveDv * mult * taut) / n;
+      const dv = (PHYS.heaveDv * mult * taut) / n / crew.dig;
       b.vx += bx * dv; b.vy += by * dv;
       if (!p.braced) {
         const [px, py] = dirTo(pts[pts.length - 2], pts[pts.length - 1]);
@@ -940,7 +991,7 @@
       const m = Math.hypot(mx, my) || 1;
       p.vx += (mx / m) * PHYS.heaveDash; p.vy += (my / m) * PHYS.heaveDash;
     }
-    if (k >= out.need && !sync.launched && !b.air && b.vy > 40 && inRamp(C, b.x, b.y)) {
+    if (k >= out.need && crew.missing === 0 && !sync.launched && !b.air && b.vy > 40 && inRamp(C, b.x, b.y)) {
       const extra = k - out.need;
       b.air = true;
       b.vz = 430 + 55 * extra;
@@ -979,7 +1030,7 @@
     PHYS, ROPES, LENGTHS, COURSE_TIME, LANE_SPACING, SECTIONS, OBSTACLES, THEMES,
     rng, shuffle, planMatch, buildCourse,
     floorOffset, windOn, windIn, armAngle, hammerPos, floorAt, surfaceAt,
-    makeTeam, spawnTeam, placeNearBall, activePlayers, ballMass, ropeFor,
+    makeTeam, spawnTeam, placeNearBall, activePlayers, baseMass, ballMass, ropeFor, crewCheck, isHelping,
     ropePoints, pathLen, updateWraps, collideStatic, collideDynamic, drivePlayer, driveBall, tension, limitRope,
     stepTeam, tickTeam, updateGates, inRamp, heave, cleanInput, teamSizes,
   };

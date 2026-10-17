@@ -302,6 +302,126 @@ test('ball & chain: ball mass scales with team size so a team of 2 and a team of
   assert.strictEqual(B.ballMass({ players: [{}, {}], mods: { heavy: 0 } }, 0) * 3, B.ballMass({ players: Array(6).fill({}), mods: { heavy: 0 } }, 0));
 });
 
+// ---------- all hands ----------
+test('ball & chain: all hands: the ball digs in unless everyone pulls, so one slacker leaves the rest crawling', () => {
+  const pull = (n, helpers) => {
+    const C = course('mudice', 'mudice');
+    const team = makeTeam(C, n);
+    place(team.ball, 0, 300);
+    team.players.forEach((p, i) => { place(p, -150 + (300 * i) / (n - 1), 450); p.input = { x: 0, y: i < helpers ? 1 : 0, brace: false }; });
+    simulate(team, C, 3);
+    return { moved: team.ball.y - 300, crew: team.crew };
+  };
+  for (const n of [2, 4, 6]) {
+    const full = pull(n, n);
+    const one = pull(n, n - 1);
+    assert.deepStrictEqual([full.crew.missing, full.crew.dig], [0, 1]);
+    assert.strictEqual(one.crew.missing, 1);
+    assert.ok(full.moved > 250, `team of ${n}: everyone pulling moves the ball (${Math.round(full.moved)})`);
+    assert.ok(one.moved < full.moved * 0.2, `team of ${n}: one slacker leaves the ball crawling (${Math.round(one.moved)} vs ${Math.round(full.moved)})`);
+    if (n >= 4) assert.ok(pull(n, n - 2).moved < full.moved * 0.08, `team of ${n}: two slackers and it barely moves`);
+  }
+});
+
+test('ball & chain: plates, braces against a taut rope and heaves count as helping; a slack rope or a stun does not', () => {
+  const C = course('plates');
+  const team = makeTeam(C, 3);
+  const plate = C.plates[0];
+  place(team.ball, plate.x + 120, plate.y);
+  const [a, b, c] = team.players;
+  place(a, plate.x, plate.y); // on the plate, rope slack: holding the gate is the job
+  place(b, team.ball.x + 200, plate.y); b.input = { x: 1, y: 0, brace: false }; // pulling away
+  place(c, team.ball.x, plate.y + 100); // idle beside the ball
+  B.crewCheck(team, C, 0);
+  assert.deepStrictEqual(team.players.map((p) => p.helping), [true, true, false]);
+  assert.strictEqual(team.crew.dig, B.PHYS.crewDig[1]);
+  // Pulling sideways still pulls (steering the ball counts).
+  c.input = { x: 0.2, y: 1, brace: false };
+  place(c, team.ball.x, plate.y + 175);
+  B.crewCheck(team, C, 0);
+  assert.strictEqual(c.helping, true);
+  // Walking back toward the ball doesn't.
+  c.input = { x: 0, y: -1, brace: false };
+  assert.strictEqual(B.crewCheck(team, C, 0).missing, 1);
+  // Braced on a taut rope: an anchor. Braced with slack: just standing there.
+  c.input = { x: 0, y: 0, brace: true }; c.braced = true;
+  assert.strictEqual(B.crewCheck(team, C, 0).missing, 0);
+  place(c, team.ball.x, plate.y + 90);
+  assert.strictEqual(B.crewCheck(team, C, 0).missing, 1);
+  // A heave counts for a moment, and a stunned player doesn't help.
+  c.braced = false; c.input = { x: 0, y: 0, brace: false };
+  B.heave(team, C, c, 0);
+  assert.strictEqual(B.crewCheck(team, C, 0.1).missing, 0);
+  c.heaveCd = 0;
+  b.state = 'stun';
+  assert.deepStrictEqual(B.crewCheck(team, C, 2).missing, 2);
+  // Offline players don't count at all.
+  b.state = 'gone';
+  c.state = 'gone';
+  assert.deepStrictEqual([B.crewCheck(team, C, 2).n, team.crew.missing], [1, 0]);
+});
+
+test('ball & chain: a lone heave barely nudges a dug-in ball, and the ramp launch needs the whole team', () => {
+  const kick = (helpers) => {
+    const C = course('mudice');
+    const team = makeTeam(C, 2);
+    place(team.ball, 0, 300);
+    team.players.forEach((p, i) => { place(p, -60 + 120 * i, 300 + B.ROPES.normal.rest + 30); p.input = { x: 0, y: i < helpers ? 1 : 0, brace: false }; });
+    B.crewCheck(team, C, 0);
+    const v0 = team.ball.vy;
+    B.heave(team, C, team.players[0], 0);
+    return team.ball.vy - v0;
+  };
+  const together = kick(2);
+  const alone = kick(1);
+  assert.ok(together > 60, `heave with the whole crew helping (${together})`);
+  assert.ok(alone < together / 10, `heave with a teammate slacking (${alone})`);
+  // Launch: the synced heave count is there, but one teammate is idle.
+  const C = course('ramp');
+  const team = makeTeam(C, 4);
+  const r = C.ramps[0];
+  place(team.ball, (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2);
+  team.ball.vy = 120;
+  team.players.forEach((p, i) => { place(p, -90 + 60 * i, team.ball.y + B.ROPES.normal.rest + 40); p.input = { x: 0, y: i < 3 ? 1 : 0, brace: false }; });
+  const res = team.players.slice(0, 3).map((p) => B.heave(team, C, p, 0.01));
+  assert.strictEqual(res[2].k, 3);
+  assert.ok(res.every((x) => !x.launch) && !team.ball.air, 'no launch while someone is slacking');
+});
+
+test('ball & chain: snapshots flag who is helping; after 25 s without input a player goes AFK and stops counting', async () => {
+  const { host, players, game, go, step, room, sp, teamOf } = await bcGame(2, { bcSabotage: false });
+  go();
+  game.runStart = game.time;
+  for (const t of game.teams) for (const p of t.sim.players) p.activeAt = game.time;
+  const team = teamOf(0).sim;
+  const [a, b] = [sp(0), sp(1)];
+  // a pulls away from the ball, b stands still.
+  place(a, team.ball.x, team.ball.y + B.ROPES.normal.rest + 40); a.input = { x: 0, y: 1, brace: false };
+  place(b, team.ball.x + 60, team.ball.y - 80);
+  step(2);
+  const state = once(host, 'game:bc:state');
+  step(2);
+  const s = await state;
+  const flags = (p) => s.p.find((r) => r[0] === p.idx)[5];
+  assert.ok(flags(a) & 256, 'a is helping');
+  assert.ok(!(flags(b) & 256), 'b is not');
+  assert.strictEqual(team.crew.missing, 1);
+  // Input keeps you counted; silence for 25 s does not.
+  a.activeAt = game.time;
+  b.activeAt = game.time - B.PHYS.afkTime - 1;
+  const afk = once(host, 'game:bc:fx', (e) => e.type === 'afk' && e.idx === b.idx && e.on);
+  step(1);
+  await afk;
+  assert.strictEqual(b.afk, true);
+  step(1);
+  assert.deepStrictEqual([team.crew.n, team.crew.missing], [1, 0], 'the AFK player no longer holds the team up');
+  // Any input brings them back.
+  await call(players[1].socket, 'game:input', { x: 1, y: 0 });
+  step(1);
+  assert.strictEqual(b.afk, false);
+  room.destroy();
+});
+
 // ---------- plates and gates ----------
 test('ball & chain: a pressure plate holds the gate open; the gate blocks the ball when closed', () => {
   const C = course('plates');
@@ -371,7 +491,11 @@ test('ball & chain: a ball that falls goes back to the last checkpoint after a s
   const p = team.sim.players[0];
   const fallsBefore = game.stats.get(p.id).falls;
   const popped = once(host, 'game:bc:fx', (e) => e.type === 'pop' && e.idx === p.idx);
-  p.x = -900;
+  // Just off the side of the lane, within rope reach (an idle team's ball is dug in and its rope
+  // would haul anyone further out straight back).
+  const side = B.floorAt(C, -150, team.sim.ball.y, game.time, true) ? -1 : 1;
+  Object.assign(team.sim.ball, { x: side * 150, vx: 0, vy: 0 });
+  Object.assign(p, { x: side * 330, y: team.sim.ball.y, vx: 0, vy: 0, wraps: [], dirs: [] });
   step(1);
   assert.strictEqual(p.state, 'fall');
   step(Math.ceil(B.PHYS.playerFallTime * 30) + 1);
@@ -401,7 +525,7 @@ test('ball & chain: the first team to a checkpoint drops a sabotage on the teams
   // Each trap does what it says.
   const t = game.time;
   back.sim.mods.heavy = t + 5;
-  assert.ok(Math.abs(B.ballMass(back.sim, t) - B.PHYS.ballMassPer * 2 * 1.8) < 1e-9);
+  assert.ok(Math.abs(B.baseMass(back.sim, t) - B.PHYS.ballMassPer * 2 * 1.8) < 1e-9);
   back.sim.mods.snarl = t + 5;
   assert.ok(B.ropeFor(back.sim, t).max < back.sim.rope.max);
   back.sim.mods.oil = { x0: -100, x1: 100, y0: 0, y1: 100, until: t + 5 };
@@ -585,12 +709,12 @@ test('ball & chain: disconnects mid-game drop the rope and lighten the ball; rej
   go();
   step(10);
   const team = teamOf(3).sim;
-  const massBefore = B.ballMass(team, game.time);
+  const massBefore = B.baseMass(team, game.time);
   players[3].socket.close();
   await wait(100);
   assert.strictEqual(sp(3).state, 'gone');
   assert.deepStrictEqual(sp(3).wraps, []);
-  assert.ok(B.ballMass(team, game.time) < massBefore, 'the ball mass follows the team still playing');
+  assert.ok(B.baseMass(team, game.time) < massBefore, 'the ball mass follows the team still playing');
   step(10); // the team keeps playing without them
   const back = client();
   const snap = once(back, 'game:snapshot');
@@ -601,7 +725,7 @@ test('ball & chain: disconnects mid-game drop the rope and lighten the ball; rej
   assert.ok(s.init.players.some((p) => p.id === players[3].id));
   assert.strictEqual(sp(3).state, 'ok');
   assert.ok(Math.hypot(sp(3).x - team.ball.x, sp(3).y - team.ball.y) < 200);
-  assert.strictEqual(B.ballMass(team, game.time), massBefore);
+  assert.strictEqual(B.baseMass(team, game.time), massBefore);
   // Inputs work again after rejoining.
   assert.strictEqual((await call(back, 'game:input', { x: 0, y: 1 })).ok, true);
   room.destroy();
