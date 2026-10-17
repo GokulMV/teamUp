@@ -14,6 +14,25 @@
 
   const socket = io({ transports: ['websocket', 'polling'] });
 
+  // A page left open across a deploy would play the old code against the new server: other maps,
+  // another snapshot format, karts jumping about. The server says which build it runs; when it is
+  // not this page's, reload (the saved session puts the player straight back in their room). Only
+  // once per build, so a stale cache somewhere can't make it loop.
+  const BUILD = document.querySelector('meta[name="teamup-build"]')?.content || null;
+  function staleReload(build) {
+    let done = null;
+    try { done = sessionStorage.getItem('teamup-reloaded-for'); } catch { /* storage blocked */ }
+    if (done === String(build)) return false;
+    try { sessionStorage.setItem('teamup-reloaded-for', String(build)); } catch { /* storage blocked */ }
+    location.reload();
+    return true;
+  }
+  socket.on('server:hello', (data) => {
+    const build = data && data.build;
+    if (BUILD && build && build !== BUILD && !staleReload(build)) toast('TeamUp was updated: refresh the page to get the new version');
+  });
+  window.TeamUpStale = () => staleReload(`unknown-map-${BUILD}`); // a game that meets something this code doesn't know
+
   const MODE_NAMES = { pictionary: 'Pictionary', kart: 'Kart Battle', telephone: 'Telephone', ballchain: 'Ball & Chain', controlroom: 'Control Room' };
   const MODE_ICONS = { pictionary: '🎨', kart: '🏎️', telephone: '📞', ballchain: '⛓️', controlroom: '🎛️' };
 
@@ -139,8 +158,15 @@
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
     set(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* ignore */ } },
   };
-  const savedSession = () => { try { return JSON.parse(store.get('teamup-session') || 'null'); } catch { return null; } };
-  const saveSession = (s) => store.set('teamup-session', s ? JSON.stringify(s) : null);
+  // The room session (code + token) is kept per tab, so a reload puts this tab back as the same
+  // player while another tab (a second player on the same computer) stays someone else.
+  const tabStore = {
+    get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { if (v === null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch { /* ignore */ } },
+  };
+  store.set('teamup-session', null); // where older builds kept it, shared by every tab
+  const savedSession = () => { try { return JSON.parse(tabStore.get('teamup-session') || 'null'); } catch { return null; } };
+  const saveSession = (s) => tabStore.set('teamup-session', s ? JSON.stringify(s) : null);
 
   const me = () => state.room?.players.find((p) => p.id === state.me?.playerId);
   const isHost = () => state.room && state.me && state.room.hostId === state.me.playerId;

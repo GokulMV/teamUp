@@ -4,7 +4,7 @@ const express = require('express');
 const { Server } = require('socket.io');
 const { RoomManager } = require('./rooms');
 
-const { renderIndex } = require('./assets');
+const { renderIndex, buildId } = require('./assets');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC = path.join(__dirname, '..', 'public');
@@ -50,6 +50,8 @@ const io = new Server(server, {
 const rooms = new RoomManager(io);
 
 io.on('connection', (socket) => {
+  // Which build this server runs: a page from an older deploy reloads itself (public/js/app.js).
+  socket.emit('server:hello', { build: buildId(PUBLIC) });
   socket.on('room:create', (data, ack) => rooms.create(socket, data, ack));
   socket.on('room:join', (data, ack) => rooms.join(socket, data, ack));
   socket.on('disconnect', () => rooms.disconnect(socket));

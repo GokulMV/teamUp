@@ -213,6 +213,20 @@ test('players can reconnect with their token and keep their identity', async () 
   room.destroy();
 });
 
+test('the page carries the build it was made from, and the server says which build it runs', async () => {
+  // A page left open across a deploy compares the two and reloads (public/js/app.js).
+  const { renderIndex, buildId } = require('../server/assets');
+  const dir = require('path').join(__dirname, '..', 'public');
+  const id = buildId(dir);
+  assert.match(id, /^[0-9a-f]{12}$/);
+  assert.ok(renderIndex(dir).includes(`<meta name="teamup-build" content="${id}">`));
+  const s = connect(url, { transports: ['websocket'], forceNew: true, autoConnect: false });
+  sockets.push(s);
+  const hello = once(s, 'server:hello');
+  s.connect();
+  assert.strictEqual((await hello).build, id);
+});
+
 // Arena tests play on the flat Colosseum (the controlled bed: no hills, no bridges) unless they ask.
 async function arenaGame(n, settings = {}) {
   const ctx = await makeRoom(n);

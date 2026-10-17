@@ -248,6 +248,10 @@ window.Games.kart = {
 
     // ---------- Network ----------
     function onInit(data) {
+      // A map this page doesn't know (or knows as another kind) means the page is older than the
+      // server: reload instead of driving round some other map against the server's.
+      const known = K.mapInfo(data.mapId);
+      if ((!known || known.type !== data.map) && window.TeamUpStale?.()) return;
       const sameRound = info && info.mapId === data.mapId && !!info.reverse === !!data.reverse && info.items === data.items && info.karts.length === data.karts.length;
       info = data;
       map = K.getMap(data.mapId, data.map, { reverse: !!data.reverse });

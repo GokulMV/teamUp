@@ -40,8 +40,29 @@ const MODULE_IMPORTS = [
   '/js/games/ballchain3d/figures.js',
 ];
 
+// The build: one hash over the page and every script and stylesheet it can load. A page left open
+// across a deploy compares it with the server's (app.js) and reloads, instead of playing the old
+// code against the new server (other maps, another snapshot format).
+function buildId(publicDir) {
+  const parts = [];
+  const walk = (dir) => {
+    let names;
+    try { names = fs.readdirSync(path.join(publicDir, dir), { withFileTypes: true }); } catch { return; }
+    for (const d of names.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const url = `${dir}/${d.name}`;
+      if (d.isDirectory()) walk(url);
+      else if (/\.(js|css)$/.test(d.name)) parts.push(`${url}:${hashOf(publicDir, url)}`);
+    }
+  };
+  walk('/js');
+  walk('/css');
+  parts.push(`/index.html:${hashOf(publicDir, '/index.html')}`);
+  return crypto.createHash('sha1').update(parts.join('\n')).digest('hex').slice(0, 12);
+}
+
 function renderIndex(publicDir) {
   let html = fs.readFileSync(path.join(publicDir, 'index.html'), 'utf8');
+  html = html.replace('<meta charset="utf-8">', `<meta charset="utf-8">\n  <meta name="teamup-build" content="${buildId(publicDir)}">`);
   html = html.replace(/(src|href)="(\/(?:js|css|vendor\/moonlit)\/[^"?]+\.(?:js|css))"/g, (m, attr, url) => {
     const h = hashOf(publicDir, url);
     return h ? `${attr}="${url}?v=${h}"` : m;
@@ -56,4 +77,4 @@ function renderIndex(publicDir) {
   return html;
 }
 
-module.exports = { renderIndex };
+module.exports = { renderIndex, buildId };
