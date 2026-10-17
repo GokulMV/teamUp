@@ -588,6 +588,9 @@ textarea { resize: vertical; min-height: 70px; }
   font-size: 0.85rem; animation: warn-blink 0.52s steps(2, jump-none) infinite; box-shadow: 0 0 22px rgba(129, 140, 248, 0.8);
 }
 .kart-warn .item-icon { width: 28px; height: 28px; }
+.kart-warn.sticky { background: linear-gradient(90deg, rgba(190, 24, 93, 0.94), rgba(236, 72, 153, 0.94)); animation: sticky-warn 0.5s ease-in-out infinite alternate; }
+.kart-warn.sticky b { font-variant-numeric: tabular-nums; margin-left: 4px; }
+@keyframes sticky-warn { to { transform: scale(1.05); } }
 @keyframes warn-blink { 50% { opacity: 0.55; transform: scale(1.06); } }
 /* Ink on your screen (never on the HUD). Each blot splats in, drips a little, and the whole layer fades out. */
 .kart-stage > .kart-ink { position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: 0; overflow: hidden; border-radius: inherit; }

@@ -12,9 +12,9 @@ import { MOBILE, part, canvasTexture, tex } from './world.js';
 
 const K = window.KartCore;
 const TAU = Math.PI * 2;
-const SHOT = { rocket: 1, bullet: 2, bomb: 3, bouncer: 4, comet: 5 };
+const SHOT = { rocket: 1, bullet: 2, bomb: 3, bouncer: 4, comet: 5, snowball: 6, sticky: 7 };
 const CODE = Object.fromEntries(K.ITEMS.map((id, i) => [id, i + 1]));
-const FLAG = { spin: 1, boost: 2, shield: 4, dead: 32, ghost: 1024, gun: 2048, star: 4096, shrunk: 8192, inked: 16384 };
+const FLAG = { spin: 1, boost: 2, shield: 4, dead: 32, ghost: 1024, gun: 2048, star: 4096, shrunk: 8192, inked: 16384, frozen: 32768, spikes: 65536 };
 const TIME = { value: 0 }; // shared by every animated item material
 // Item models are built at toy scale and blown up so they read clearly from the chase camera.
 const SIZE = { rocket: 1.6, shell: 1.45, bomb: 1.35, mine: 1.4, peel: 1.25, comet: 1.9 };
@@ -299,6 +299,54 @@ function models() {
     haloArmed: new THREE.SpriteMaterial({ map: tex.spark(), color: 0xff3030, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
     haloArming: new THREE.SpriteMaterial({ map: tex.spark(), color: 0xffc040, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }),
   };
+  // Snowball: lumpy packed snow, white with blue in the dents (the lumps depend only on position,
+  // so faces that share a corner stay joined).
+  {
+    const g = new THREE.IcosahedronGeometry(9, 2);
+    const pos = g.attributes.position;
+    const col = [];
+    const v = new THREE.Vector3();
+    const shade = new THREE.Color(0x9cc7f2);
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i);
+      const n = 0.9 + 0.1 * Math.sin(v.x * 1.7) * Math.sin(v.y * 2.1 + 1) * Math.sin(v.z * 1.9 + 2);
+      v.multiplyScalar(n);
+      pos.setXYZ(i, v.x, v.y, v.z);
+      const c = new THREE.Color(0xffffff).lerp(shade, Math.max(0, Math.min(1, (0.97 - n) * 5)));
+      col.push(c.r, c.g, c.b);
+    }
+    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.computeVertexNormals();
+    M.snow = { geo: g.scale(1.2, 1.2, 1.2), mat: std(0xffffff, 0.85, 0, vtx({ emissive: 0x1e3a5f, emissiveIntensity: 0.18 })) };
+  }
+  // Sticky bomb: a glossy pink goo blob with a steel cap and a red light that blinks.
+  M.goo = {
+    geo: baked([
+      [new THREE.SphereGeometry(8, 18, 12).scale(1, 0.78, 1).translate(0, 5.5, 0), 0xec4899],
+      [new THREE.SphereGeometry(4, 12, 8).translate(5.5, 2.5, 3), 0xdb2777],
+      [new THREE.SphereGeometry(3.5, 12, 8).translate(-5, 2, -4), 0xdb2777],
+      [new THREE.SphereGeometry(3, 10, 8).translate(-3, 2, 6), 0xf472b6],
+      [new THREE.CylinderGeometry(2.6, 2.6, 2, 12).translate(0, 11.2, 0), 0x4b5563],
+    ]).scale(1.3, 1.3, 1.3),
+    mat: std(0xffffff, 0.22, 0.1, vtx({ emissive: 0x500724, emissiveIntensity: 0.35 })),
+    light: new THREE.SphereGeometry(2.2, 12, 8, 0, TAU, 0, Math.PI / 2).translate(0, 12.2, 0).scale(1.3, 1.3, 1.3),
+    lightOn: new THREE.MeshBasicMaterial({ color: hdr(3, 0.3, 0.3) }), lightOff: std(0x7f1d1d, 0.3, 0.1),
+  };
+  // Frozen karts: a block of clear blue ice round the whole kart.
+  M.ice = {
+    geo: new RoundedBoxGeometry(52, 32, 40, 2, 6).translate(0, 15, 0),
+    mat: new THREE.MeshStandardMaterial({ color: 0xc7e9ff, roughness: 0.08, metalness: 0.1, transparent: true, opacity: 0.5, emissive: 0x2f6fbf, emissiveIntensity: 0.3, depthWrite: false }),
+  };
+  // Spin spikes: a steel ring of spikes round the kart, spinning.
+  const ringSpikes = [];
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * TAU;
+    ringSpikes.push([part(new THREE.ConeGeometry(2.8, 13, 8), Math.cos(a) * 36, 0, Math.sin(a) * 36, 0, -a, -Math.PI / 2), 0xe2e8f0]);
+  }
+  M.spikes = {
+    geo: baked([[new THREE.TorusGeometry(31, 2.4, 8, 44).rotateX(Math.PI / 2), 0x475569], ...ringSpikes]),
+    mat: std(0xffffff, 0.22, 0.9, vtx({ emissive: 0x334155, emissiveIntensity: 0.25 })),
+  };
   M.peel = peelGeometry().scale(SIZE.peel, SIZE.peel, SIZE.peel);
   M.peelMat = std(0xffffff, 0.55, 0, vtx());
   // Minigun: six barrels around a hub, mounted on the kart's nose.
@@ -321,6 +369,9 @@ function models() {
   // Item box: rounded glass cube, plus the "?" inside.
   M.box = new RoundedBoxGeometry(24, 24, 24, 3, 4);
   M.questionMat = new THREE.SpriteMaterial({ map: questionTexture(), transparent: true, depthWrite: false });
+  // A decoy's "?" hangs upside down (the only tell, if you look); its owner's team sees it red.
+  M.decoyQ = new THREE.SpriteMaterial({ map: questionTexture(), transparent: true, depthWrite: false, rotation: Math.PI });
+  M.decoyOurs = new THREE.SpriteMaterial({ map: questionTexture(), transparent: true, depthWrite: false, rotation: Math.PI, color: 0xff6b6b });
   // Markers on the ground.
   M.ring = new THREE.RingGeometry(0.82, 1, 48).rotateX(-Math.PI / 2);
   M.disc = new THREE.CircleGeometry(1, 40).rotateX(-Math.PI / 2);
@@ -444,7 +495,7 @@ function buildModel(kind) {
   const mesh = (geo, mat) => new THREE.Mesh(geo, mat);
   // Projectiles cast real shadows on desktop. Things lying on the ground, carried items and every
   // item on phones don't: each caster costs a second draw in the shadow pass.
-  const cast = !MOBILE && ['rocket', 'bouncer', 'bomb', 'comet'].includes(kind);
+  const cast = !MOBILE && ['rocket', 'bouncer', 'bomb', 'comet', 'snowball', 'sticky'].includes(kind);
   let body = null;
   if (kind === 'rocket' || kind === 'mini') {
     const spin = new THREE.Group(); // rolls around its own axis in flight
@@ -494,6 +545,25 @@ function buildModel(kind) {
     Object.assign(g.userData, { light, halo });
   } else if (kind === 'banana') {
     body = mesh(m.peel, m.peelMat);
+    g.add(body);
+  } else if (kind === 'snowball') {
+    const spin = new THREE.Group();
+    body = mesh(m.snow.geo, m.snow.mat);
+    spin.add(body);
+    g.add(spin);
+    g.userData.spin = spin;
+  } else if (kind === 'sticky') {
+    const G = m.goo;
+    body = mesh(G.geo, G.mat);
+    const light = mesh(G.light, G.lightOff);
+    g.add(body, light);
+    g.userData.light = light;
+  } else if (kind === 'ice') {
+    body = mesh(m.ice.geo, m.ice.mat);
+    body.renderOrder = 6;
+    g.add(body);
+  } else if (kind === 'spikeRing') {
+    body = mesh(m.spikes.geo, m.spikes.mat);
     g.add(body);
   }
   Object.assign(g.userData, { kind, body, cast });
@@ -637,6 +707,37 @@ class Bolt {
   dispose() { this.mesh.geometry.dispose(); this.mat.dispose(); }
 }
 
+// The rainbow glass of an item box (and of a decoy pretending to be one).
+function boxMaterial(fog) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: TIME, uAlpha: { value: 1 }, uFlash: { value: 0 },
+      uFogColor: { value: fog.color }, uFogNear: { value: fog.near }, uFogFar: { value: fog.far },
+    },
+    vertexShader: VIEW_VERT,
+    fragmentShader: `
+      uniform float uTime; uniform float uAlpha; uniform float uFlash;
+      uniform vec3 uFogColor; uniform float uFogNear; uniform float uFogFar;
+      varying vec3 vN; varying vec3 vV; varying vec3 vW; varying vec3 vL; ${FRESNEL('2.0')} ${HUE}
+      void main() {
+        vec3 n = normalize(vN); vec3 v = normalize(vV);
+        float f = fres(n, v);
+        vec3 rainbow = hue(fract(uTime * 0.22 + (vL.x + vL.y * 0.7 + vL.z * 0.45) * 0.022));
+        vec3 h = normalize(normalize(vec3(0.35, 1.0, 0.25)) + v);
+        float spec = pow(max(dot(n, h), 0.0), 60.0);
+        vec3 q = abs(vL) / 12.0;
+        float second = max(min(q.x, q.y), max(min(q.y, q.z), min(q.x, q.z)));
+        float edge = smoothstep(0.78, 0.96, second);
+        vec3 col = rainbow * (0.45 + 1.1 * f) + vec3(1.0) * (spec * 1.6 + edge * 0.85 + uFlash);
+        float a = clamp(0.42 + f * 0.45 + edge * 0.5 + spec, 0.0, 1.0) * uAlpha;
+        float fogF = smoothstep(uFogNear, uFogFar, length(vW - cameraPosition));
+        gl_FragColor = vec4(mix(col, uFogColor, fogF), a);
+      }`,
+    transparent: true,
+    depthWrite: false,
+  });
+}
+
 // ---------- the manager ----------
 export class ItemFX {
   // r: the Kart3D renderer (scene, camera, map, particles, shake()).
@@ -666,7 +767,11 @@ export class ItemFX {
       puff: new THREE.Color(r.theme.night ? 0x6a6585 : 0xe8ecf2), plume: new THREE.Color(0x3b2a8f),
       fireball: [new THREE.Color(0xf5d0fe), new THREE.Color(0xa78bfa), new THREE.Color(0x7c3aed)],
       shockRing: new THREE.Color(0.35, 0.7, 1), cometRing: new THREE.Color(0.75, 0.45, 1.3),
+      frost: new THREE.Color(0xbfe3ff), ice: new THREE.Color(0x7dd3fc),
+      goo: [new THREE.Color(0xf472b6), new THREE.Color(0xdb2777), new THREE.Color(0xfbcfe8)],
     };
+    this.stickyGround = new Map();
+    this.decoyBoxes = new Map();
 
     // Bullets: one instanced mesh of glowing tracers.
     this.tracerMax = MOBILE ? 300 : 900;
@@ -680,33 +785,7 @@ export class ItemFX {
     // Item boxes: one glass material per box (each pops and regrows on its own).
     const fog = this.scene.fog;
     this.boxes = (opts.items === false ? [] : this.map.itemBoxes).map((b, i) => {
-      const mat = new THREE.ShaderMaterial({
-        uniforms: {
-          uTime: TIME, uAlpha: { value: 1 }, uFlash: { value: 0 },
-          uFogColor: { value: fog.color }, uFogNear: { value: fog.near }, uFogFar: { value: fog.far },
-        },
-        vertexShader: VIEW_VERT,
-        fragmentShader: `
-          uniform float uTime; uniform float uAlpha; uniform float uFlash;
-          uniform vec3 uFogColor; uniform float uFogNear; uniform float uFogFar;
-          varying vec3 vN; varying vec3 vV; varying vec3 vW; varying vec3 vL; ${FRESNEL('2.0')} ${HUE}
-          void main() {
-            vec3 n = normalize(vN); vec3 v = normalize(vV);
-            float f = fres(n, v);
-            vec3 rainbow = hue(fract(uTime * 0.22 + (vL.x + vL.y * 0.7 + vL.z * 0.45) * 0.022));
-            vec3 h = normalize(normalize(vec3(0.35, 1.0, 0.25)) + v);
-            float spec = pow(max(dot(n, h), 0.0), 60.0);
-            vec3 q = abs(vL) / 12.0;
-            float second = max(min(q.x, q.y), max(min(q.y, q.z), min(q.x, q.z)));
-            float edge = smoothstep(0.78, 0.96, second);
-            vec3 col = rainbow * (0.45 + 1.1 * f) + vec3(1.0) * (spec * 1.6 + edge * 0.85 + uFlash);
-            float a = clamp(0.42 + f * 0.45 + edge * 0.5 + spec, 0.0, 1.0) * uAlpha;
-            float fogF = smoothstep(uFogNear, uFogFar, length(vW - cameraPosition));
-            gl_FragColor = vec4(mix(col, uFogColor, fogF), a);
-          }`,
-        transparent: true,
-        depthWrite: false,
-      });
+      const mat = boxMaterial(fog);
       const mesh = new THREE.Mesh(m.box, mat);
       mesh.castShadow = true;
       mesh.renderOrder = 4;
@@ -721,12 +800,28 @@ export class ItemFX {
     });
   }
 
+  // A decoy: the same glass box, a "?" hanging upside down. Pooled, own material each.
+  buildDecoy() {
+    const m = models();
+    const mat = boxMaterial(this.scene.fog);
+    const mesh = new THREE.Mesh(m.box, mat);
+    mesh.renderOrder = 4;
+    const q = new THREE.Sprite(m.decoyQ);
+    q.scale.set(17, 17, 1);
+    q.renderOrder = 3;
+    const g = new THREE.Group();
+    g.add(mesh, q);
+    Object.assign(g.userData, { kind: 'decoy', mats: [mat], mesh, q, mat });
+    return g;
+  }
+
   // ---------- pools ----------
   get(kind) {
     const list = this.pools[kind] || (this.pools[kind] = []);
     let obj = list.pop();
     if (!obj) {
       if (kind === 'marker' || kind === 'reticle' || kind === 'pulse' || kind === 'aim') obj = this.buildMarker(kind);
+      else if (kind === 'decoy') obj = this.buildDecoy();
       else if (kind === 'shock') obj = this.buildShock();
       else if (kind === 'flare') obj = this.buildFlare();
       else obj = buildModel(kind);
@@ -985,6 +1080,48 @@ export class ItemFX {
       }
     }
 
+    // Frozen: a block of ice round the kart; frost puffs out as it freezes over.
+    const frozen = !!(k.flags & FLAG.frozen);
+    if (frozen && !fx.ice) {
+      fx.ice = this.get('ice');
+      kart.group.add(fx.ice);
+      fx.iceT = 0;
+      for (let i = 0; i < 18; i++) {
+        const a = rand(0, TAU);
+        this.fire.emit(k.x + Math.cos(a) * 20, gy + rand(4, 30), k.y + Math.sin(a) * 20, Math.cos(a) * rand(40, 120), rand(20, 80), Math.sin(a) * rand(40, 120), this.c.frost, rand(6, 10), 0.5, { drag: 2.5 });
+      }
+    } else if (!frozen && fx.ice) {
+      this.put(fx.ice);
+      fx.ice = null;
+    }
+    if (fx.ice) {
+      fx.iceT += dt;
+      const grow = Math.min(1, fx.iceT / 0.18);
+      fx.ice.scale.set(grow, grow, grow);
+      fx.ice.position.y = 0;
+    }
+
+    // Spin spikes: a ring of steel spikes whirling round the kart.
+    const spiky = !!(k.flags & FLAG.spikes);
+    if (spiky && !fx.spk) { fx.spk = this.get('spikeRing'); kart.group.add(fx.spk); }
+    else if (!spiky && fx.spk) { this.put(fx.spk); fx.spk = null; }
+    if (fx.spk) {
+      fx.spk.position.set(0, 9, 0);
+      fx.spk.rotation.y = t * 9;
+    }
+
+    // A sticky bomb riding on the kart: the light blinks faster as the fuse burns down.
+    const fuse = k.sticky || 0; // tenths of a second left
+    if (fuse > 0 && !fx.goo) { fx.goo = this.get('sticky'); kart.group.add(fx.goo); }
+    else if (!fuse && fx.goo) { this.put(fx.goo); fx.goo = null; }
+    if (fx.goo) {
+      const rate = fuse < 8 ? 14 : fuse < 16 ? 8 : 4;
+      // On the back of the kart, clear of the driver, where the chase camera sees it.
+      fx.goo.position.set(-24, 17, 0);
+      fx.goo.scale.setScalar(1.05 + Math.max(0, Math.sin(t * rate * Math.PI)) * 0.1);
+      fx.goo.userData.light.material = Math.floor(t * rate) % 2 ? models().goo.lightOn : models().goo.lightOff;
+    }
+
     // Inked rivals drip ink (you never see your own; your screen shows it instead).
     if (k.flags & FLAG.inked && !isMe) {
       fx.drip -= dt;
@@ -1004,6 +1141,7 @@ export class ItemFX {
     fx.held = null;
     fx.heldKind = 0;
     if (fx.orbit) { while (fx.orbit.children.length) this.put(fx.orbit.children[0]); fx.orbitN = 0; }
+    for (const key of ['ice', 'spk', 'goo']) { this.put(fx[key]); fx[key] = null; }
   }
 
   // ---------- per frame ----------
@@ -1014,6 +1152,8 @@ export class ItemFX {
     this.updateShots(view.shots || [], view.karts || [], dt, t);
     this.updateMines(view.mines || [], dt, now);
     this.updateBananas(view.bananas || [], dt);
+    this.updateStickies(view.stickies || [], dt, t);
+    this.updateDecoys(view.decoys || [], dt, t);
     this.updateBoxes(view.boxes, dt, t);
     this.debris.update(dt);
     this.updateEffects(dt, t);
@@ -1042,7 +1182,8 @@ export class ItemFX {
       live.add(id);
       let s = this.shots.get(id);
       if (!s) {
-        const name = kind === SHOT.rocket ? 'rocket' : kind === SHOT.bomb ? 'bomb' : kind === SHOT.bouncer ? 'bouncer' : 'comet';
+        const name = kind === SHOT.rocket ? 'rocket' : kind === SHOT.bomb ? 'bomb' : kind === SHOT.bouncer ? 'bouncer'
+          : kind === SHOT.snowball ? 'snowball' : kind === SHOT.sticky ? 'sticky' : 'comet';
         s = { kind, obj: this.get(name), marker: null, lastA: a, lastAlt: p, age: 0, px: x, pz: z, trail: {} };
         this.shots.set(id, s);
         if (kind === SHOT.comet) this.cometLaunch(x, gy, z);
@@ -1087,6 +1228,21 @@ export class ItemFX {
           s.marker.rotation.y = t * 2;
           s.marker.userData.mat.opacity = 0.45 + 0.4 * Math.abs(Math.sin(t * 10));
         }
+      } else if (kind === SHOT.snowball) {
+        // Straight and fast, spinning, shedding frost.
+        o.position.set(x, gy + 16, z);
+        o.rotation.y = -a;
+        o.userData.spin.rotation.z -= dt * 14;
+        trail('frost', MOBILE ? 25 : 55, (tx, tz) => this.fire.emit(tx - ca * 12 + rand(-4, 4), gy + 16 + rand(-4, 4), tz - sa * 12 + rand(-4, 4), -ca * 30 + rand(-20, 20), rand(-10, 25), -sa * 30 + rand(-20, 20),
+          Math.random() < 0.5 ? this.c.white : this.c.frost, rand(4, 7), 0.45, { drag: 2, rise: -120 }));
+      } else if (kind === SHOT.sticky) {
+        // A short low lob, wobbling, light blinking, dripping goo.
+        const prog = Math.min(1, (p || 0) / 100);
+        o.position.set(x, gy + 8 + Math.sin(prog * Math.PI) * 45, z);
+        o.rotation.y += dt * 8;
+        o.scale.set(1 + Math.sin(t * 30) * 0.06, 1 - Math.sin(t * 30) * 0.06, 1);
+        o.userData.light.material = Math.floor(t * 8) % 2 ? models().goo.lightOn : models().goo.lightOff;
+        trail('goo', MOBILE ? 10 : 22, (tx, tz) => this.fire.emit(tx, o.position.y, tz, rand(-15, 15), rand(-20, 10), rand(-15, 15), this.c.goo[Math.floor(rand(0, 3))], rand(4, 7), 0.5, { drag: 1, rise: -400 }));
       } else if (kind === SHOT.bouncer) {
         o.position.set(x, gy + 0.5 + Math.abs(Math.sin(s.age * 14)) * 1.5, z);
         o.userData.spin.rotation.y += dt * 18;
@@ -1210,6 +1366,72 @@ export class ItemFX {
     }
   }
 
+  // Sticky bombs lying on the ground, light blinking slowly: rows [id, x, z].
+  updateStickies(list, dt, t) {
+    const live = new Set();
+    for (const [id, x, z] of list) {
+      live.add(id);
+      let g = this.stickyGround.get(id);
+      if (!g) {
+        g = { obj: this.get('sticky'), t: 0 };
+        g.obj.rotation.y = rand(0, TAU);
+        this.stickyGround.set(id, g);
+      }
+      g.t += dt;
+      const splat = Math.max(0, 1 - g.t / 0.3);
+      g.obj.scale.set(1 + 0.3 * splat, 1 - 0.45 * splat, 1 + 0.3 * splat);
+      g.obj.position.set(x, this.ground(x, z) + 0.2, z);
+      g.obj.userData.light.material = Math.floor(t * 3) % 2 ? models().goo.lightOn : models().goo.lightOff;
+    }
+    for (const [id, g] of this.stickyGround) {
+      if (live.has(id)) continue;
+      this.put(g.obj);
+      this.stickyGround.delete(id);
+    }
+  }
+
+  // Decoys: rows [id, x, z, owner idx, ours]. They bob like real boxes but spin the other way,
+  // and their "?" hangs upside down; to the owner's team they show red.
+  updateDecoys(list, dt, t) {
+    const live = new Set();
+    for (const [id, x, z, , ours] of list) {
+      live.add(id);
+      let d = this.decoyBoxes.get(id);
+      if (!d) {
+        d = { obj: this.get('decoy'), t: 0, phase: rand(0, 6) };
+        this.decoyBoxes.set(id, d);
+      }
+      d.t += dt;
+      const { mesh, q, mat } = d.obj.userData;
+      q.material = ours ? models().decoyOurs : models().decoyQ;
+      mat.uniforms.uAlpha.value = 1;
+      mat.uniforms.uFlash.value = 0;
+      const pop = Math.min(1, d.t / 0.55);
+      d.obj.scale.setScalar(Math.max(0.01, 1 - Math.cos(pop * Math.PI * 2.5) * Math.exp(-pop * 5)));
+      mesh.rotation.set(-(t * 0.9 + d.phase), -(t * 1.3 + d.phase), 0);
+      d.obj.position.set(x, this.ground(x, z) + 22 + Math.sin(t * 2.5 + d.phase) * 4, z);
+    }
+    for (const [id, d] of this.decoyBoxes) {
+      if (live.has(id)) continue;
+      this.put(d.obj);
+      this.decoyBoxes.delete(id);
+    }
+  }
+
+  // Ice breaking off a frozen kart that got hit.
+  shatter(x, z) {
+    const gy = this.ground(x, z);
+    for (let i = 0; i < (MOBILE ? 10 : 20); i++) {
+      const a = rand(0, TAU);
+      this.debris.emit(x, gy + rand(8, 26), z, Math.cos(a) * rand(120, 300), rand(150, 380), Math.sin(a) * rand(120, 300), rand(3, 7), i % 3 ? 0xc7e9ff : 0xffffff, rand(0.8, 1.3));
+    }
+    for (let i = 0; i < (MOBILE ? 16 : 32); i++) {
+      const a = rand(0, TAU);
+      this.fire.emit(x, gy + 16, z, Math.cos(a) * rand(100, 260), rand(40, 200), Math.sin(a) * rand(100, 260), i % 2 ? this.c.white : this.c.ice, rand(5, 9), 0.45, { drag: 2.5, rise: -300 });
+    }
+    this.r.ring(x, z, 0xbfe3ff, 70, 0.3);
+  }
+
   // Glossy rainbow "?" boxes: spin and bob; pop into shards when collected; grow back when they return.
   updateBoxes(boxes, dt, t) {
     this.boxes.forEach((b, i) => {
@@ -1273,9 +1495,35 @@ export class ItemFX {
     if (d < 1200) window.Sfx?.bounce?.(1 - d / 1200);
   }
 
-  // kind: comet | bouncer (others are drawn by Kart3D.explode).
+  // kind: comet | bouncer | snowball | sticky | decoy (others are drawn by Kart3D.explode; sticky
+  // and decoy get its fireball too).
   blast(kind, x, z, radius) {
     const gy = this.ground(x, z);
+    if (kind === 'snowball') {
+      for (let i = 0; i < (MOBILE ? 14 : 28); i++) {
+        const a = rand(0, TAU);
+        this.fire.emit(x, gy + 14, z, Math.cos(a) * rand(60, 180), rand(30, 160), Math.sin(a) * rand(60, 180), i % 2 ? this.c.white : this.c.frost, rand(6, 11), 0.5, { drag: 2.5, rise: -250 });
+      }
+      for (let i = 0; i < 6; i++) {
+        const a = rand(0, TAU);
+        this.debris.emit(x, gy + 12, z, Math.cos(a) * rand(60, 160), rand(120, 260), Math.sin(a) * rand(60, 160), rand(2.5, 5), 0xffffff, rand(0.6, 1));
+      }
+      return;
+    }
+    if (kind === 'sticky') {
+      for (let i = 0; i < (MOBILE ? 10 : 18); i++) {
+        const a = rand(0, TAU);
+        this.debris.emit(x, gy + 14, z, Math.cos(a) * rand(100, 280), rand(160, 360), Math.sin(a) * rand(100, 280), rand(3, 6), i % 2 ? 0xec4899 : 0xbe185d, rand(0.8, 1.3));
+      }
+      return;
+    }
+    if (kind === 'decoy') {
+      for (let i = 0; i < 12; i++) {
+        const a = rand(0, TAU);
+        this.debris.emit(x, gy + 22, z, Math.cos(a) * rand(80, 220), rand(120, 320), Math.sin(a) * rand(80, 220), rand(3, 6), this.c.rainbow[i % 6], rand(0.7, 1.2));
+      }
+      return;
+    }
     if (kind === 'bouncer') {
       for (let i = 0; i < 9; i++) {
         const a = rand(0, TAU);
@@ -1513,6 +1761,7 @@ export class ItemFX {
     this.tracers.dispose();
     this.debris.dispose();
     if (this.aimMarker) for (const mat of this.aimMarker.userData.mats) mat.dispose();
+    for (const d of this.decoyBoxes.values()) for (const mat of d.obj.userData.mats) mat.dispose();
     if (this.aimDots) { this.aimDots.geometry.dispose(); this.aimDots.material.dispose(); this.aimDots.dispose(); }
   }
 }

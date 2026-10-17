@@ -564,7 +564,8 @@ export class Kart3D {
 
   // kind: rocket | mine | bomb | kill | hit | bullet | bouncer | comet. `color` is the victim's kart colour (kills).
   explode(x, z, kind = 'rocket', radius = 60, color = null) {
-    if (kind === 'comet' || kind === 'bouncer') { this.items.blast(kind, x, z, radius); return; }
+    if (kind === 'comet' || kind === 'bouncer' || kind === 'snowball') { this.items.blast(kind, x, z, radius); return; }
+    if (kind === 'sticky' || kind === 'decoy') this.items.blast(kind, x, z, radius); // goo or box shards, then the fireball
     const gy = this.groundY(x, z);
     if (kind === 'kill') this.killBurst(x, z, radius, color);
     if (kind === 'bullet') {
@@ -686,6 +687,9 @@ export class Kart3D {
     }
     this.ring(x, z, kind === 'trail' ? 0xffb347 : 0x93c5fd, 70, 0.3);
   }
+
+  // A frozen kart got hit: the ice flies off it.
+  shatter(x, z) { this.items.shatter(x, z); this.shake(x, z, 8); }
 
   // Aiming a bomb: show where it will land (null hides it).
   setAim(aim) { this.items?.setAim?.(aim); }

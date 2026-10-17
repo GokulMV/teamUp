@@ -47,7 +47,7 @@
 
   // Item codes on the wire are index + 1. New items are only ever appended.
   const ITEMS = ['boost', 'rocket', 'banana', 'shield', 'triple', 'mine', 'minigun', 'bomb', 'shock', 'ghost',
-    'bouncer', 'comet', 'star', 'ink', 'thunder'];
+    'bouncer', 'comet', 'star', 'ink', 'thunder', 'snowball', 'sticky', 'spikes', 'decoy'];
 
   // Item timings and the speed changes items cause. The server and the browser's
   // prediction both scale stepKart's `opts.speed` with itemSpeed(), so they agree.
@@ -56,6 +56,9 @@
     starTime: 6, starSpeed: 1.2,
     shrinkTime: 3, shrinkSpeed: 0.7, // thunder victims (race)
     inkTime: 4,
+    freezeTime: 1.5, // a snowball hit: no steering, no throttle, sliding as if on ice
+    stickyFuse: 2.5, // a sticky bomb on your kart goes off this long after it first stuck
+    spikesTime: 4,
     // Bombs are lobbed `near`..`far` units ahead of where the thrower will be when they land
     // (`flight` seconds later). Holding fire aims; a tap throws at `tap` (0 near .. 1 far).
     bomb: { flight: 0.85, near: 60, far: 760, tap: 0.5 },
@@ -1138,11 +1141,14 @@
     }
   }
 
+  const FROZEN_INPUT = { up: false, down: false, left: false, right: false, drift: false };
+
   // Advance a kart by dt seconds. `input` = {up, down, left, right, drift}.
   // Mutates and returns kart {x, y, angle, speed, boost, spin, drift, trackIndex, air, ...}.
   // opts.speed scales top speed, boost speed, acceleration and off-track speed
   // (the room's speed class); it must match on the server and in prediction.
   // opts.noFall: never start a fall (client prediction follows the server for those).
+  // opts.frozen: the kart is frozen (input ignored, it slides).
   function stepKart(kart, input, dt, map, opts) {
     const arena = map.type === 'arena';
     if (kart.fall > 0) {
@@ -1153,6 +1159,9 @@
       return kart;
     }
     const mul = opts && Number.isFinite(opts.speed) && opts.speed > 0 ? opts.speed : 1;
+    // Frozen in a block of ice (a snowball hit): the controls do nothing and the kart slides on.
+    const frozen = !!(opts && opts.frozen);
+    if (frozen) input = FROZEN_INPUT;
     // Hop: a tap of the drift button on the ground. Just high enough to clear a banana or a mine
     // if you time it; tap it into a turn and the drift starts as you hop, the way it always did.
     const hopPress = !!input.drift && !kart.hopHeld;
@@ -1186,7 +1195,7 @@
       if (flying) kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), 15 * dt); // no grip, keep momentum
       else if (input.up) kart.speed += accel * dt * (0.6 + 0.4 * grip);
       else if (input.down) kart.speed -= (kart.speed > 0 ? PHYS.brake * grip : accel * 0.6) * dt;
-      else kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), PHYS.drag * 100 * grip * dt);
+      else kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), PHYS.drag * 100 * grip * dt * (frozen ? 0.25 : 1));
 
       // Drifting: hold drift while steering at speed. The kart slides into the
       // turn; the longer you hold it, the bigger the mini-turbo on release.

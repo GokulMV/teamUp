@@ -8,6 +8,13 @@
       <path d="M-9 2 L-16 14 L-9 12Z M9 2 L16 14 L9 12Z" fill="#b91c1c"/>
       <path d="M-5 10 Q0 26 5 10Z" fill="#fbbf24"/><path d="M-2.5 10 Q0 19 2.5 10Z" fill="#fff7cc"/>
     </g>`;
+  const flake = (x, y, r, c = '#e0f2fe') => `<path d="M${x - r} ${y} H${x + r} M${x - r / 2} ${y - r * 0.87} L${x + r / 2} ${y + r * 0.87} M${x - r / 2} ${y + r * 0.87} L${x + r / 2} ${y - r * 0.87}" stroke="${c}" stroke-width="2" stroke-linecap="round"/>`;
+  // Eight steel spikes round a hub (spin spikes).
+  const spikeRing = () => Array.from({ length: 8 }, (_, i) => {
+    const a = (i * Math.PI) / 4;
+    const p = (r, da) => `${(32 + Math.cos(a + da) * r).toFixed(1)} ${(32 + Math.sin(a + da) * r).toFixed(1)}`;
+    return `M${p(14, -0.3)} L${p(29, 0.08)} L${p(14, 0.3)}Z`;
+  }).join(' ');
   const sparkle = (x, y, r, fill = '#fff') => `<path d="M${x} ${y - r} Q${x + r * 0.2} ${y - r * 0.2} ${x + r} ${y} Q${x + r * 0.2} ${y + r * 0.2} ${x} ${y + r} Q${x - r * 0.2} ${y + r * 0.2} ${x - r} ${y} Q${x - r * 0.2} ${y - r * 0.2} ${x} ${y - r}Z" fill="${fill}"/>`;
   const ICONS = {
     boost: () => `${defs('ib', [[0, '#fff3b0'], [0.5, '#ffb547'], [1, '#ff4f1f']])}
@@ -77,6 +84,31 @@
       <path d="M16 35 C8 35 6 25 13 22 C13 13 24 9 29 15 C32 7 45 7 47 17 C55 16 59 25 55 30 C58 34 55 38 50 38 L18 38 C17 38 16 37 16 35Z" fill="url(#iw)" stroke="#475569" stroke-width="2.2" stroke-linejoin="round"/>
       <path d="M20 22 C21 17 26 15 30 18" stroke="#fff" stroke-width="2.6" stroke-linecap="round" fill="none"/>
       <path d="M12 46 L8 50 M52 45 L57 49 M47 54 L50 58" stroke="#fde047" stroke-width="2.6" stroke-linecap="round"/>`,
+    // A packed snowball flying in, frost on it.
+    snowball: () => `<defs><radialGradient id="is" cx="0.38" cy="0.32" r="0.75"><stop offset="0" stop-color="#ffffff"/><stop offset="0.6" stop-color="#dbeafe"/><stop offset="1" stop-color="#7fb4ea"/></radialGradient></defs>
+      <path d="M4 42 L17 38 M7 50 L19 45 M12 58 L23 51" stroke="#93c5fd" stroke-width="3" stroke-linecap="round" opacity="0.85"/>
+      <circle cx="37" cy="31" r="20" fill="url(#is)" stroke="#2563eb" stroke-width="2.4"/>
+      <circle cx="44" cy="39" r="3.2" fill="#bfdbfe"/><circle cx="31" cy="41" r="2.2" fill="#bfdbfe"/><circle cx="47" cy="27" r="2" fill="#bfdbfe"/>
+      <path d="M26 23 Q30 15 39 15" stroke="#fff" stroke-width="3.2" stroke-linecap="round" fill="none"/>
+      ${flake(55, 9, 6)}${flake(8, 14, 4, '#bae6fd')}`,
+    // A gooey pink bomb that sticks, its light blinking.
+    sticky: () => `<defs><radialGradient id="it" cx="0.38" cy="0.3" r="0.8"><stop offset="0" stop-color="#ffc2e4"/><stop offset="0.55" stop-color="#ec4899"/><stop offset="1" stop-color="#9d174d"/></radialGradient></defs>
+      <path d="M14 36 C12 22 22 12 34 12 C46 12 54 21 52 34 C51 41 54 44 52 50 C50 55 45 52 43 55 C41 59 36 60 34 56 C32 52 27 58 23 54 C19 50 21 46 17 45 C13 44 14 40 14 36Z" fill="url(#it)" stroke="#831843" stroke-width="2.2" stroke-linejoin="round"/>
+      <path d="M26 55 Q27 63 24 63 Q21 62 23 56Z" fill="#be185d"/>
+      <path d="M21 27 Q25 18 33 17" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.8"/>
+      <circle cx="39" cy="24" r="7" fill="#7f1d1d"/><circle cx="39" cy="24" r="4.5" fill="#ef4444" stroke="#fecaca" stroke-width="1.4"/>
+      <path d="M50 13 Q54 16 54 21 M54 7 Q61 13 60 22" stroke="#fde047" stroke-width="2.6" fill="none" stroke-linecap="round"/>`,
+    // A spinning ring of steel spikes.
+    spikes: () => `<defs><linearGradient id="ip" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f8fafc"/><stop offset="1" stop-color="#64748b"/></linearGradient></defs>
+      <path d="M8 20 A27 27 0 0 1 20 7 M56 44 A27 27 0 0 1 44 57" stroke="#fbbf24" stroke-width="2.8" fill="none" stroke-linecap="round"/>
+      <path d="${spikeRing()}" fill="url(#ip)" stroke="#334155" stroke-width="1.6" stroke-linejoin="round"/>
+      <circle cx="32" cy="32" r="15" fill="#334155" stroke="url(#ip)" stroke-width="4.5"/>
+      <circle cx="32" cy="32" r="6.5" fill="url(#ip)" stroke="#1e293b" stroke-width="2"/>`,
+    // An item box with horns and an upside-down question mark: not the real thing.
+    decoy: () => `<defs><linearGradient id="iq" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fda4af"/><stop offset="0.5" stop-color="#c084fc"/><stop offset="1" stop-color="#6d28d9"/></linearGradient></defs>
+      <path d="M17 17 L11 5 L24 13Z M47 17 L53 5 L40 13Z" fill="#ef4444" stroke="#7f1d1d" stroke-width="1.6" stroke-linejoin="round"/>
+      <rect x="12" y="14" width="40" height="40" rx="8" fill="url(#iq)" stroke="#fff" stroke-width="2.6" transform="rotate(-6 32 34)"/>
+      <g transform="rotate(174 32 34)"><path d="M25 27 C25 21 29 19 32.5 19 C36.5 19 40 22 40 26 C40 31 33 32 33 37 V39" stroke="#fff" stroke-width="4.5" fill="none" stroke-linecap="round"/><circle cx="33" cy="46" r="3" fill="#fff"/></g>`,
   };
   // Kill feed only (not items).
   const EXTRA = {
@@ -91,6 +123,7 @@
     boost: 'Boost', rocket: 'Homing rocket', triple: 'Triple rockets', banana: 'Banana', shield: 'Shield',
     mine: 'Mine', minigun: 'Minigun', bomb: 'Bomb', shock: 'Shock wave', ghost: 'Ghost',
     bouncer: 'Bouncer shell', comet: 'Comet', star: 'Star power', ink: 'Ink splat', thunder: 'Thunder',
+    snowball: 'Snowball', sticky: 'Sticky bomb', spikes: 'Spin spikes', decoy: 'Decoy box',
   };
   const DESCRIPTIONS = {
     boost: 'Instant burst of speed', rocket: 'Locks on to the rival ahead', triple: 'Three homing rockets', banana: 'Drop behind to spin out chasers',
@@ -98,6 +131,8 @@
     shock: 'Zaps everyone around you', ghost: 'Untouchable for 4 seconds',
     bouncer: 'Ricochets off walls. Brake to throw it back', comet: 'Hunts down the leader from the sky',
     star: 'Invincible and faster. Ram rivals', ink: 'Blots out the screens of karts ahead', thunder: 'Strikes every rival: spin, shrink, slow',
+    snowball: 'Freezes a rival solid. Hit them again to shatter the ice', sticky: 'Sticks to a kart and goes off. Bump someone to pass it on',
+    spikes: 'A spiked ring for 4 seconds: touch rivals to spin them out', decoy: 'Looks like an item box. Blows up whoever grabs it',
   };
   let uid = 0;
   window.ItemIcons = {

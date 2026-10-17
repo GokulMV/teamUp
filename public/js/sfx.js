@@ -328,6 +328,27 @@
       tone(1350 + (i % 3) * 170, { type: 'square', dur: 0.03, vol: 0.05 });
       noise({ dur: 0.03, vol: 0.06, filter: 'highpass', from: 5000, to: 3000 });
     },
+    // New items: snow, ice, goo and steel.
+    snowThrow() { noise({ dur: 0.18, vol: 0.22, filter: 'bandpass', from: 1800, to: 700, q: 0.9 }); },
+    freeze(volume = 1) {
+      const v = Math.max(0.05, Math.min(1, volume));
+      noise({ dur: 0.45, vol: 0.3 * v, filter: 'highpass', from: 6000, to: 2500 });
+      [1568, 2093, 2637].forEach((f, i) => tone(f, { type: 'sine', dur: 0.25, vol: 0.05 * v, delay: i * 0.05 }));
+    },
+    shatter(volume = 1) {
+      const v = Math.max(0.05, Math.min(1, volume));
+      noise({ dur: 0.35, vol: 0.45 * v, filter: 'highpass', from: 7000, to: 3000 });
+      for (let i = 0; i < 6; i++) tone(2000 + Math.random() * 2500, { type: 'triangle', dur: 0.08, vol: 0.06 * v, delay: 0.02 + i * 0.035 });
+    },
+    stick() {
+      noise({ dur: 0.16, vol: 0.3, filter: 'lowpass', from: 900, to: 200 });
+      tone(180, { type: 'sine', dur: 0.12, vol: 0.18, slide: 0.6 });
+    },
+    stickyBeep() { tone(1760, { type: 'square', dur: 0.05, vol: 0.07 }); },
+    spikes() {
+      noise({ dur: 0.4, vol: 0.2, filter: 'bandpass', from: 2500, to: 5000, q: 2 });
+      tone(880, { type: 'sawtooth', dur: 0.3, vol: 0.05, slide: 1.6 });
+    },
     // Hop: a springy little boing.
     hop() {
       tone(260, { type: 'sine', dur: 0.13, vol: 0.13, slide: 2.1 });

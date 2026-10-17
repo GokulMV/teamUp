@@ -196,6 +196,23 @@ function raceDrive(game, k, ai, sk, input) {
   if (k.ghost <= 0) {
     for (const b of game.bananas) if (b.owner !== k.id || b.safe <= 0) dodge(b.x, b.y);
     for (const m of game.mines) if (m.owner !== k.id && !game.isFriendly(m.owner, k.id)) dodge(m.x, m.y);
+    for (const g of game.stickies) if (!game.isFriendly(g.owner, k.id) && sk.hop > 0) dodge(g.x, g.y);
+    // Only the sharpest drivers spot a decoy for what it is.
+    for (const d of game.decoys) if (d.owner !== k.id && !game.isFriendly(d.owner, k.id) && sk.hop > 0.3) dodge(d.x, d.y);
+  }
+  // A sticky bomb on board: swerve into the nearest rival alongside or just ahead to pass it on.
+  if (k.sticky) {
+    let best = null;
+    let bestD = 260;
+    for (const r of game.karts.values()) {
+      if (r === k || r.dead > 0 || r.finished || r.ghost > 0 || r.sticky || game.isFriendly(r.id, k.id)) continue;
+      const d = Math.hypot(r.x - k.x, r.y - k.y);
+      if (d < bestD && (r.x - k.x) * cosA + (r.y - k.y) * sinA > -30) { best = r; bestD = d; }
+    }
+    if (best) {
+      const side = -(best.x - k.x) * sinA + (best.y - k.y) * cosA;
+      lateral = clamp(lateral + clamp(side / (map.width / 2), -0.8, 0.8), -0.85, 0.85);
+    }
   }
 
   let [tx, ty] = map.trackPoint(ti, lateral);
@@ -326,6 +343,14 @@ function raceItems(game, k, ai, sk, item = k.item) {
     case 'banana':
     case 'mine':
       return (s.behind && s.behindD < 380) || holdTooLong;
+    case 'decoy':
+      return (s.behind && s.behindD < 600) || holdTooLong;
+    case 'snowball':
+      return (s.front && s.frontD < 900) || holdTooLong;
+    case 'sticky':
+      return (s.front && s.frontD < 420) || holdTooLong;
+    case 'spikes':
+      return (s.near && s.nearD < 110) || threatened(game, k) || holdTooLong;
     case 'boost':
       return (straight && k.speed > 250) || holdTooLong;
     case 'shield':
@@ -347,6 +372,12 @@ function pickArenaGoal(game, k, ai, sk) {
   // Defensive items aren't a weapon: keep looking for boxes until they're used (while a slot is free).
   const weapon = (it) => !!it && !['ghost', 'shield', 'boost'].includes(it);
   const armed = weapon(k.item) || weapon(k.item2) || k.gun > 0;
+  // A sticky bomb on board: get rid of it on the nearest rival.
+  if (k.sticky && s.near) {
+    ai.mode = 'hunt';
+    ai.target = s.near;
+    return;
+  }
   if (hpFrac < 0.3 && s.near && s.nearD < 650) {
     ai.mode = 'flee';
     ai.target = s.near;
@@ -509,6 +540,14 @@ function arenaItems(game, k, ai, sk, item = k.item) {
     case 'banana':
     case 'mine':
       return (s.behind && s.behindD < 350) || holdTooLong;
+    case 'decoy':
+      return (s.behind && s.behindD < 500) || holdTooLong;
+    case 'snowball':
+      return !!(s.front && s.frontD < 800);
+    case 'sticky':
+      return !!(s.front && s.frontD < 380);
+    case 'spikes':
+      return (s.near && s.nearD < 140) || holdTooLong;
     case 'shock':
       return s.close >= 1 || holdTooLong;
     case 'shield':

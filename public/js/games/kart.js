@@ -11,9 +11,9 @@ window.Games.kart = {
     const INTERP_DELAY = 110; // ms behind the server for smooth remote karts
     const touch = matchMedia('(pointer: coarse)').matches;
     // Snapshot flag bits (see broadcast() in server/games/kart.js).
-    const F = { spin: 1, boost: 2, shield: 4, finished: 8, invuln: 16, dead: 32, drift: 64, ghost: 1024, gun: 2048, star: 4096, shrunk: 8192, inked: 16384 };
+    const F = { spin: 1, boost: 2, shield: 4, finished: 8, invuln: 16, dead: 32, drift: 64, ghost: 1024, gun: 2048, star: 4096, shrunk: 8192, inked: 16384, frozen: 32768, spikes: 65536 };
     // Snapshot kart row: [idx, x, y, angle*1000, speed, lap, place, item, ammo, flags, kills, deaths, hp, air, fx, roulette,
-    //   item2, ammo2, roulette2] (the reserve slot)
+    //   item2, ammo2, roulette2 (the reserve slot), sticky (tenths of a second on a sticky bomb's fuse)]
     const I = KartHud.ICONS;
     const svg = (d, extra = '') => `<svg viewBox="0 0 24 24" class="tc-ic" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" ${extra}>${d}</svg>`;
     const STEP = 1 / 30; // prediction runs at the server's tick, so both agree on every jump and landing
@@ -43,6 +43,7 @@ window.Games.kart = {
             <div class="kart-top-sub">
               <div class="kart-item-name kart-panel" data-item-name></div>
               <div class="kart-warn hidden" data-warn>${Icons.svg('comet', 'item-icon')}<span>Comet incoming!</span></div>
+              <div class="kart-warn sticky hidden" data-sticky>${Icons.svg('sticky', 'item-icon')}<span>Sticky bomb! Bump someone <b data-sticky-t></b></span></div>
             </div>
           </div>
           <div class="kart-intro kart-panel" data-intro></div>
@@ -357,7 +358,7 @@ window.Games.kart = {
           idx: r[0], x: p[1] + (r[1] - p[1]) * ff, y: p[2] + (r[2] - p[2]) * ff,
           angle: p[3] / 1000 + da * ff, speed: r[4], flags: r[9], hp: r[12],
           air: (p[13] || 0) + ((r[13] || 0) - (p[13] || 0)) * ff, fx: r[14] || 0,
-          item: r[7], ammo: r[8], roulette: r[15] || 0,
+          item: r[7], ammo: r[8], roulette: r[15] || 0, sticky: r[19] || 0,
         };
       });
       // Shots: [id, kind, x, y, angle, progress/altitude, ...kind-specific extras]
@@ -371,7 +372,10 @@ window.Games.kart = {
         const ang = Math.abs(da) > 0.6 ? r[4] / 1000 : p[4] / 1000 + da * f;
         return [r[0], r[1], p[2] + (r[2] - p[2]) * f, p[3] + (r[3] - p[3]) * f, ang, p[5] + (r[5] - p[5]) * f, ...r.slice(6)];
       });
-      return { karts, shots, mines: b.data.m || [], bananas: b.data.b || [], boxes: b.data.x };
+      // Decoys show red to their owner's team: [id, x, y, owner idx, ours].
+      const ours = (idx) => idx === myIdx || (teamMode() && kartsByIdx.get(idx)?.team === kartsByIdx.get(myIdx)?.team);
+      const decoys = (b.data.d || []).map((r) => [r[0], r[1], r[2], r[3], ours(r[3])]);
+      return { karts, shots, mines: b.data.m || [], bananas: b.data.b || [], boxes: b.data.x, stickies: b.data.g || [], decoys };
     }
 
     // ---------- HUD: item slot and roulette ----------
@@ -640,6 +644,13 @@ window.Games.kart = {
         updateInk(now, !!(flags & F.inked));
         q('[data-speedlines]').classList.toggle('on', boosting || star);
         q('[data-speedlines]').classList.toggle('star', star);
+        // A sticky bomb on my kart: the countdown, and a beep that speeds up.
+        const fuse = row[19] || 0;
+        q('[data-sticky]').classList.toggle('hidden', !fuse);
+        if (fuse) {
+          q('[data-sticky-t]').textContent = (fuse / 10).toFixed(1);
+          if (now - (prev.beep || 0) > (fuse < 8 ? 120 : fuse < 16 ? 260 : 460)) { prev.beep = now; Sfx.stickyBeep?.(); }
+        }
         // Is a comet coming for me?
         const comet = (latest.s || []).find((sh) => sh[1] === 5 && sh[6] === myIdx);
         q('[data-warn]').classList.toggle('hidden', !comet);
@@ -675,7 +686,7 @@ window.Games.kart = {
           predictAcc -= STEP;
           predPrev = { x: local.x, y: local.y, angle: local.angle, air: local.air || 0 };
           const fl = local.flags || 0;
-          K.stepKart(local, input, STEP, map, { speed: (info.speedMul || 1) * K.itemSpeed(fl & F.star, fl & F.shrunk), noFall: true });
+          K.stepKart(local, input, STEP, map, { speed: (info.speedMul || 1) * K.itemSpeed(fl & F.star, fl & F.shrunk), noFall: true, frozen: !!(fl & F.frozen) });
           // Hops, tricks and landings feel instant for your own kart.
           if (local.hopping && !prev.hopping) Sfx.hop?.();
           prev.hopping = !!local.hopping;
@@ -783,8 +794,9 @@ window.Games.kart = {
     }
     raf = requestAnimationFrame(frame);
 
-    const ITEM_SOUND = { rocket: 'rocket', triple: 'rocket', bomb: 'rocket', banana: 'banana', mine: 'banana', shield: 'shield', ghost: 'shield', bouncer: 'bouncer', ink: 'ink' };
-    const QUIET_HITS = ['mine', 'bomb', 'shock', 'lava', 'comet', 'thunder', 'ram']; // their own effect covers it
+    const ITEM_SOUND = { rocket: 'rocket', triple: 'rocket', bomb: 'rocket', banana: 'banana', mine: 'banana', shield: 'shield', ghost: 'shield', bouncer: 'bouncer', ink: 'ink',
+      snowball: 'snowThrow', sticky: 'banana', spikes: 'spikes', decoy: 'banana' };
+    const QUIET_HITS = ['mine', 'bomb', 'shock', 'lava', 'comet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy']; // their own effect covers it
     const nameOf = (idx) => api.escapeHtml(kartsByIdx.get(idx)?.name || 'Someone');
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -793,7 +805,15 @@ window.Games.kart = {
       onEvent(event, data) {
         if (event === 'game:kart:init') onInit(data);
         else if (event === 'game:kart:state') onState(data);
-        else if (event === 'game:kart:bump') {
+        else if (event === 'game:kart:stick') {
+          if (data.idx === myIdx) {
+            Sfx.stick?.();
+            hud.callout('STICKY BOMB!', { kind: 'small', hold: 1100, sub: 'Bump a rival to pass it on' });
+          } else if (data.pass && data.by === myIdx) {
+            Sfx.swap?.();
+            hud.callout('PASSED IT ON!', { kind: 'small gold', hold: 900, sub: nameOf(data.idx) });
+          }
+        } else if (event === 'game:kart:bump') {
           // The server's shove lands on my predicted kart too, so it slides now, not a round trip later.
           const mine = data.s.find((r) => r[0] === myIdx);
           if (mine && local && !local.dead && !local.falling) {
@@ -843,7 +863,15 @@ window.Games.kart = {
           const kind = data.kill ? 'kill' : data.kind === 'bullet' ? 'bullet' : 'hit';
           const victim = kartsByIdx.get(data.target);
           if (!QUIET_HITS.includes(data.kind) || data.kill) view3d?.explode(data.x, data.y, kind, data.kill ? 90 : 50, colorOf(victim));
-          if ((data.kind !== 'bullet' && data.kind !== 'thunder' && data.kind !== 'ram') || data.kill) Sfx.explosion(volumeAt(data.x, data.y) * (data.kill ? 1 : 0.4));
+          if (!['bullet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy'].includes(data.kind) || data.kill) Sfx.explosion(volumeAt(data.x, data.y) * (data.kill ? 1 : 0.4));
+          if (data.kind === 'snowball') Sfx.freeze?.(data.target === myIdx ? 1 : volumeAt(data.x, data.y));
+          if (data.kind === 'spikes') view3d?.bumpFx?.(data.x, data.y, 1, true);
+          if (data.shatter) {
+            view3d?.shatter?.(data.x, data.y);
+            Sfx.shatter?.(data.target === myIdx || data.by === myIdx ? 1 : volumeAt(data.x, data.y));
+            if (data.by === myIdx) hud.callout('SHATTER!', { kind: 'small gold', hold: 900 });
+          }
+          if (data.target === myIdx && data.kind === 'snowball') hud.callout('FROZEN!', { kind: 'small', hold: 900, sub: 'Hit again and the ice shatters' });
           if (data.kill || (map?.type === 'race' && data.kind !== 'bullet' && data.by >= 0)) hud.smash(data);
           if (data.kill) deathMarks.push({ x: data.x, y: data.y, color: colorOf(victim), t: performance.now() });
           if (data.target === myIdx) {
