@@ -301,13 +301,13 @@
       e.preventDefault();
       if (busy) return;
       box.setPointerCapture?.(e.pointerId);
-      drag = { y: e.clientY, travel: box.getBoundingClientRect().height * 0.55, pull: 0, fired: false, moved: false };
+      drag = { y: e.clientY, dy: 0, travel: box.getBoundingClientRect().height * 0.55, pull: 0, fired: false };
       box.classList.add('grab');
     });
     box.addEventListener('pointermove', (e) => {
       if (!drag) return;
       const p = clamp((e.clientY - drag.y) / drag.travel, 0, 1);
-      if (Math.abs(e.clientY - drag.y) > 6) drag.moved = true;
+      drag.dy = e.clientY - drag.y;
       drag.pull = p;
       setPull(p);
       if (p >= 0.85 && !drag.fired) { drag.fired = true; fire(); }
@@ -317,7 +317,9 @@
       const d = drag;
       drag = null;
       box.classList.remove('grab');
-      if (!d.moved && !d.fired) { auto(); return; }
+      // A tap (fingers wobble), a flick or a pull a third of the way down all count: only a
+      // deliberate drag back up is a change of mind.
+      if (!d.fired && (d.pull >= 0.35 || Math.abs(d.dy) < 24)) { auto(); return; }
       setPull(0);
     };
     box.addEventListener('pointerup', end);

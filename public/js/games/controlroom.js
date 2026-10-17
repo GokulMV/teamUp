@@ -51,6 +51,8 @@ window.Games = window.Games || {};
           <canvas class="cr-sky" data-sky></canvas>
           <div class="cr-glass" aria-hidden="true"></div>
           <div class="cr-banner" data-banner></div>
+          <div class="cr-relays" data-relays></div>
+          <button class="cr-end cr-end-hud hidden" data-finish-hud title="End the flight for everyone and show the results">${ico('flag')} End flight</button>
           <div class="cr-hud">
             <div class="cr-hud-row">
               <div class="cr-sector" data-sectorbox><small>Sector</small><b data-sector>1</b><i data-sectors></i></div>
@@ -76,7 +78,6 @@ window.Games = window.Games || {};
           <div class="cr-panel" data-panel></div>
           <div class="cr-dark" aria-hidden="true"><span>${ico('power-off')} Power failure</span></div>
           <div class="cr-mash hidden" data-mash></div>
-          <div class="cr-relays" data-relays></div>
           <div class="cr-overlay hidden" data-overlay></div>
         </section>
         <aside class="cr-side" data-side>
@@ -129,6 +130,7 @@ window.Games = window.Games || {};
     function layoutPanel() {
       const n = panelIds.length;
       if (!n) return;
+      root.classList.toggle('dense', n >= 6);
       const r = panelEl.getBoundingClientRect();
       if (r.width < 10 || r.height < 10) return;
       let best = { cols: 2, score: -Infinity };
@@ -136,8 +138,9 @@ window.Games = window.Games || {};
         const rows = Math.ceil(n / cols);
         const w = (r.width - (cols - 1) * 10) / cols;
         const h = (r.height - (rows - 1) * 10) / rows;
-        // Biggest roughly-square module wins; empty cells cost a little.
-        const score = Math.min(w, h * 1.2) - (cols * rows - n) * 6;
+        // Biggest roughly-square module wins; empty cells cost a little, and modules too short to
+        // fit their name and a control cost a lot.
+        const score = Math.min(w, h * 1.2) - (cols * rows - n) * 6 - Math.max(0, 118 - h) * 2;
         if (score > best.score) best = { cols, rows, score };
       }
       panelEl.style.setProperty('--cols', best.cols);
@@ -314,7 +317,11 @@ window.Games = window.Games || {};
       if (key === cardKey) return;
       const isNewOrder = key.startsWith('o:') && cardKey !== key;
       cardKey = key;
+      // Keep a green/red flash that is still playing (the order's result arrives just before the
+      // card moves on to the next one).
+      const flash = ['success', 'fail'].filter((c) => card.classList.contains(c));
       card.className = `cr-card ${tone}`;
+      for (const c of flash) card.classList.add(c);
       q('[data-tag]').innerHTML = tag;
       q('[data-text]').innerHTML = text;
       q('[data-foot]').innerHTML = foot;
@@ -354,7 +361,7 @@ window.Games = window.Games || {};
       const o = s.order;
       if (!o) { setCard('idle', { tag: `${ico('activity')} Standing by`, text: 'Next order incoming…', tone: 'idle' }); return; }
       const relay = s.comms === 'relay';
-      const relayed = relayedOrder === o.id;
+      const relayed = relayedOrder === o.id || !!o.relayed;
       setCard(`o:${o.id}:${relayed}`, {
         tag: `${ico('megaphone')} ${relay ? 'Order' : 'Shout it!'}`,
         text: `${esc(o.pre)} <b class="cr-target">${esc(o.name)}</b>${o.post ? ` ${esc(o.post)}` : ''}`,
@@ -385,18 +392,24 @@ window.Games = window.Games || {};
     const setText = (el, text) => { if (el && el.textContent !== text) el.textContent = text; };
     function timerFrame() {
       raf = requestAnimationFrame(timerFrame);
-      if (timerMode === 'none') { bar.style.transform = 'scaleX(0)'; setText(secs, ''); return; }
-      const left = Math.max(0, deadline - performance.now());
-      const frac = Math.min(1, left / duration);
-      bar.style.transform = `scaleX(${frac})`;
-      if (timerMode === 'order') {
-        bar.style.setProperty('--h', `${Math.round(frac * 130)}`);
-        card.classList.toggle('urgent', frac < 0.3);
-      } else {
-        bar.style.setProperty('--h', timerMode === 'event' ? '0' : '200');
+      if (timerMode === 'none') {
+        bar.style.transform = 'scaleX(0)';
+        setText(secs, '');
         card.classList.remove('urgent');
+      } else {
+        const left = Math.max(0, deadline - performance.now());
+        const frac = Math.min(1, left / duration);
+        bar.style.transform = `scaleX(${frac})`;
+        if (timerMode === 'order') {
+          bar.style.setProperty('--h', `${Math.round(frac * 130)}`);
+          card.classList.toggle('urgent', frac < 0.3);
+        } else {
+          bar.style.setProperty('--h', timerMode === 'event' ? '0' : '200');
+          card.classList.remove('urgent');
+        }
+        setText(secs, timerMode === 'order' || timerMode === 'briefing' || timerMode === 'event' ? `${Math.ceil(left / 1000)}s` : '');
       }
-      setText(secs, timerMode === 'order' || timerMode === 'briefing' || timerMode === 'event' ? `${Math.ceil(left / 1000)}s` : '');
+      // The event and final countdowns and the hull alarm run with or without an order on the card.
       const ev = chipsBox.querySelector('[data-evsecs]');
       if (ev && S?.crew?.event) setText(ev, `${Math.max(0, Math.ceil(((S.crew.event._localEnds || 0) - performance.now()) / 1000))}s`);
       const fin = chipsBox.querySelector('[data-finalsecs]');
@@ -482,6 +495,7 @@ window.Games = window.Games || {};
       if (!res.ok && res.error) api.toast(res.error);
     }
     q('.cr-end').addEventListener('click', endFlight);
+    q('[data-finish-hud]').addEventListener('click', endFlight);
 
     function renderOverlay(s) {
       const box = q('[data-overlay]');
@@ -490,6 +504,8 @@ window.Games = window.Games || {};
       let html = '';
       const host = api.isHost();
       const endBtn = host && s.phase !== 'over' ? `<button class="btn small" data-finish>${ico('flag')} End the flight and show results</button>` : '';
+      // The button is the host's: a new host gets it too.
+      const hostKey = host ? ':host' : '';
       const others = s.fleet.filter((c) => c.status === 'flying' || c.status === 'warping').length;
       if (!crew) {
         key = 'spec';
@@ -507,8 +523,9 @@ window.Games = window.Games || {};
         key = `warp${crew.sector}`;
         html = `<div class="cr-warp"><div class="cr-warp-lines"></div><small>Warp drive engaged</small><h2>Sector ${crew.sector + 1}</h2><p>${ico('wrench')} Hull patched up · new controls coming online</p></div>`;
       }
-      if (key !== overlayKey) {
-        overlayKey = key;
+      const fullKey = key ? key + hostKey : '';
+      if (fullKey !== overlayKey) {
+        overlayKey = fullKey;
         box.innerHTML = html;
         box.classList.toggle('hidden', !key);
         box.querySelector('[data-finish]')?.addEventListener('click', endFlight);
@@ -537,6 +554,7 @@ window.Games = window.Games || {};
       }
       root.classList.toggle('briefing', s.phase === 'briefing');
       q('.cr-end').classList.toggle('hidden', !api.isHost());
+      q('[data-finish-hud]').classList.toggle('hidden', !api.isHost() || s.phase === 'over');
     }
 
     function floater(text, tone, anchor) {
@@ -683,6 +701,8 @@ window.Games = window.Games || {};
         else if (event === 'game:cr:fx') onFx(data);
         else if (event === 'game:cr:fleet') onFleet(data);
       },
+      // A new host gets the End flight buttons at once.
+      onRoomState() { if (S) apply(S); },
       unmount() {
         cancelAnimationFrame(raf);
         clearInterval(scrambleTimer);
@@ -718,7 +738,7 @@ window.Games = window.Games || {};
         <div class="cr-res-big"><b>${c.sector}</b><small>${c.status === 'done' ? 'sectors' : `sector · ${Math.round(c.progress * 100)}%`}</small></div>
       </div>`).join('')}</div>`;
     els.podium.innerHTML = (r.awards || []).length ? `<div class="cr-awards">${r.awards.map((a) => `
-      <div class="cr-award">${api.avatarHtml(a.who.avatar)}<div><small>${esc(a.title)}</small><b>${esc(a.who.name)}</b><span>${a.who.value} ${esc(a.desc)}</span></div></div>`).join('')}</div>` : '';
+      <div class="cr-award">${api.avatarHtml(a.who.avatar)}<div><small>${esc(a.title)}</small><b>${esc(a.who.name)}</b><span>${a.who.value} ${esc(a.who.value === 1 && a.one ? a.one : a.desc)}</span></div></div>`).join('')}</div>` : '';
     const crewOf = (p) => crews.find((c) => c.id === p.crew);
     els.list.innerHTML = `<li class="cr-res-row head"><span></span><span>Crew member</span><span title="Orders completed">Done</span><span title="Your orders your crewmates completed">Heard</span><span title="Presses that did nothing">Panic</span></li>${(r.players || []).map((p, i) => `
       <li class="cr-res-row"><span class="rank">${i + 1}</span><span class="nm">${api.avatarHtml(p.avatar, '', crewOf(p)?.color || null)}${esc(p.name)}</span>

@@ -113,7 +113,7 @@
           ['ace', '☄️', 'Ace', 'Short fuses, chaos from sector 1'],
         ],
       },
-      { key: 'crSectors', type: 'seg', label: 'Sectors', hint: 'Endless: fly until your ship breaks', def: 5, options: [[5, '5'], [10, '10'], [0, 'Endless']] },
+      { key: 'crSectors', type: 'seg', label: 'Sectors', block: true, hint: 'Endless: fly until your ship breaks', def: 5, options: [[5, '5'], [10, '10'], [0, 'Endless']] },
       { key: 'crComms', type: 'seg', label: 'Comms', block: true, hint: 'Voice: shout across the room or call. Relay: tap your order to flash it on your crew’s screens.', def: 'voice', options: [['voice', '🗣️ Voice'], ['relay', '📡 Relay']] },
     ],
   };

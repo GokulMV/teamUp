@@ -767,7 +767,8 @@ class ControlRoom {
   // Back again: your own controls come home, topped up to a full panel.
   onPlayerReconnect(player) {
     const crew = this.crewOf(player.id);
-    if (!crew) return;
+    // Offline when the flight started: they take a free seat now, like anyone joining.
+    if (!crew) { this.onPlayerJoin(player); return; }
     const m = this.member(crew, player.id);
     if (!m) return;
     m.connected = true;
@@ -798,10 +799,11 @@ class ControlRoom {
     if (this.phase === 'over' || this.crewOf(player.id)) return;
     const open = this.crews.filter((c) => this.flying(c) && c.members.length < MAX_CREW);
     const teamMode = this.room.settings.teamMode;
-    const crew = teamMode
-      ? open.find((c) => c.id === player.team)
-      : open.sort((a, b) => a.members.length - b.members.length)[0];
+    const smallest = [...open].sort((a, b) => a.members.length - b.members.length)[0];
+    // In teams, their own team's ship; if their team has none flying, the ship with most room.
+    const crew = (teamMode && open.find((c) => c.id === player.team)) || smallest;
     if (!crew) return; // spectates
+    if (teamMode && player.team !== crew.id) player.team = crew.id;
     crew.members.push({ id: player.id, connected: true });
     this.crewByPlayer.set(player.id, crew);
     this.statsFor(player.id);
@@ -997,10 +999,10 @@ class ControlRoom {
       return top && top[key] > 0 ? { id: top.id, name: top.name, avatar: top.avatar, value: top[key] } : null;
     };
     const awards = [
-      { key: 'done', title: 'Hands of Lightning', desc: 'orders completed', who: best('done') },
+      { key: 'done', title: 'Hands of Lightning', desc: 'orders completed', one: 'order completed', who: best('done') },
       { key: 'mine', title: 'Loudest Voice', desc: 'of their orders done by crewmates', who: best('mine') },
-      { key: 'panic', title: 'Panic Button', desc: 'presses that did nothing', who: best('panic') },
-      ...(this.comms === 'relay' ? [{ key: 'relays', title: 'Radio Star', desc: 'orders relayed', who: best('relays') }] : []),
+      { key: 'panic', title: 'Panic Button', desc: 'presses that did nothing', one: 'press that did nothing', who: best('panic') },
+      ...(this.comms === 'relay' ? [{ key: 'relays', title: 'Radio Star', desc: 'orders relayed', one: 'order relayed', who: best('relays') }] : []),
     ].filter((a) => a.who);
     this.room.finishGame(this, {
       crews,

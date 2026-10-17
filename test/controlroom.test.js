@@ -795,3 +795,35 @@ test('full flight over sockets: two crews of three shout their way through three
   assert.ok(r.players.every((p) => p.done + p.mine > 0), 'everyone pulled their weight');
   room.destroy();
 });
+
+test('a player offline when the flight starts takes a free seat when they come back', async () => {
+  const ctx = await makeRoom(4);
+  await call(ctx.host, 'lobby:settings', { mode: 'controlroom' });
+  const away = ctx.players[3];
+  away.socket.close();
+  await new Promise((r) => setTimeout(r, 150));
+  assert.ok((await call(ctx.host, 'game:start')).ok);
+  const game = ctx.room.game;
+  clearInterval(game.interval);
+  assert.ok(!game.crewOf(away.id), 'not seated while offline');
+  const back = client();
+  assert.ok((await call(back, 'room:join', { code: ctx.code, token: away.token })).ok);
+  await new Promise((r) => setTimeout(r, 100));
+  const crew = game.crewOf(away.id);
+  assert.ok(crew, 'seated on a ship once back');
+  assert.ok(crew.members.some((m) => m.id === away.id));
+  ctx.room.destroy();
+});
+
+test('in teams, someone joining mid-flight whose team has no ship boards the one with most room', async () => {
+  const ctx = await startCR(4, { teamMode: true, teamCount: 3 }, [0, 0, 1, 1]);
+  const game = ctx.game;
+  const late = client();
+  const r = await call(late, 'room:join', { code: ctx.code, name: 'Late' });
+  assert.ok(r.ok);
+  await new Promise((res) => setTimeout(res, 100));
+  const crew = game.crewOf(r.playerId);
+  assert.ok(crew, 'boarded a ship instead of only watching');
+  assert.strictEqual(ctx.room.players.get(r.playerId).team, crew.id, 'and is on that team now');
+  ctx.room.destroy();
+});
