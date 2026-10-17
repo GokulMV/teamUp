@@ -1,5 +1,7 @@
 const K = require('../../public/js/shared/kart-core');
 const Bots = require('./kart-bots');
+const crypto = require('crypto');
+const { fixedLoop } = require('./loop');
 
 const TICK_HZ = 30;
 const SEND_EVERY = 2; // broadcast at 15 Hz
@@ -164,6 +166,7 @@ class KartBattle {
     this.botSkill = Bots.SKILLS[s.kartBotSkill] ? s.kartBotSkill : 'normal';
     this.botError = false;
     this.phase = 'countdown';
+    this.round = crypto.randomBytes(4).toString('hex'); // tells clients a new game from the same one again (not Math.random: the weekly play test seeds it)
     this.time = 0;
     this.karts = new Map();
     this.order = []; // kart index -> player id
@@ -195,7 +198,7 @@ class KartBattle {
     });
     bots.forEach((b, i) => this.addKart(b, players.length + i));
     this.room.emit('game:kart:init', this.initPayload());
-    this.interval = setInterval(() => this.tick(1 / TICK_HZ), 1000 / TICK_HZ);
+    this.interval = fixedLoop(TICK_HZ, (dt) => this.tick(dt));
   }
 
   addKart(player, slot) {
@@ -236,6 +239,7 @@ class KartBattle {
 
   initPayload() {
     return {
+      round: this.round,
       map: this.map.type, // 'race' | 'arena'
       mapId: this.map.id,
       laps: this.laps,
@@ -1428,7 +1432,7 @@ class KartBattle {
   }
 
   stop() {
-    clearInterval(this.interval);
+    this.interval?.stop?.();
     clearTimeout(this.endTimer);
     this.interval = null;
   }

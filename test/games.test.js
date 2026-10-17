@@ -227,6 +227,27 @@ test('the page carries the build it was made from, and the server says which bui
   assert.strictEqual((await hello).build, id);
 });
 
+test('game loops keep to real time: a busy server catches up instead of falling behind', async () => {
+  const { fixedLoop } = require('../server/games/loop');
+  let steps = 0;
+  const loop = fixedLoop(30, () => { steps++; });
+  const t0 = performance.now();
+  await new Promise((r) => setTimeout(r, 100));
+  const busy = performance.now();
+  while (performance.now() - busy < 250); // the event loop is blocked for a quarter of a second
+  await new Promise((r) => setTimeout(r, 300));
+  loop.stop();
+  const elapsed = (performance.now() - t0) / 1000;
+  assert.ok(Math.abs(steps - elapsed * 30) <= 2, `${steps} steps in ${elapsed.toFixed(2)} s`);
+  // A step that ends the game stops the catch-up there and then.
+  let after = 0;
+  const ender = fixedLoop(30, () => { after++; ender.stop(); });
+  const stall = performance.now();
+  while (performance.now() - stall < 200);
+  await new Promise((r) => setTimeout(r, 80));
+  assert.strictEqual(after, 1);
+});
+
 // Arena tests play on the flat Colosseum (the controlled bed: no hills, no bridges) unless they ask.
 async function arenaGame(n, settings = {}) {
   const ctx = await makeRoom(n);

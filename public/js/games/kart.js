@@ -8,7 +8,7 @@ window.Games.kart = {
     const K = KartCore;
     const Sfx = window.Sfx;
     const Icons = window.ItemIcons;
-    const INTERP_DELAY = 110; // ms behind the server for smooth remote karts
+    const SNAP_MS = 1000 / 15; // the server sends a snapshot every other 30 Hz tick
     const touch = matchMedia('(pointer: coarse)').matches;
     // Snapshot flag bits (see broadcast() in server/games/kart.js).
     const F = { spin: 1, boost: 2, shield: 4, finished: 8, invuln: 16, dead: 32, drift: 64, ghost: 1024, gun: 2048, star: 4096, shrunk: 8192, inked: 16384, frozen: 32768, spikes: 65536 };
@@ -81,7 +81,14 @@ window.Games.kart = {
     let map = null;
     let kartsByIdx = new Map();
     const snapshots = []; // { t, data }
-    let clockOffset = null; // localNow - serverT (minimum observed)
+    let clockOffset = null; // localNow - serverT for the fastest snapshot of the last few seconds
+    // Everyone else's kart is drawn a little in the past, so there is always a newer snapshot to
+    // glide toward. How far back adapts to the connection: the spread of arrival times over the
+    // last few seconds (Wi-Fi and phone networks bunch packets up), widening at once when packets
+    // come late and narrowing slowly. The drawn time runs up to 10% fast or slow to get there
+    // rather than jumping, and past the newest snapshot karts carry on for a moment instead of
+    // freezing.
+    const clock = { hist: [], delay: 110, drawT: null, at: 0 };
     let latest = null;
     let myIdx = -1;
     let local = null; // predicted state of my kart
@@ -252,7 +259,9 @@ window.Games.kart = {
       // server: reload instead of driving round some other map against the server's.
       const known = K.mapInfo(data.mapId);
       if ((!known || known.type !== data.map) && window.TeamUpStale?.()) return;
-      const sameRound = info && info.mapId === data.mapId && !!info.reverse === !!data.reverse && info.items === data.items && info.karts.length === data.karts.length;
+      const sameRound = info && info.round === data.round && info.mapId === data.mapId && !!info.reverse === !!data.reverse && info.items === data.items && info.karts.length === data.karts.length;
+      // A new round's clock starts again at 0: forget the last one's snapshots and timing.
+      if (!sameRound) { snapshots.length = 0; latest = null; clockOffset = null; Object.assign(clock, { hist: [], delay: 110, drawT: null }); }
       info = data;
       map = K.getMap(data.mapId, data.map, { reverse: !!data.reverse });
       kartsByIdx = new Map(data.karts.map((k) => [k.idx, k]));
@@ -277,8 +286,15 @@ window.Games.kart = {
 
     function onState(s) {
       const now = performance.now();
-      const off = now - s.t;
-      clockOffset = clockOffset === null ? off : Math.min(clockOffset + 0.5, off); // drift slowly upward
+      const hist = clock.hist;
+      hist.push([now, now - s.t]);
+      while (now - hist[0][0] > 3000) hist.shift();
+      let fastest = Infinity;
+      for (const h of hist) fastest = Math.min(fastest, h[1]);
+      clockOffset = fastest;
+      const late = hist.map((h) => h[1] - fastest).sort((a, b) => a - b);
+      const want = Math.max(90, Math.min(320, SNAP_MS + late[Math.floor((late.length - 1) * 0.9)] + 20));
+      clock.delay += (want - clock.delay) * (want > clock.delay ? 0.5 : 0.03);
       snapshots.push({ t: s.t, data: s });
       while (snapshots.length > 30) snapshots.shift();
       latest = s;
@@ -346,7 +362,12 @@ window.Games.kart = {
     // Interpolated positions for rendering.
     function interpolated() {
       if (!snapshots.length || clockOffset === null) return null;
-      const target = performance.now() - clockOffset - INTERP_DELAY;
+      const now = performance.now();
+      const goal = now - clockOffset - clock.delay;
+      if (clock.drawT === null || Math.abs(goal - clock.drawT) > 400) clock.drawT = goal;
+      else clock.drawT += (now - clock.at) * Math.max(0.9, Math.min(1.1, 1 + (goal - clock.drawT) / 600));
+      clock.at = now;
+      const target = clock.drawT;
       let a = snapshots[0];
       let b = snapshots[snapshots.length - 1];
       for (let i = 0; i < snapshots.length - 1; i++) {
@@ -356,6 +377,12 @@ window.Games.kart = {
       const span = b.t - a.t;
       const f = span > 0 ? Math.max(0, Math.min(1, (target - a.t) / span)) : 1;
       const prevK = new Map(a.data.k.map((r) => [r[0], r]));
+      // Past the newest snapshot (a late packet): karts carry on at the velocity of the last two
+      // snapshots for up to 0.15 s, rather than stopping dead until the next one turns up.
+      const before = target > b.t && snapshots.length > 1 ? snapshots[snapshots.length - 2] : null;
+      const ahead = before ? Math.min(target - b.t, 150) / 1000 : 0;
+      const gap = before ? (b.t - before.t) / 1000 : 0;
+      const beforeK = before && gap > 0 ? new Map(before.data.k.map((r) => [r[0], r])) : null;
       const karts = b.data.k.map((r) => {
         const p = prevK.get(r[0]) || r;
         // Don't slide across the map when a kart respawns.
@@ -363,8 +390,15 @@ window.Games.kart = {
         const ff = jump ? 1 : f;
         let da = (r[3] - p[3]) / 1000;
         da = Math.atan2(Math.sin(da), Math.cos(da));
+        let vx = 0;
+        let vy = 0;
+        const q = beforeK && beforeK.get(r[0]);
+        if (q && !(r[9] & F.dead) && !((r[14] || 0) & 1) && Math.hypot(r[1] - q[1], r[2] - q[2]) < 200) {
+          vx = (r[1] - q[1]) / gap;
+          vy = (r[2] - q[2]) / gap;
+        }
         return {
-          idx: r[0], x: p[1] + (r[1] - p[1]) * ff, y: p[2] + (r[2] - p[2]) * ff,
+          idx: r[0], x: p[1] + (r[1] - p[1]) * ff + vx * ahead, y: p[2] + (r[2] - p[2]) * ff + vy * ahead,
           angle: p[3] / 1000 + da * ff, speed: r[4], flags: r[9], hp: r[12],
           air: (p[13] || 0) + ((r[13] || 0) - (p[13] || 0)) * ff, fx: r[14] || 0,
           item: r[7], ammo: r[8], roulette: r[15] || 0, sticky: r[19] || 0,
@@ -704,7 +738,8 @@ window.Games.kart = {
     // ---------- Frame loop ----------
     function frame(now) {
       raf = requestAnimationFrame(frame);
-      const dt = Math.min(0.05, (now - lastFrame) / 1000);
+      const elapsed = (now - lastFrame) / 1000;
+      const dt = Math.min(0.05, elapsed); // effects and the camera
       lastFrame = now;
       if (!info) return;
       const chatOpen = document.body.classList.contains('chat-open');
@@ -719,7 +754,9 @@ window.Games.kart = {
       const mapTime = clockOffset === null ? 0 : (now - clockOffset + rtt / 2) / 1000;
       if (map?.layered && local && !local.dead && latest?.phase === 'racing') warnBridges(mapTime);
       if (local && !local.dead && !local.falling && latest?.phase === 'racing') {
-        predictAcc = Math.min(predictAcc + dt, STEP * 4);
+        // Real time, not the capped frame time: on a slow phone (under 20 frames a second) my kart
+        // would otherwise drive slower than the server's and keep getting dragged forward.
+        predictAcc = Math.min(predictAcc + Math.min(elapsed, 0.25), 0.25);
         let stepT = mapTime - predictAcc;
         while (predictAcc >= STEP) {
           predictAcc -= STEP;
