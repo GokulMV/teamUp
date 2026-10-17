@@ -523,11 +523,20 @@ test('disconnects: the leaver\'s controls move to crewmates, stale orders are dr
   }
   assert.ok(theirs.includes(pointing.controlId));
 
+  const hull = crew.hull;
   leaver.socket.disconnect();
   await sleep(150);
   assert.strictEqual(crew.members.find((m) => m.id === leaver.id).connected, false);
-  assert.deepStrictEqual(crew.panels.get(leaver.id), []);
   assert.ok(!crew.orders.has(leaver.id), 'the leaver\'s own order is dropped');
+  // For a few seconds their controls wait for them (a phone locking, a reload); orders that needed
+  // them are dropped without damage, and no new ones ask for them.
+  assert.deepStrictEqual(crew.panels.get(leaver.id), theirs, 'controls kept through a short drop-out');
+  assert.ok(!crew.orders.has(holder) || !theirs.includes(crew.orders.get(holder).controlId));
+  ctx.advance(3000);
+  for (const o of crew.orders.values()) assert.ok(!theirs.includes(o.controlId), 'no new order needs the missing player');
+  assert.strictEqual(crew.hull, hull);
+  ctx.advance(1200);
+  assert.deepStrictEqual(crew.panels.get(leaver.id), [], 'then they move to the crew');
   for (const id of theirs) {
     const c = crew.controls.get(id);
     assert.ok(c, 'control still exists');
@@ -538,7 +547,6 @@ test('disconnects: the leaver\'s controls move to crewmates, stale orders are dr
     const c = crew.controls.get(o.controlId);
     assert.ok(c && c.owner !== leaver.id, 'no order needs the missing player');
   }
-  assert.strictEqual(crew.orders.get(holder)?.id, pointing.id, 'an order for a moved control stays valid');
   // Orders keep coming for the two who are left and can be completed.
   ctx.advance(3000);
   assert.strictEqual(crew.orders.size, 2);
@@ -580,6 +588,7 @@ test('a panel never grows past the limit: controls that do not fit go offline an
   ctx.sock(b).disconnect();
   ctx.sock(c).disconnect();
   await sleep(200);
+  ctx.advance(4200); // past the drop-out grace
   assert.strictEqual(crew.panels.get(a).length, CR.MAX_PANEL, 'filled up to the limit, not past it');
   assert.strictEqual(crew.controls.size, CR.MAX_PANEL, 'controls with no room went offline');
   for (const id of crew.panels.get(a)) assert.strictEqual(crew.controls.get(id).owner, a);

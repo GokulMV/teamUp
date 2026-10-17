@@ -8,6 +8,7 @@ const MAX_CREW = 6;
 const MAX_CREWS = 5;
 const MAX_PANEL = 8; // a panel can grow past its normal size when a crewmate drops out
 const TICK_MS = 150;
+const DROP_GRACE_MS = 4000; // a player who drops out keeps their controls this long
 const FLUSH_MS = 25; // crew state updates are coalesced this long
 const FLEET_MS = 300; // fleet summary broadcast at most this often
 const BRIEFING_MS = 5000;
@@ -589,6 +590,7 @@ class ControlRoom {
   }
 
   tickCrew(crew, now) {
+    if (this.flying(crew)) this.handOverDropped(crew, now);
     if (crew.status === 'warping') {
       if (now >= crew.warpEnds) {
         crew.status = 'flying';
@@ -728,21 +730,33 @@ class ControlRoom {
   }
 
   // ---------- Players coming and going ----------
-  // A player dropped: their order is dropped and their controls move to crewmates.
+  // A player dropped: their order is dropped and, if they aren't back within a few seconds (a phone
+  // locking for a moment, a page reloading), their controls move to crewmates. No new orders ask
+  // for their controls meanwhile.
   onPlayerDisconnect(player) {
     const crew = this.crewOf(player.id);
     if (!crew) return;
     const m = this.member(crew, player.id);
-    if (m) m.connected = false;
     const now = this.clock();
+    if (m) { m.connected = false; m.droppedAt = now; }
     if (this.flying(crew)) {
       crew.orders.delete(player.id);
       crew.nextOrderAt.delete(player.id);
-      this.redistribute(crew, player.id, now);
+      this.dropStaleOrders(crew, now);
       if (crew.event?.type === 'asteroid' && this.asteroidCleared(crew)) this.endEvent(crew, now, true);
     }
     this.fleetDirty = true;
     this.markCrew(crew);
+  }
+
+  // Players gone longer than the grace hand their controls on.
+  handOverDropped(crew, now) {
+    for (const m of crew.members) {
+      if (m.connected || m.droppedAt === undefined || m.droppedAt === null || now - m.droppedAt < DROP_GRACE_MS) continue;
+      m.droppedAt = null;
+      this.redistribute(crew, m.id, now);
+      this.markCrew(crew);
+    }
   }
 
   redistribute(crew, fromId, now) {
@@ -772,6 +786,7 @@ class ControlRoom {
     const m = this.member(crew, player.id);
     if (!m) return;
     m.connected = true;
+    m.droppedAt = null;
     const now = this.clock();
     if (crew.status === 'flying') this.restorePanel(crew, player.id, now);
     this.fleetDirty = true;

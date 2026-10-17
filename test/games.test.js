@@ -360,6 +360,27 @@ test('players can reconnect with their token and keep their identity', async () 
   room.destroy();
 });
 
+test('the host keeps the room through a short drop-out, and gets it back after a long one', async () => {
+  const { code, players, room } = await makeRoom(3);
+  const [h] = players;
+  h.socket.close();
+  await new Promise((r) => setTimeout(r, 150));
+  assert.strictEqual(room.hostId, h.id, 'still host while away for a moment');
+  // Away longer than the grace: someone who is here takes over...
+  clearTimeout(room.hostTimer);
+  room.pickNewHost();
+  assert.notStrictEqual(room.hostId, h.id);
+  // ...and the party's host takes it back on returning.
+  const back = client();
+  assert.ok((await call(back, 'room:join', { code, token: h.token })).ok);
+  assert.strictEqual(room.hostId, h.id);
+  // Leaving for good hands the party to whoever hosts next.
+  await call(back, 'room:leave');
+  assert.notStrictEqual(room.hostId, h.id);
+  assert.strictEqual(room.ownerId, room.hostId);
+  room.destroy();
+});
+
 test('the page carries the build it was made from, and the server says which build it runs', async () => {
   // A page left open across a deploy compares the two and reloads (public/js/app.js).
   const { renderIndex, buildId } = require('../server/assets');

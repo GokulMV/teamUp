@@ -315,6 +315,8 @@
   }
 
   $('btn-leave').onclick = async () => {
+    // Mid-game, a stray tap would cost the player their place and points.
+    if (state.room?.state === 'playing' && !confirm('Leave this game? Your place and points go with you.')) return;
     await emit('room:leave');
     leaveLocal();
   };
@@ -738,7 +740,7 @@
     const r = state.room.results;
     if (!r) return;
     const host = isHost();
-    $('btn-again').classList.toggle('hidden', !host);
+    $('results-actions').classList.toggle('hidden', !host);
     $('results-wait').classList.toggle('hidden', host);
     const key = JSON.stringify(r).length + r.mode;
     if (key !== state.lastResultsKey) { state.lastResultsKey = key; confetti(); window.Sfx?.finish?.(); }
@@ -816,6 +818,13 @@
       <span class="nm">${escapeHtml(p.name)}</span><span class="extra">${extraFor(p)}</span>${arena || watched(p) ? '' : `<span class="pts">${p.score}<small>pts</small></span>`}</li>`).join('');
   }
   $('btn-again').onclick = () => emit('game:stop');
+  // Same game, same settings, straight away.
+  $('btn-replay').onclick = async () => {
+    $('btn-replay').disabled = true;
+    const res = await emit('game:start');
+    $('btn-replay').disabled = false;
+    if (!res.ok) toast(res.error || 'Could not start');
+  };
 
   // ---------- Sound toggle ----------
   const muteBtn = $('btn-mute');

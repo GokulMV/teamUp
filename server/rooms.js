@@ -128,6 +128,7 @@ class Room {
     this.code = code;
     this.players = new Map(); // playerId -> player
     this.hostId = null;
+    this.ownerId = null; // who runs the party: gets the host back on returning after a long drop-out
     this.state = 'lobby'; // lobby | playing | results
     this.settings = { ...DEFAULT_SETTINGS, kartItemList: [...DEFAULT_SETTINGS.kartItemList] };
     this.game = null;
@@ -166,7 +167,7 @@ class Room {
       leaveTimer: null,
     };
     this.players.set(player.id, player);
-    if (!this.hostId) this.hostId = player.id;
+    if (!this.hostId) { this.hostId = player.id; this.ownerId = player.id; }
     this.attach(socket, player);
     if (this.game) this.game.onPlayerJoin?.(player);
     return player;
@@ -176,6 +177,12 @@ class Room {
     clearTimeout(player.leaveTimer);
     player.leaveTimer = null;
     if (player.id === this.hostId) { clearTimeout(this.hostTimer); this.hostTimer = null; }
+    // The party's own host, back after the host moved on: they take it back.
+    else if (player.id === this.ownerId && this.hostId !== player.id) {
+      clearTimeout(this.hostTimer);
+      this.hostTimer = null;
+      this.hostId = player.id;
+    }
     player.socketId = socket.id;
     player.connected = true;
     socket.data.roomCode = this.code;
@@ -288,6 +295,8 @@ class Room {
       this.hostTimer = null;
       this.pickNewHost();
     }
+    // Gone for good: whoever hosts now runs the party.
+    if (this.ownerId === playerId) this.ownerId = this.hostId;
     if (this.players.size === 0) {
       this.destroy();
       return;
@@ -366,6 +375,14 @@ class Room {
       case 'chat': {
         const text = String(data?.text || '').trim().slice(0, 200);
         if (!text) return;
+        // At most 6 messages in 4 seconds each: enough for fast guessing, not for flooding.
+        const now = Date.now();
+        player.chatTimes = (player.chatTimes || []).filter((t) => now - t < 4000);
+        if (player.chatTimes.length >= 6) {
+          this.emitTo(player.id, 'chat', { system: true, text: 'Slow down a little 🙂' });
+          return;
+        }
+        player.chatTimes.push(now);
         if (this.game?.onChat?.(player, text)) return; // game consumed it (e.g. a correct guess)
         this.emit('chat', { from: player.name, color: player.color, avatar: player.avatar, team: player.team, text });
         return;
