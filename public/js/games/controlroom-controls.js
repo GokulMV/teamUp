@@ -317,9 +317,9 @@
       const d = drag;
       drag = null;
       box.classList.remove('grab');
-      // A tap (fingers wobble), a flick or a pull a third of the way down all count: only a
+      // A tap (fingers wobble), a flick or a pull a quarter of the way down all count: only a
       // deliberate drag back up is a change of mind.
-      if (!d.fired && (d.pull >= 0.35 || Math.abs(d.dy) < 24)) { auto(); return; }
+      if (!d.fired && (d.pull >= 0.25 || Math.abs(d.dy) < 24)) { auto(); return; }
       setPull(0);
     };
     box.addEventListener('pointerup', end);
