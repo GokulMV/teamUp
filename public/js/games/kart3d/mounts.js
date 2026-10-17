@@ -1,6 +1,6 @@
 // Weapons on the karts: what a kart is carrying shows on it, popping on with an elastic overshoot
-// when its roulette lands and shrinking away when it's fired. Twin rocket pods ride on the side
-// pods, the bomb sits in a mortar, the snowball in a snow cannon and the sticky bomb in a goo
+// when its roulette lands and shrinking away when it's fired. Rocket pods ride on both ends of the
+// rear wing, the bomb sits in a mortar, the snowball in a snow cannon and the sticky bomb in a goo
 // launcher. Toon-shaded with ink outlines, like the karts (kart3d/toon.js).
 //
 // Kart space: +x forward, +y up, +z the kart's right (see kart3d/gokart.js).
@@ -33,51 +33,58 @@ const rbox = (w, h, d, r) => new RoundedBoxGeometry(w, h, d, 2, r);
 const cyl = (r0, r1, h, n = 14) => new THREE.CylinderGeometry(r1, r0, h, n);
 const X = [0, 0, -Math.PI / 2]; // a cylinder along +x
 
+// Everything sits up on the rear wing (top at about y 22, x -25, spanning z +-15), where the chase
+// camera sees it either side of the driver's head.
+const WX = -23.5; // along the wing
+const WY = 22.6; // the wing's top
+const SIDE = 12.8; // out towards the wing's ends, clear of the driver's head
 const BUILD = {
-  // A pod of two rocket tubes on each side pod, noses peeking out, a hazard stripe round it.
+  // A rocket pod on each end of the wing: two tubes with red noses peeking out in front, thruster
+  // rings glowing at the back, a hazard stripe round the middle.
   pods() {
     const g = [];
-    for (const z of [-12.2, 12.2]) {
-      g.push(P(rbox(13, 6.6, 6.6, 1.6), { at: [3, 15.4, z], color: '#3b4150' }));
-      g.push(P(rbox(1.6, 6.9, 6.9, 0.5), { at: [-0.6, 15.4, z], color: '#facc15' }));
-      for (const dy of [-1.6, 1.6]) {
-        g.push(P(cyl(1.55, 1.55, 2.4), { at: [10.4, 15.4 + dy, z], rot: X, color: '#1f232c' }));
-        g.push(P(new THREE.ConeGeometry(1.15, 2.6, 10), { at: [11.2, 15.4 + dy, z], rot: X, color: '#ef233c' }));
+    for (const z of [-SIDE, SIDE]) {
+      const y = WY + 4.6;
+      g.push(P(rbox(15, 8, 8, 1.8), { at: [WX, y, z], color: '#3b4150' }));
+      g.push(P(rbox(1.8, 8.3, 8.3, 0.5), { at: [WX + 1.5, y, z], color: '#facc15' }));
+      for (const dy of [-1.8, 1.8]) {
+        g.push(P(cyl(1.75, 1.75, 2.6), { at: [WX + 8, y + dy, z], rot: X, color: '#1f232c' }));
+        g.push(P(new THREE.ConeGeometry(1.3, 2.8, 10), { at: [WX + 8.9, y + dy, z], rot: X, color: '#ef233c' }));
+        g.push(P(new THREE.TorusGeometry(1.5, 0.5, 6, 14), { at: [WX - 7.6, y + dy, z], rot: [0, Math.PI / 2, 0], color: '#ff8a1f' }));
       }
-      g.push(P(rbox(6, 2, 3, 0.6), { at: [2, 11.6, z], color: '#2a2e38' })); // the bracket
+      g.push(P(rbox(6, 2.4, 3, 0.6), { at: [WX, WY + 0.4, z], color: '#2a2e38' })); // the bracket
     }
     return g;
   },
-  // A stubby mortar on the right side pod, tipped up and forward, a gold band round its muzzle.
+  // A stubby mortar on the right end of the wing, tipped up and forward, a gold band round its muzzle.
   mortar() {
-    const tilt = [0, 0, -0.55];
+    const tilt = [0, 0, -0.5];
     return [
-      P(rbox(9, 2.4, 9, 0.8), { at: [2, 12.4, 12.2], color: '#4a505c' }),
-      P(cyl(3.6, 3.2, 10, 16), { at: [3.4, 17.4, 12.2], rot: tilt, color: '#1b2030' }),
-      P(new THREE.TorusGeometry(3.3, 0.7, 6, 16), { at: [6, 21.4, 12.2], rot: [0, Math.PI / 2, 0.55], color: '#f59e0b' }),
-      P(new THREE.SphereGeometry(2.6, 12, 8), { at: [6.2, 21.6, 12.2], color: '#0f121a' }),
+      P(rbox(10, 2.6, 10, 0.9), { at: [WX, WY + 1.2, SIDE], color: '#4a505c' }),
+      P(cyl(4.2, 3.7, 11, 16), { at: [WX + 1.4, WY + 7.6, SIDE], rot: tilt, color: '#1b2030' }),
+      P(new THREE.TorusGeometry(3.8, 0.8, 6, 16), { at: [WX + 4.2, WY + 12.1, SIDE], rot: [0, Math.PI / 2, 0.5], color: '#f59e0b' }),
+      P(new THREE.SphereGeometry(3, 12, 8), { at: [WX + 4.4, WY + 12.3, SIDE], color: '#0f121a' }),
     ];
   },
-  // The same shape in ice blue and white, with a snowball loaded.
+  // The same in ice blue and white, a snowball loaded.
   snowgun() {
-    const tilt = [0, 0, -0.35];
+    const r = [0, 0, -Math.PI / 2 + 0.35];
     return [
-      P(rbox(9, 2.4, 9, 0.8), { at: [2, 12.4, 12.2], color: '#64748b' }),
-      P(cyl(3.4, 3.4, 11, 16), { at: [4, 16.6, 12.2], rot: [0, 0, -Math.PI / 2 + 0.35], color: '#f1f5f9' }),
-      P(cyl(3.6, 3.6, 2, 16), { at: [6.5, 17.5, 12.2], rot: [0, 0, -Math.PI / 2 + 0.35], color: '#38bdf8' }),
-      P(cyl(3.6, 3.6, 2, 16), { at: [1.8, 15.8, 12.2], rot: [0, 0, -Math.PI / 2 + 0.35], color: '#38bdf8' }),
-      P(new THREE.SphereGeometry(2.8, 12, 8), { at: [9.3, 18.6, 12.2], color: '#ffffff' }),
-      void tilt,
-    ].filter(Boolean);
+      P(rbox(10, 2.6, 10, 0.9), { at: [WX, WY + 1.2, SIDE], color: '#64748b' }),
+      P(cyl(3.8, 3.8, 13, 16), { at: [WX + 1.5, WY + 7, SIDE], rot: r, color: '#f1f5f9' }),
+      P(cyl(4, 4, 2.2, 16), { at: [WX + 4.4, WY + 8, SIDE], rot: r, color: '#38bdf8' }),
+      P(cyl(4, 4, 2.2, 16), { at: [WX - 1.4, WY + 6, SIDE], rot: r, color: '#38bdf8' }),
+      P(new THREE.SphereGeometry(3.2, 12, 8), { at: [WX + 7.6, WY + 9.3, SIDE], color: '#ffffff' }),
+    ];
   },
   // A pink goo tank with a nozzle pointing forward.
   goo() {
     return [
-      P(rbox(9, 2.4, 9, 0.8), { at: [1.5, 12.4, 12.2], color: '#4a505c' }),
-      P(new THREE.SphereGeometry(4.4, 16, 12), { at: [1, 17.6, 12.2], color: '#f472b6' }),
-      P(new THREE.TorusGeometry(4.5, 0.6, 6, 18), { at: [1, 17.6, 12.2], rot: [Math.PI / 2, 0, 0], color: '#831843' }),
-      P(cyl(1.6, 1.1, 7, 12), { at: [7, 17.6, 12.2], rot: X, color: '#be185d' }),
-      P(new THREE.SphereGeometry(1.5, 10, 8), { at: [10.6, 17.6, 12.2], color: '#fbcfe8' }),
+      P(rbox(10, 2.6, 10, 0.9), { at: [WX, WY + 1.2, SIDE], color: '#4a505c' }),
+      P(new THREE.SphereGeometry(5, 16, 12), { at: [WX - 0.5, WY + 7.2, SIDE], color: '#f472b6' }),
+      P(new THREE.TorusGeometry(5.1, 0.7, 6, 18), { at: [WX - 0.5, WY + 7.2, SIDE], rot: [Math.PI / 2, 0, 0], color: '#831843' }),
+      P(cyl(1.8, 1.3, 8, 12), { at: [WX + 6.5, WY + 7.2, SIDE], rot: X, color: '#be185d' }),
+      P(new THREE.SphereGeometry(1.7, 10, 8), { at: [WX + 10.6, WY + 7.2, SIDE], color: '#fbcfe8' }),
     ];
   },
 };
@@ -102,7 +109,13 @@ export function buildMount(kind) {
   pivot.add(mesh);
   pivot.userData.kind = kind;
   pivot.userData.mesh = mesh;
-  // Where a shot leaves it (kart space), for the muzzle flash.
-  pivot.userData.muzzle = kind === 'pods' ? [12, 15.4, 0] : kind === 'mortar' ? [6.4, 22, 12.2] : kind === 'snowgun' ? [10, 19, 12.2] : [11.5, 17.6, 12.2];
   return pivot;
 }
+
+// Where shots leave each mount (kart space), for the muzzle flashes.
+export const MUZZLES = {
+  pods: [[WX + 10, WY + 4.6, SIDE], [WX + 10, WY + 4.6, -SIDE]],
+  mortar: [[WX + 4.6, WY + 12.6, SIDE]],
+  snowgun: [[WX + 8.6, WY + 9.6, SIDE]],
+  goo: [[WX + 12, WY + 7.2, SIDE]],
+};

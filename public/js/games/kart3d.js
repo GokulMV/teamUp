@@ -15,6 +15,7 @@ import { buildLayered } from './kart3d/arena3d.js';
 import { ItemFX, shieldMaterial, shieldGeometry, ghostMaterial, starVariant } from './kart3d/items3d.js';
 import { buildGoKart, setNight, kartMaterials, EXHAUSTS } from './kart3d/gokart.js';
 import { Juice, ease } from './kart3d/juice.js';
+import { MOUNT_OF, MUZZLES } from './kart3d/mounts.js';
 
 const K = window.KartCore;
 
@@ -715,8 +716,13 @@ export class Kart3D {
     if (kick) {
       kart.recoilT = 0;
       kart.recoilAmt = kick;
-      const y = kart.group.position.y;
-      this.juice.muzzle(k.x + Math.cos(k.angle) * 34, y + 16, k.y + Math.sin(k.angle) * 34, item === 'bomb' ? 34 : 26);
+      // A starburst at each barrel of the mount it was fired from (kart3d/mounts.js).
+      const v = this.tmpMuzzle || (this.tmpMuzzle = new THREE.Vector3());
+      kart.chassis.updateMatrixWorld(true);
+      for (const p of MUZZLES[MOUNT_OF[item]] || [[34, 16, 0]]) {
+        kart.chassis.localToWorld(v.set(p[0], p[1], p[2]));
+        this.juice.muzzle(v.x, v.y, v.z, item === 'bomb' ? 30 : 22);
+      }
     }
   }
 

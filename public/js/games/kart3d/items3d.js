@@ -10,6 +10,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { MOBILE, part, canvasTexture, tex } from './world.js';
 import { outlined } from './toon.js';
+import { MOUNT_OF, buildMount } from './mounts.js';
+import { ease } from './juice.js';
 
 const K = window.KartCore;
 const TAU = Math.PI * 2;
@@ -1063,6 +1065,13 @@ export class ItemFX {
       fx.gun = gun;
     }
     if (fx.gun) {
+      // It pops into place (an elastic overshoot) when it appears.
+      if (showGun && !fx.gunWas) fx.gunT = 0;
+      fx.gunWas = showGun;
+      if (showGun && fx.gunT < 0.5) {
+        fx.gunT += dt;
+        fx.gun.scale.setScalar(Math.max(0.001, ease.outElastic(Math.min(1, fx.gunT / 0.45))));
+      }
       fx.gun.visible = showGun;
       if (showGun) {
         const { barrels, flash } = fx.gun.userData;
@@ -1070,6 +1079,37 @@ export class ItemFX {
         flash.visible = firing && Math.random() > 0.25;
         if (flash.visible) { flash.scale.setScalar(rand(0.6, 1.25)); flash.rotation.x = rand(0, TAU); }
       }
+    }
+
+    // The weapon it's carrying, on the kart (kart3d/mounts.js): it pops on with an elastic overshoot
+    // when the roulette lands and shrinks away when it's fired.
+    const want = ready ? MOUNT_OF[K.ITEMS[k.item - 1]] || null : null;
+    if (want !== fx.mountKind) {
+      if (fx.mount) { fx.mountOut = fx.mount; fx.mountOutT = 0; }
+      fx.mount = null;
+      fx.mountKind = want;
+      if (want) {
+        fx.mounts = fx.mounts || {};
+        const m = fx.mounts[want] || (fx.mounts[want] = buildMount(want));
+        if (m) {
+          if (fx.mountOut === m) fx.mountOut = null;
+          if (m.parent !== kart.chassis) kart.chassis.add(m);
+          m.visible = true;
+          fx.mount = m;
+          fx.mountT = 0;
+        }
+      }
+    }
+    if (fx.mount) {
+      fx.mountT += dt;
+      fx.mount.scale.setScalar(Math.max(0.001, ease.outElastic(Math.min(1, fx.mountT / 0.5))));
+      fx.mount.visible = !kart.ghosted && kart.fade >= 1;
+    }
+    if (fx.mountOut) {
+      fx.mountOutT += dt;
+      const p = Math.min(1, fx.mountOutT / 0.14);
+      fx.mountOut.scale.setScalar(Math.max(0.001, 1 - p));
+      if (p >= 1) { fx.mountOut.visible = false; fx.mountOut = null; }
     }
 
     // Star: the kart itself runs through the rainbow (Kart3D swaps in starVariant() materials), a
@@ -1158,6 +1198,10 @@ export class ItemFX {
     fx.held = null;
     fx.heldKind = 0;
     if (fx.orbit) { while (fx.orbit.children.length) this.put(fx.orbit.children[0]); fx.orbitN = 0; }
+    for (const m of [fx.mount, fx.mountOut]) if (m) m.visible = false;
+    fx.mount = null;
+    fx.mountOut = null;
+    fx.mountKind = null;
     for (const key of ['ice', 'spk', 'goo']) { this.put(fx[key]); fx[key] = null; }
   }
 
