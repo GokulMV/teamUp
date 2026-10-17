@@ -251,24 +251,40 @@ function buildRoad(scene, map, theme, ctx, R) {
       addMesh(scene, sweep(R, [[a, 1.9], [b, 1.9]], open), new THREE.MeshBasicMaterial({ color: c }), { receive: false });
     }
   }
-  // Ends of the road at gaps: a thick slab edge instead of paper-thin asphalt.
+  // Ends of the road at gaps: a thin deck edge with a hazard stripe, held up by struts that reach
+  // down into the pit, so the jump reads as a built structure rather than a block.
   const capMat = new THREE.MeshStandardMaterial({ map: tex.concrete(theme.night ? '#3a3355' : '#8c8f96'), roughness: 0.9 });
   const hazard = new THREE.MeshBasicMaterial({ map: tex.hazard(), color: theme.night ? 0xffffff : 0xdddddd });
+  const strutMat = new THREE.MeshStandardMaterial({ color: theme.night ? 0x3b3566 : 0x9aa3ad, metalness: 0.6, roughness: 0.35 });
+  const strutGeo = new THREE.CylinderGeometry(5, 7, 1, 10);
   for (let i = 0; i < n; i++) {
     const j = (i + 1) % n;
     if (!!gap[i] === !!gap[j]) continue;
     const at = gap[j] ? i : j; // last/first road sample
+    const back = gap[j] ? -1 : 1; // towards the road, away from the gap
     const p = R.pts[at];
     const t = map.tangents[at];
     const ang = Math.atan2(t[1], t[0]);
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(14, 60, map.width + 2 * K.CURB), capMat);
-    slab.position.set(p[0], R.H[at] - 28, p[1]);
-    slab.rotation.y = -ang;
-    scene.add(slab);
+    const deck = new THREE.Mesh(new THREE.BoxGeometry(14, 10, map.width + 2 * K.CURB), capMat);
+    deck.position.set(p[0], R.H[at] - 4.5, p[1]);
+    deck.rotation.y = -ang;
+    deck.castShadow = true;
+    scene.add(deck);
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(10, 3, map.width + 2 * K.CURB), hazard);
     stripe.position.set(p[0], R.H[at] + 2.2, p[1]);
     stripe.rotation.y = -ang;
     scene.add(stripe);
+    for (const o of [-0.7, 0, 0.7]) {
+      const x = p[0] + R.N[at][0] * o * half + t[0] * back * 14;
+      const z = p[1] + R.N[at][1] * o * half + t[1] * back * 14;
+      const top = R.H[at] - 8;
+      const bottom = Math.min(top - 20, map.terrainAt(x, z) - 10);
+      const strut = new THREE.Mesh(strutGeo, strutMat);
+      strut.scale.y = top - bottom;
+      strut.position.set(x, (top + bottom) / 2, z);
+      strut.castShadow = true;
+      scene.add(strut);
+    }
   }
 }
 
@@ -354,9 +370,11 @@ const RAMP_COLORS = {
 function buildRamps(scene, map, theme, ctx, R) {
   const { half } = R;
   const [ca, cb] = RAMP_COLORS[map.theme] || RAMP_COLORS.meadow;
-  const texture = tex.ramp(ca, cb);
-  const mat = new THREE.MeshStandardMaterial({ map: texture, roughness: 0.5, metalness: 0.1, emissive: 0xffffff, emissiveMap: texture, emissiveIntensity: theme.night ? 0.6 : 0.12 });
+  const rampMat = (texture) => new THREE.MeshStandardMaterial({ map: texture, roughness: 0.5, metalness: 0.1, emissive: 0xffffff, emissiveMap: texture, emissiveIntensity: theme.night ? 0.6 : 0.12 });
+  const mat = rampMat(tex.ramp(ca, cb));
+  const landMat = rampMat(tex.rampLanding(ca, cb));
   const sideMat = new THREE.MeshStandardMaterial({ map: tex.concrete(theme.night ? '#2a2350' : '#5b5f66'), roughness: 0.8 });
+  const lipMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(cb).lerp(new THREE.Color(0xffffff), 0.35) });
   const n = R.n;
   const sp = map.spacing;
   for (const r of map.ramps) {
@@ -398,7 +416,17 @@ function buildRamps(scene, map, theme, ctx, R) {
     g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
     g.setIndex(idx);
     g.computeVertexNormals();
-    addMesh(scene, g, mat, { cast: true });
+    // Only ramps that launch in this race's direction show arrows; the far side of a gap is a landing pad.
+    addMesh(scene, g, r.dir > 0 ? mat : landMat, { cast: true });
+    if (r.dir > 0) {
+      // A glowing strip along the lip, so you can line up the jump from far away.
+      const li = ((r.i % n) + n) % n;
+      const t = map.tangents[li];
+      const lip = new THREE.Mesh(new THREE.BoxGeometry(5, 3, map.width), lipMat);
+      lip.position.set(R.pts[li][0], R.H[li] + r.h + 1.6, R.pts[li][1]);
+      lip.rotation.y = -Math.atan2(t[1], t[0]);
+      scene.add(lip);
+    }
     const sg = new THREE.BufferGeometry();
     sg.setAttribute('position', new THREE.Float32BufferAttribute(side, 3));
     sg.setIndex(sideIdx);
@@ -856,14 +884,18 @@ function addLighthouse(scene, x, y, z, ctx) {
   houseRoof.scale.set(1.5, 1, 1);
   houseRoof.position.set(70, 75, 0);
   for (const m of [tower, gallery, roof, house, houseRoof]) { m.castShadow = true; m.receiveShadow = true; }
-  // Sweeping light beam.
-  const beam = new THREE.Mesh(new THREE.ConeGeometry(70, 900, 24, 1, true).rotateZ(Math.PI / 2).translate(450, 0, 0),
-    new THREE.MeshBasicMaterial({ color: 0xfff4c2, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }));
-  beam.position.y = 325;
-  g.add(tower, gallery, lamp, roof, house, houseRoof, beam);
+  g.add(tower, gallery, lamp, roof, house, houseRoof);
+  // A sweeping beam only reads as light at night; in daylight it was a solid white tube in the sky,
+  // so by day the glowing lamp house is enough.
+  if (ctx.night) {
+    const beam = new THREE.Mesh(new THREE.ConeGeometry(70, 900, 24, 1, true).rotateZ(Math.PI / 2).translate(450, 0, 0),
+      new THREE.MeshBasicMaterial({ color: 0xfff4c2, transparent: true, opacity: 0.12, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    beam.position.y = 325;
+    g.add(beam);
+    ctx.beams.push(beam);
+  }
   g.position.set(x, y - 6, z);
   scene.add(g);
-  ctx.beams.push(beam);
 }
 
 function addGrandstand(scene, map, R, l, ctx) {
@@ -874,7 +906,7 @@ function addGrandstand(scene, map, R, l, ctx) {
   const len = l.len || 900;
   const p = R.pts[i0];
   const t = map.tangents[i0];
-  const off = map.wallD[i0] + 70;
+  const off = map.wallD[i0] + 30;
   const cx = p[0] + R.N[i0][0] * off * side;
   const cz = p[1] + R.N[i0][1] * off * side;
   const y = map.terrainAt(cx, cz);
@@ -918,8 +950,9 @@ function addGrandstand(scene, map, R, l, ctx) {
   crowd.count = ci;
   g.add(crowd);
   g.position.set(cx, y, cz);
-  // Local z points away from the road.
-  g.rotation.y = -Math.atan2(t[1], t[0]) + (side > 0 ? Math.PI : 0);
+  // Turned so local +z points away from the road: the low front rows face the racers and
+  // the tall back, roof poles and flags sit behind the crowd.
+  g.rotation.y = -Math.atan2(t[1], t[0]) + (side > 0 ? 0 : Math.PI);
   scene.add(g);
   ctx.crowd = crowd;
   // Flags along the top.

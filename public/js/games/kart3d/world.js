@@ -290,6 +290,15 @@ export const tex = {
     }
     c.fillStyle = 'rgba(0,0,0,0.25)'; c.fillRect(0, 0, 6, h); c.fillRect(w - 6, 0, 6, h);
   })),
+  // The far side of a gap: diagonal stripes and no arrows (arrows would point back at racers).
+  rampLanding: (a, b) => once(`rampLand${a}${b}`, () => canvasTexture(128, 128, (c, w, h) => {
+    c.fillStyle = a; c.fillRect(0, 0, w, h);
+    c.fillStyle = b;
+    for (let x = -h; x < w; x += 44) {
+      c.beginPath(); c.moveTo(x, h); c.lineTo(x + 18, h); c.lineTo(x + 18 + h, 0); c.lineTo(x + h, 0); c.fill();
+    }
+    c.fillStyle = 'rgba(0,0,0,0.25)'; c.fillRect(0, 0, 6, h); c.fillRect(w - 6, 0, 6, h);
+  })),
   palmLeaf: () => once('palmLeaf', () => canvasTexture(64, 256, (c, w, h) => {
     c.clearRect(0, 0, w, h);
     c.strokeStyle = '#6b8f3a'; c.lineWidth = 3;

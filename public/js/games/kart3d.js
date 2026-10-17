@@ -426,7 +426,7 @@ export class Kart3D {
     // World-building context: things the builders hand back for animation.
     this.ctx = {
       pads: [], lava: [], spinners: [], clouds: null, uniforms: { uTime: { value: 0 } }, volcanoGlow: null,
-      water: [], beams: [], flags: [], vents: [],
+      water: [], beams: [], flags: [], vents: [], night: !!theme.night,
     };
     if (this.arena) buildArena(scene, this.map, theme, this.ctx);
     else buildRace(scene, this.map, theme, this.ctx);
@@ -762,20 +762,27 @@ export class Kart3D {
   fallFx(x, z, kind, y) {
     const gy = y === undefined ? this.groundAt(x, z) : y;
     if (kind === 'water') {
-      for (let i = 0; i < 70; i++) {
+      // Fast, small droplets that fall back, a low mist and foam rings that linger on the surface.
+      for (let i = 0; i < 90; i++) {
         const a = Math.random() * Math.PI * 2;
-        const sp = 60 + Math.random() * 200;
-        this.smoke.emit(x, gy + 4, z, Math.cos(a) * sp * 0.6, 220 + Math.random() * 320, Math.sin(a) * sp * 0.6, this.colSplash, 9 + Math.random() * 10, 0.9, { alpha: 0.95, drag: 0.6, rise: -900 });
+        const sp = 40 + Math.random() * 220;
+        this.smoke.emit(x, gy + 4, z, Math.cos(a) * sp * 0.6, 260 + Math.random() * 420, Math.sin(a) * sp * 0.6, this.colSplash, 3 + Math.random() * 3, 0.6, { alpha: 0.9, drag: 0.4, rise: -1200 });
       }
-      this.ring(x, z, 0xdff6ff, 160, 0.9);
-      this.ring(x, z, 0xffffff, 90, 0.6);
+      for (let i = 0; i < 8; i++) {
+        const a = Math.random() * Math.PI * 2;
+        this.smoke.emit(x + Math.cos(a) * 20, gy + 6, z + Math.sin(a) * 20, Math.cos(a) * 70, 10, Math.sin(a) * 70, this.colSplash, 22, 1.1, { alpha: 0.22, grow: 2.4, drag: 2 });
+      }
+      this.ring(x, z, 0xdff6ff, 170, 1.5);
+      this.ring(x, z, 0xffffff, 100, 1.2);
     } else if (kind === 'lava') {
-      this.explode(x, z, 'hit', 70);
-      for (let i = 0; i < 40; i++) {
+      // A burst of flame and embers with a short, light orange-grey puff: never a big dark disc.
+      for (let i = 0; i < 46; i++) {
         const a = Math.random() * Math.PI * 2;
-        this.fire.emit(x + Math.cos(a) * 20, gy, z + Math.sin(a) * 20, Math.cos(a) * 60, 200 + Math.random() * 260, Math.sin(a) * 60, this.colEmber, 12, 0.8, { grow: 1.4, drag: 1.5, rise: 60 });
+        this.fire.emit(x + Math.cos(a) * 18, gy, z + Math.sin(a) * 18, Math.cos(a) * 70, 220 + Math.random() * 300, Math.sin(a) * 70, this.colEmber, 6 + Math.random() * 6, 0.9, { grow: 1.2, drag: 1.2, rise: -250 });
       }
-      for (let i = 0; i < 20; i++) this.smoke.emit(x, gy + 20, z, (Math.random() - 0.5) * 80, 80 + Math.random() * 60, (Math.random() - 0.5) * 80, new THREE.Color(0x2a2220), 40, 2, { alpha: 0.7, grow: 1.6, rise: 30 });
+      const puff = new THREE.Color(0x9a6a52);
+      for (let i = 0; i < 10; i++) this.smoke.emit(x + (Math.random() - 0.5) * 40, gy + 12, z + (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 90, 120 + Math.random() * 80, (Math.random() - 0.5) * 90, puff, 15, 0.9, { alpha: 0.35, grow: 1.8, rise: 80 });
+      this.ring(x, z, 0xff8a3d, 120, 0.7);
     } else {
       // A gap: a puff of dust (desert canyon) or a burst of neon sparks (city).
       const col = this.theme.night ? new THREE.Color(0xff4fd8) : new THREE.Color(0xd9b68a);
@@ -787,13 +794,30 @@ export class Kart3D {
     }
   }
 
+  // Dust kicked up by wheels, in the colour of the ground: ash on the volcano, sand on the desert
+  // and beach, earth on grass, snow on ice, a violet haze on neon streets.
+  dustColor() {
+    if (!this.dustCol) {
+      const byTheme = { desert: 0xd9b68a, coast: 0xe8d5a8, meadow: 0x9c8a62, snow: 0xffffff, neon: 0x9d8cff, lava: 0x4a403b, volcano: 0x4a403b };
+      this.dustCol = new THREE.Color(byTheme[this.map.theme] ?? (this.theme.snowfall ? 0xffffff : this.theme.night ? 0x9d8cff : 0xc8b48a));
+    }
+    return this.dustCol;
+  }
+
   // Touchdown after a jump: dust under the wheels, sparkles if a trick paid out.
   landFx(x, z, y, strength, trick) {
-    const dust = new THREE.Color(this.theme.snowfall ? 0xffffff : this.theme.night ? 0x9d8cff : 0xc8b48a);
-    for (let i = 0; i < 6 + strength * 16; i++) {
+    const dust = this.dustColor();
+    for (let i = 0; i < 4 + strength * 14; i++) {
       const a = Math.random() * Math.PI * 2;
-      const sp = 70 + Math.random() * 120 * strength;
-      this.smoke.emit(x + Math.cos(a) * 14, y + 3, z + Math.sin(a) * 14, Math.cos(a) * sp, 20 + Math.random() * 40, Math.sin(a) * sp, dust, 14 + strength * 10, 0.7, { alpha: 0.55, grow: 2.2, drag: 2.5 });
+      const sp = 60 + Math.random() * 110 * strength;
+      this.smoke.emit(x + Math.cos(a) * 14, y + 3, z + Math.sin(a) * 14, Math.cos(a) * sp, 20 + Math.random() * 40, Math.sin(a) * sp, dust, 8 + strength * 12, 0.6, { alpha: 0.5, grow: 2, drag: 2.5 });
+    }
+    // Volcanic ground throws a few embers too.
+    if (this.map.theme === 'lava' || this.map.theme === 'volcano') {
+      for (let i = 0; i < 4 + strength * 6; i++) {
+        const a = Math.random() * Math.PI * 2;
+        this.fire.emit(x + Math.cos(a) * 10, y + 4, z + Math.sin(a) * 10, Math.cos(a) * 60, 90 + Math.random() * 120, Math.sin(a) * 60, this.colEmber, 4, 0.6, { drag: 1, rise: -300 });
+      }
     }
     if (trick) this.sparkle(x, z, y + 16);
   }
@@ -874,7 +898,7 @@ export class Kart3D {
     const t = now / 1000;
     const flameCol = [new THREE.Color(0xffe066), new THREE.Color(0xff8c1a), new THREE.Color(0xff4d00)];
     const smokeCol = new THREE.Color(this.theme.night ? 0x4a4560 : 0x9aa0aa);
-    const dustCol = new THREE.Color(this.theme.snowfall ? 0xffffff : 0xc8b48a);
+    const dustCol = this.dustColor();
 
     // Karts
     const seen = new Set();
