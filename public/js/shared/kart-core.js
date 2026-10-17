@@ -1036,7 +1036,7 @@
     Object.defineProperty(MAPS, 'weekly', { enumerable: true, get: () => weeklyMap() });
   }
 
-  const DEFAULT_MAP = { race: 'grandprix', arena: 'colosseum' };
+  const DEFAULT_MAP = { race: 'grandprix', arena: 'cinder' };
   const REVERSED = {};
   // opts.reverse: race tracks only, a cached variant driven the other way.
   function getMap(id, type, opts) {

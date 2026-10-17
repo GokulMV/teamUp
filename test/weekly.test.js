@@ -94,7 +94,7 @@ test('weekly: kart-core serves this week as "weekly" and any week by its exact i
   assert.strictEqual(past.id, 'weekly-2026-30-a0');
   assert.strictEqual(past.spawns.length, W.weeklyDef('2026-30', 0).spawns.length);
   assert.strictEqual(K.mapInfo('weekly-2026-30-a0').name, W.weeklyInfo('2026-30').name);
-  assert.strictEqual(K.getMap('weekly-1999-99-a0', 'arena').id, 'colosseum', 'nonsense falls back to the default arena');
+  assert.strictEqual(K.getMap('weekly-1999-99-a0', 'arena').id, K.DEFAULT_MAP.arena, 'nonsense falls back to the default arena');
 });
 
 test('weekly: CPU drivers play-test every layout before it goes live, the same way every time', () => {

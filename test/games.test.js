@@ -213,9 +213,10 @@ test('players can reconnect with their token and keep their identity', async () 
   room.destroy();
 });
 
+// Arena tests play on the flat Colosseum (the controlled bed: no hills, no bridges) unless they ask.
 async function arenaGame(n, settings = {}) {
   const ctx = await makeRoom(n);
-  await call(ctx.host, 'lobby:settings', { mode: 'kart', kartMode: 'arena', arenaTime: 60, ...settings });
+  await call(ctx.host, 'lobby:settings', { mode: 'kart', kartMode: 'arena', arenaTime: 60, kartMap: 'colosseum', ...settings });
   const init = once(ctx.host, 'game:kart:init');
   await call(ctx.host, 'game:start');
   ctx.init = await init;
@@ -233,6 +234,14 @@ async function arenaGame(n, settings = {}) {
   return ctx;
 }
 const step = (game, n) => { for (let i = 0; i < n; i++) game.simulate(1 / 30); };
+
+test('arena mode starts on The Cinder Bowl, the default arena', async () => {
+  const ctx = await makeRoom(1);
+  await call(ctx.host, 'lobby:settings', { mode: 'kart', kartMode: 'arena' });
+  assert.strictEqual(ctx.room.settings.kartMap, 'cinder');
+  assert.strictEqual(require('../public/js/shared/kart-core').DEFAULT_MAP.arena, 'cinder');
+  ctx.room.destroy();
+});
 
 test('arena battle: rockets take health, two hits destroy, victim respawns, results rank by kills', async () => {
   const { host, players, room, game, kart, place, init } = await arenaGame(4, { teamMode: true, teamCount: 2 });
