@@ -2,6 +2,7 @@
 (function () {
   let ctx = null;
   let master = null;
+  let direct = null; // for mixes with their own limiter (Kart Battle's), past the compressor
   let noiseBuf = null;
   let muted = false;
   try { muted = localStorage.getItem('teamup-muted') === '1'; } catch { /* ignore */ }
@@ -16,6 +17,9 @@
     const comp = ctx.createDynamicsCompressor();
     master.connect(comp);
     comp.connect(ctx.destination);
+    direct = ctx.createGain();
+    direct.gain.value = muted ? 0 : 1;
+    direct.connect(ctx.destination);
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 1.5, ctx.sampleRate);
     const d = noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
@@ -251,10 +255,15 @@
 
   const Sfx = {
     get muted() { return muted; },
+    // The shared audio context (made on first use; it runs after the first tap or key press) and
+    // an output that mutes with the rest but skips the compressor.
+    context: init,
+    output() { init(); return direct; },
     setMuted(m) {
       muted = m;
       try { localStorage.setItem('teamup-muted', m ? '1' : '0'); } catch { /* ignore */ }
       if (master) master.gain.value = m ? 0 : 0.55;
+      if (direct) direct.gain.value = m ? 0 : 1;
       if (m) { engineStop(); starStop(); }
     },
     engine: engineUpdate,
