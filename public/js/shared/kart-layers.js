@@ -1648,7 +1648,7 @@
     return def;
   }
 
-  const ARENAS = [theKeep(), theGraveyard(), theCinderBowl(), theHarbour()];
+  const ARENAS = [theHarbour(), theCinderBowl(), theKeep(), theGraveyard()]; // in the lobby's order
 
   return {
     KART_R, KART_H, STEP, NAV, NAV_SLOPE, EDGE, ARENAS, makeLayeredArena, makeTerrain, groundBlocks, turn, symmetric, roadSolids, SEG,

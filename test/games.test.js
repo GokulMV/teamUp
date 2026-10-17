@@ -235,12 +235,21 @@ async function arenaGame(n, settings = {}) {
 }
 const step = (game, n) => { for (let i = 0; i < n; i++) game.simulate(1 / 30); };
 
-test('arena mode starts on The Cinder Bowl, the default arena', async () => {
+test('arena mode starts on Harbour Havoc, the default arena', async () => {
   const ctx = await makeRoom(1);
   await call(ctx.host, 'lobby:settings', { mode: 'kart', kartMode: 'arena' });
-  assert.strictEqual(ctx.room.settings.kartMap, 'cinder');
-  assert.strictEqual(require('../public/js/shared/kart-core').DEFAULT_MAP.arena, 'cinder');
+  assert.strictEqual(ctx.room.settings.kartMap, 'harbour');
+  assert.strictEqual(require('../public/js/shared/kart-core').DEFAULT_MAP.arena, 'harbour');
   ctx.room.destroy();
+});
+
+test('the retired flat arenas are out of the lobby but still load by id', () => {
+  const K = require('../public/js/shared/kart-core');
+  const ids = K.mapList().map((m) => m.id);
+  assert.ok(!ids.includes('colosseum') && !ids.includes('volcano'), ids.join());
+  assert.strictEqual(ids.filter((id) => K.mapInfo(id).type === 'arena')[0], 'harbour', 'the default arena leads the list');
+  assert.strictEqual(K.getMap('colosseum', 'arena').id, 'colosseum');
+  assert.strictEqual(K.mapInfo('volcano').type, 'arena');
 });
 
 test('arena battle: rockets take health, two hits destroy, victim respawns, results rank by kills', async () => {
@@ -822,10 +831,10 @@ test('kart speed class scales top speed on the server and in shared physics', as
   assert.ok(Math.abs(top(0.82) - K.PHYS.maxSpeed * 0.82) < 1);
   assert.ok(Math.abs(top(1.18) - K.PHYS.maxSpeed * 1.18) < 1);
 
-  const turbo = await kartGame(1, { kartMode: 'arena', kartClass: 'turbo' });
+  const turbo = await kartGame(1, { kartMode: 'arena', kartMap: 'colosseum', kartClass: 'turbo' });
   assert.strictEqual(turbo.init.speedMul, 1.18);
   const k = turbo.game.karts.get(turbo.players[0].id);
-  Object.assign(k, { x: 1300, y: 300, angle: 0, heading: 0, speed: 0 });
+  Object.assign(k, { x: 300, y: 1000, angle: 0, heading: 0, speed: 0 }); // open floor ahead, no boost pad
   k.input = { up: true };
   turbo.run(1.2);
   assert.ok(k.speed > K.PHYS.maxSpeed * 1.05, `turbo karts go faster (${Math.round(k.speed)})`);
@@ -1477,10 +1486,10 @@ test('race maps are built on first use, not when kart-core loads', () => {
   const r = JSON.parse(out);
   assert.strictEqual(r.before, 0, 'nothing built on load');
   assert.strictEqual(r.after, 0, 'the catalogue and map info build nothing');
-  assert.strictEqual(r.n, 13);
+  assert.strictEqual(r.n, 11);
   assert.deepStrictEqual(r.info, { id: 'coast', name: 'Coral Coast', emoji: r.info.emoji, type: 'race', blurb: r.info.blurb });
   assert.deepStrictEqual(r.built, ['coast'], 'only the map asked for');
-  assert.ok(r.same && r.keys === 13, 'MAPS still lists every map and caches what it built');
+  assert.ok(r.same && r.keys === 11, 'MAPS still lists every map and caches what it built');
 });
 
 test('CPU drivers lap every race track, forward and reversed', async () => {

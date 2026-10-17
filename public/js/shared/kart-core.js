@@ -975,6 +975,10 @@
       ],
       boostPads: [{ x: 300, y: C, angle: -Math.PI / 2 }, { x: S - 300, y: C, angle: Math.PI / 2 }],
     }));
+    // Both retired from the lobby (the layered arenas replaced them): they still load by id, for
+    // old links and for tests that want a plain flat floor.
+    INFO.colosseum.hidden = true;
+    INFO.volcano.hidden = true;
   }
 
   // Layered arenas (kart-layers.js) are built on first use as well. `hidden` ones are left out of
@@ -1036,7 +1040,7 @@
     Object.defineProperty(MAPS, 'weekly', { enumerable: true, get: () => weeklyMap() });
   }
 
-  const DEFAULT_MAP = { race: 'grandprix', arena: 'cinder' };
+  const DEFAULT_MAP = { race: 'grandprix', arena: 'harbour' };
   const REVERSED = {};
   // opts.reverse: race tracks only, a cached variant driven the other way.
   function getMap(id, type, opts) {
