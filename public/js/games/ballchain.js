@@ -4,7 +4,7 @@ window.Games = window.Games || {};
 // Ball & Chain client: HUD, input (keyboard, touch joystick), networking, prediction for your own
 // player and interpolation for everyone else. The 3D view (js/games/ballchain3d.js) loads on demand.
 (function () {
-  const INTERP_DELAY = 120; // ms behind the server for remote players and the balls
+  const SNAP_MS = 1000 / 15; // the server sends a snapshot every other 30 Hz tick
   const PH = { countdown: 0, run: 1, end: 2 };
   const SABOTAGE = {
     oil: ['🛢️', 'Oil slick!', 'The floor ahead is slippery'],
@@ -95,7 +95,13 @@ window.Games = window.Games || {};
       const snaps = [];
       let latest = null;
       let latestAt = 0;
-      let clockOffset = null;
+      let clockOffset = null; // localNow - serverT for the fastest snapshot of the last few seconds
+      // Everyone else is drawn a little in the past, so there is always a newer snapshot to glide
+      // toward. How far back adapts to the connection (the spread of arrival times over the last
+      // few seconds: Wi-Fi and phones bunch packets up), and the drawn time runs up to 10% fast or
+      // slow to get there rather than jumping. Past the newest snapshot things carry on at their
+      // velocity for a moment instead of freezing.
+      const clock = { hist: [], delay: 120, drawT: null, at: 0 };
       let rtt = 80;
       let local = null;
       // Rope wraps (post ids per player): what the server last said, and what gets drawn (the same,
@@ -273,8 +279,15 @@ window.Games = window.Games || {};
 
       function onState(s) {
         const now = performance.now();
-        const off = now - s.t;
-        clockOffset = clockOffset === null ? off : Math.min(clockOffset + 0.5, off);
+        const hist = clock.hist;
+        hist.push([now, now - s.t]);
+        while (now - hist[0][0] > 3000) hist.shift();
+        let fastest = Infinity;
+        for (const h of hist) fastest = Math.min(fastest, h[1]);
+        clockOffset = fastest;
+        const late = hist.map((h) => h[1] - fastest).sort((a, b) => a - b);
+        const want = Math.max(100, Math.min(320, SNAP_MS + late[Math.floor((late.length - 1) * 0.9)] + 25));
+        clock.delay += (want - clock.delay) * (want > clock.delay ? 0.5 : 0.03);
         snaps.push({ t: s.t, s });
         while (snaps.length > 30) snaps.shift();
         latest = s;
@@ -356,7 +369,12 @@ window.Games = window.Games || {};
       // Everything else, drawn INTERP_DELAY behind the server.
       function interpolated() {
         if (!snaps.length || clockOffset === null) return null;
-        const target = performance.now() - clockOffset - INTERP_DELAY;
+        const now = performance.now();
+        const goal = now - clockOffset - clock.delay;
+        if (clock.drawT === null || Math.abs(goal - clock.drawT) > 400) clock.drawT = goal;
+        else clock.drawT += (now - clock.at) * Math.max(0.9, Math.min(1.1, 1 + (goal - clock.drawT) / 600));
+        clock.at = now;
+        const target = clock.drawT;
         let a = snaps[0];
         let b = snaps[snaps.length - 1];
         for (let i = 0; i < snaps.length - 1; i++) {
@@ -365,20 +383,25 @@ window.Games = window.Games || {};
         if (target >= b.t) a = b;
         const span = b.t - a.t;
         const f = span > 0 ? Math.max(0, Math.min(1, (target - a.t) / span)) : 1;
+        // A late packet: carry on at the last velocity for up to 0.15 s (still players, falls and
+        // respawns excepted) rather than stopping dead until the next one turns up.
+        const ahead = target > b.t ? Math.min(target - b.t, 150) / 1000 : 0;
         const pa = new Map(a.s.p.map((r) => [r[0], r]));
         const playersV = b.s.p.map((r) => {
           const p = pa.get(r[0]) || r;
           const jump = Math.hypot(r[1] - p[1], r[2] - p[2]) > 150;
           const k = jump ? 1 : f;
           const meta = byIdx.get(r[0]);
-          return { idx: r[0], team: meta ? meta.team : 0, x: p[1] + (r[1] - p[1]) * k, y: p[2] + (r[2] - p[2]) * k, vx: r[3], vy: r[4], flags: r[5] };
+          const coast = ahead && !(r[5] & (4 | 8 | 32 | 128)) ? ahead : 0;
+          return { idx: r[0], team: meta ? meta.team : 0, x: p[1] + (r[1] - p[1]) * k + r[3] * coast, y: p[2] + (r[2] - p[2]) * k + r[4] * coast, vx: r[3], vy: r[4], flags: r[5] };
         });
         const ba = new Map(a.s.b.map((r) => [r[0], r]));
         const balls = b.s.b.map((r) => {
           const p = ba.get(r[0]) || r;
           const jump = Math.hypot(r[1] - p[1], r[2] - p[2]) > 200;
           const k = jump ? 1 : f;
-          return { team: r[0], x: p[1] + (r[1] - p[1]) * k, y: p[2] + (r[2] - p[2]) * k, z: p[3] + (r[3] - p[3]) * k, vx: r[4], vy: r[5], state: r[6], gates: r[7], cp: r[8], plates: r[9], progress: r[10] };
+          const coast = ahead && (r[6] === 0 || r[6] === 3) ? ahead : 0; // rolling or flying, not falling or frozen
+          return { team: r[0], x: p[1] + (r[1] - p[1]) * k + r[4] * coast, y: p[2] + (r[2] - p[2]) * k + r[5] * coast, z: p[3] + (r[3] - p[3]) * k, vx: r[4], vy: r[5], state: r[6], gates: r[7], cp: r[8], plates: r[9], progress: r[10] };
         });
         return { t: a.s.tc + (b.s.tc - a.s.tc) * f, players: playersV, balls };
       }

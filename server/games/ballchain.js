@@ -2,6 +2,7 @@
 // the goal. Teams race identical copies of the course side by side; the server runs the physics
 // (shared with the browser in public/js/games/ballchain-core.js) at 30 Hz and sends snapshots at 15 Hz.
 const B = require('../../public/js/games/ballchain-core');
+const { fixedLoop } = require('./loop');
 
 const TICK_HZ = 30;
 const DT = 1 / TICK_HZ;
@@ -108,11 +109,11 @@ class BallChain {
     this.seed = Math.floor(Math.random() * 1e9);
     this.plan = B.planMatch(this.seed, this.courseCount, this.length, minTeam);
     this.beginCourse(0);
-    this.interval = setInterval(() => this.tick(), 1000 / TICK_HZ);
+    this.interval = fixedLoop(TICK_HZ, () => this.tick());
   }
 
   stop() {
-    clearInterval(this.interval);
+    this.interval?.stop?.();
     this.interval = null;
   }
 
