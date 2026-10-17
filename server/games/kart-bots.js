@@ -759,9 +759,12 @@ function layeredDrive(game, k, ai, sk, input) {
     }
   }
   let want = Math.atan2(vy, vx);
-  // Probe ahead: never drive into a wall, the moat, lava or off into the void.
+  // Probe ahead: never drive into a wall, the moat, lava or off into the void. (Asking for no more
+  // room than the kart has where it is: brushing a wall, every way out would look blocked.)
   const probe = 60 + v * 0.3;
-  const bad = (a) => lineBlocked(map, k, k.x + Math.cos(a), k.y + Math.sin(a), probe, 20, t);
+  let room = 20;
+  while (room > 4 && map.blocked(k.x, k.y, room, kz, t)) room -= 4;
+  const bad = (a) => lineBlocked(map, k, k.x + Math.cos(a), k.y + Math.sin(a), probe, room, t);
   // Backing up (to turn onto a rival, or out of a corner) is only safe with floor behind.
   const behindSafe = () => !deadly(map, k.x - Math.cos(k.angle) * 70, k.y - Math.sin(k.angle) * 70, kz, t);
   if (bad(want)) {
@@ -779,6 +782,14 @@ function layeredDrive(game, k, ai, sk, input) {
     }
   }
   let err = wrap(want + ai.wobble - k.angle);
+  // On a strip with a drop either side (a gangway, a plank walk) and the way on behind: there's no
+  // room to turn round here, so carry on to the end, where there is.
+  if (Math.abs(err) > 2 && !(k.air > 0)) {
+    const hx = Math.cos(k.angle);
+    const hy = Math.sin(k.angle);
+    const strip = deadly(map, k.x - hy * 60, k.y + hx * 60, kz, t) && deadly(map, k.x + hy * 60, k.y - hx * 60, kz, t);
+    if (strip && !deadly(map, k.x + hx * 60, k.y + hy * 60, kz, t)) err = 0;
+  }
   const gunning = k.gun > 0 || k.item === 'minigun';
   input.drift = false;
   input.down = false;
@@ -832,6 +843,28 @@ function layeredDrive(game, k, ai, sk, input) {
     setSteer(input, k.speed < 0 ? -err : err, 0.06);
     return;
   }
+  // A target inside the circle the kart turns at this speed (a box just off to one side) would only
+  // ever be driven round and round: ease off till the turn is tight enough to make it, or, inside
+  // even the tightest turn, back up first so the nose comes round.
+  // (Below about 140 the turn gets no tighter, so there's no point slowing further: then it's back
+  // up if there's floor behind, or carry on round.)
+  {
+    const td = Math.hypot(tx - k.x, ty - k.y);
+    const need = td / (2 * Math.max(0.05, Math.abs(Math.sin(err))));
+    const tightest = 140 / (K.PHYS.turnRate * 0.95);
+    const forBox = ai.mode === 'box' && tx === goal.x && ty === goal.y;
+    if (forBox && Math.abs(err) > 0.45 && need < Math.max(v, 140) / (K.PHYS.turnRate * 0.95)) {
+      if (v > 145) {
+        input.up = false;
+        if (v > 200) input.down = true;
+      } else if (need < tightest + 6 && Math.abs(err) > 1.1 && behindSafe()) {
+        input.up = false;
+        input.down = true;
+        setSteer(input, -err, 0.06);
+        return;
+      }
+    }
+  }
   // Facing the wrong way at a crawl (nose to a wall, the goal behind): a three-point turn, backing
   // out with the wheels turned the other way so the nose swings round.
   if (Math.abs(err) > 1.9 && v < 110 && behindSafe()) {
@@ -839,6 +872,17 @@ function layeredDrive(game, k, ai, sk, input) {
     input.down = true;
     setSteer(input, -err, 0.06);
     return;
+  }
+  // Nose to a drop at a crawl (just landed on a small island, turning too tight to make it): never
+  // creep forwards over the edge; back away with the wheels turned so the nose comes round.
+  if (input.up && v < 140) {
+    const reach = 30 + v * 0.25;
+    if (deadly(map, k.x + Math.cos(k.angle) * reach, k.y + Math.sin(k.angle) * reach, kz, t) && behindSafe()) {
+      input.up = false;
+      input.down = true;
+      setSteer(input, -err, 0.06);
+      return;
+    }
   }
   // Braking hard enough to roll backwards: only with floor behind.
   if (input.down && k.speed < 60 && !behindSafe()) { input.down = false; input.up = true; }
@@ -916,9 +960,16 @@ function think(game, k, dt) {
     else if (game.arena) pickArenaGoal(game, k, ai, sk);
   }
 
-  // Unstick: back up and turn when pinned against something.
+  // Unstick: back up and turn when pinned against something (never back off an edge, though: stop
+  // short of a drop behind).
   if (ai.reverse > 0) {
     ai.reverse -= dt;
+    const d = 30 + Math.max(0, -k.speed) * 0.3;
+    if (game.layered && deadly(game.map, k.x - Math.cos(k.angle) * d, k.y - Math.sin(k.angle) * d, k.z || 0, game.time)) {
+      ai.reverse = 0;
+      Object.assign(input, { up: k.speed < -10, down: false, drift: false, left: false, right: false });
+      return;
+    }
     Object.assign(input, { up: false, down: true, drift: false, left: ai.reverseSteer < 0, right: ai.reverseSteer > 0 });
     return;
   }
@@ -934,13 +985,22 @@ function think(game, k, dt) {
     // A tap of drift is a hop (it only counts on the press, so not while holding a drift).
     if (ai.hopNow && !k.hopHeld && !(k.air > 0)) input.drift = true;
   }
-  if ((input.up || input.down) && Math.abs(k.speed) < 40 && k.spin <= 0 && !(k.air > 0)) {
-    ai.stuck += dt;
+  // Pinned and rocking (nose to a wall, every burst forwards hitting it again) is stuck as well: no
+  // headway in a second and a half of trying.
+  const trying = (input.up || input.down) && k.spin <= 0 && !(k.air > 0);
+  const spot = ai.spot || (ai.spot = { x: k.x, y: k.y, t: game.time });
+  if (!trying || Math.hypot(k.x - spot.x, k.y - spot.y) > 45) Object.assign(spot, { x: k.x, y: k.y, t: game.time });
+  const rocking = game.time - spot.t > 1.5;
+  if (trying && (Math.abs(k.speed) < 40 || rocking)) {
+    ai.stuck += rocking ? 1 : dt;
     if (ai.stuck > 0.8) {
       ai.stuck = 0;
-      const back = !game.layered || !deadly(game.map, k.x - Math.cos(k.angle) * 80, k.y - Math.sin(k.angle) * 80, k.z || 0, game.time);
+      Object.assign(spot, { x: k.x, y: k.y, t: game.time });
+      const behind = (d) => !game.layered || !deadly(game.map, k.x - Math.cos(k.angle) * d, k.y - Math.sin(k.angle) * d, k.z || 0, game.time);
+      // Back out: a good way if there's floor for it, or just a little (the edge close behind).
+      const back = behind(80) ? 0.6 + Math.random() * 0.4 : behind(34) ? 0.3 : 0;
       if (back) {
-        ai.reverse = 0.6 + Math.random() * 0.4;
+        ai.reverse = back;
         ai.reverseSteer = input.left ? 1 : input.right ? -1 : (Math.random() < 0.5 ? -1 : 1);
       }
       if (game.layered) ai.path = null; // and find the way again
