@@ -368,7 +368,7 @@ export class Kart3D {
 
     const scene = new THREE.Scene();
     this.scene = scene;
-    scene.fog = new THREE.Fog(theme.fog[0], theme.fog[1], theme.fog[2]);
+    scene.fog = theme.fogExp ? new THREE.FogExp2(theme.fog[0], theme.fogExp) : new THREE.Fog(theme.fog[0], theme.fog[1], theme.fog[2]);
     const sky = new THREE.Mesh(new THREE.SphereGeometry(15000, 24, 12), new THREE.ShaderMaterial({
       side: THREE.BackSide, depthWrite: false, fog: false,
       uniforms: { top: { value: new THREE.Color(theme.sky[0]) }, bottom: { value: new THREE.Color(theme.sky[1]) } },

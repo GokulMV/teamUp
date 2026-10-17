@@ -33,6 +33,7 @@
     tower: '#a39885', pillar: '#958c7b', stone: '#7d7a72',
     crypt: '#4c4959', gallery: '#5f5b6c', slate: '#3b4053', tomb: '#8d8d93', fence: '#1d1d24', deadtree: '#3d3530',
     deck: '#7a5432', terrace: '#4a7a3e', column: '#958c7b',
+    viaduct: '#5b6070', kerb: '#e5383b', archpost: '#f0ebe2', trunk: '#6a4a2a', boulder: '#8b8a8f',
   };
   // The weekly arena's looks paint the same kinds their own colours.
   const THEME_KINDS = {
@@ -273,8 +274,10 @@
       c.save();
       roundRectPath(c, fx, fy, fw, fw, 7 * k); c.clip();
       if (map.land) {
-        // The hills, shaded by height from a small image of the height grid.
+        // The hills, shaded by height from a small image of the height grid (a sculpted bowl in its
+        // own bands: charred rock, grass, cliffs, snow).
         const L = map.land;
+        const banded = map.terrain && map.terrain.style === 'lowpoly';
         const img = document.createElement('canvas');
         img.width = L.n; img.height = L.n;
         const ic = img.getContext('2d');
@@ -283,7 +286,13 @@
         for (const h of L.h) { hlo = Math.min(hlo, h); hhi = Math.max(hhi, h); }
         const [a, b] = (LAND[L.kind] || LAND.grass).map(rgb);
         for (let i = 0; i < L.h.length; i++) {
-          const u = (L.h[i] - hlo) / (hhi - hlo || 1);
+          const z = L.h[i];
+          if (banded) {
+            const band = z < -40 ? [52, 40, 36] : z < 150 ? [60 + z * 0.12, 150 + z * 0.25, 70] : z < 520 ? [128, 92, 58] : [214, 226, 240];
+            data.data.set([...band, 255], i * 4);
+            continue;
+          }
+          const u = (z - hlo) / (hhi - hlo || 1);
           data.data.set([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u, 255], i * 4);
         }
         ic.putImageData(data, 0, 0);
@@ -300,7 +309,15 @@
       const shape = (sd) => {
         c.beginPath();
         if (sd.type === 2) c.arc(X(sd.x), Y(sd.y), Math.max(1, sd.r * s), 0, TAU);
-        else c.rect(X(sd.x0), Y(sd.y0), (sd.x1 - sd.x0) * s, (sd.y1 - sd.y0) * s);
+        else if (sd.type === 3) {
+          // A piece of road: a turned rectangle.
+          [[sd.u0, -sd.hw], [sd.u1, -sd.hw], [sd.u1, sd.hw], [sd.u0, sd.hw]].forEach(([u, v], i) => {
+            const px = X(sd.ax + u * sd.ux - v * sd.uy);
+            const py = Y(sd.ay + u * sd.uy + v * sd.ux);
+            if (i) c.lineTo(px, py); else c.moveTo(px, py);
+          });
+          c.closePath();
+        } else c.rect(X(sd.x0), Y(sd.y0), (sd.x1 - sd.x0) * s, (sd.y1 - sd.y0) * s);
       };
       const solids = map.solids.filter((sd) => sd.kind !== 'bumper' && sd.kind !== 'hub').sort((a, b) => a.z1 - b.z1);
       for (const sd of solids) {

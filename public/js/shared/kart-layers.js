@@ -16,6 +16,10 @@
 //   ramps  [{x0, y0, x1, y1, z0, z1, dir, base, kind}]   a top rising from z0 to z1 towards dir
 //                                                        ('x+', 'x-', 'y+', 'y-'), solid down to base
 //   cyls   [{x, y, r, z0, z1, kind}]                     round towers, pillars, posts
+//   roads  [{points: [[x, y, z]...], w, thick, curb, bank, pillars, kind}]   a raised road along a
+//          smooth curve through the points (z null: on the ground there), banked in its bends, with
+//          kerbs along both sides and pillars under it (cut into short straight pieces: segs)
+//   terrain {seed, amp, scale, base, edge, flats, bowl, craters, kind}   rolling ground (see makeTerrain)
 //   pads   [{x, y, z, r, to: [x, y, z], t}]              jump pads: t seconds of flight to `to`
 //   bumpers [{x, y, z, r, h, kick}]                      pinball bumpers
 //   boosts [{x, y, z, angle}]                            boost chevrons
@@ -40,6 +44,7 @@
   const BOX = 0;
   const RAMP = 1;
   const CYL = 2;
+  const SEG = 3;
   const DIRS = { 'x+': [0, 1], 'x-': [0, -1], 'y+': [1, 1], 'y-': [1, -1] }; // [axis, sign]
 
   const TAU = Math.PI * 2;
@@ -85,6 +90,12 @@
   // whole arena that rolls with fractal noise, levelled to z inside each flat (where buildings and
   // pits stand) and back down to base over the last `edge` units by the sides. Baked into a grid once,
   // so lookups are cheap and every machine gets the very same numbers.
+  //   bowl {x, y, r, height, width, max, jag}: beyond r from (x, y) the ground climbs into cliffs,
+  //        height * ((d - r) / width) ^ 2.2 (up to max), made jagged by noise (jag: how much)
+  //   craters [{x, y, r, z, lip}]: inside r the ground dips (a cosine bowl) to z in the middle, with
+  //        a raised lip round the edge
+  // Between grid points the ground is two flat triangles per cell, split the way the renderer's
+  // mesh is, so the wheels sit on exactly the faces you see.
   const TCELL = 32;
   const lands = new WeakMap();
   function makeTerrain(def) {
@@ -106,10 +117,25 @@
           const d = Math.hypot(x - f.x, y - f.y);
           if (d < f.r) z += (f.z - z) * (1 - smoothstep(f.r * (f.soft ?? 0.6), f.r, d));
         }
+        if (t.bowl) {
+          const b = t.bowl;
+          const d = Math.hypot(x - b.x, y - b.y) - b.r;
+          if (d > 0) {
+            const rise = Math.min(b.max || Infinity, b.height * (d / b.width) ** 2.2);
+            z += rise * (1 + (b.jag || 0) * fbm(x / 150, y / 150, (t.seed || 1) + 71, 3));
+          }
+        }
+        for (const c of t.craters || []) {
+          const d = Math.hypot(x - c.x, y - c.y);
+          if (d < c.r) z += (c.z - z) * (0.5 + 0.5 * Math.cos((Math.PI * d) / c.r));
+          const u = (d - c.r) / (c.r * 0.3);
+          if (c.lip && u > -1 && u < 1) z += c.lip * (0.5 + 0.5 * Math.cos(Math.PI * u));
+        }
         h[j * n + i] = z;
       }
     }
-    // Bilinear between grid points; the slope is that patch's own (rise per unit along x and y).
+    // Each cell is two triangles, split along the diagonal from (i + 1, j) to (i, j + 1); the slope
+    // is the triangle's own (rise per unit along x and y).
     const cellOf = (x, y) => {
       const i = clamp(Math.floor(x / TCELL), 0, n - 2);
       const j = clamp(Math.floor(y / TCELL), 0, n - 2);
@@ -118,15 +144,19 @@
     const at = (x, y) => {
       const [i, j, fx, fy] = cellOf(x, y);
       const k = j * n + i;
-      const a = h[k] + (h[k + 1] - h[k]) * fx;
-      const b = h[k + n] + (h[k + n + 1] - h[k + n]) * fx;
-      return a + (b - a) * fy;
+      if (fx + fy <= 1) return h[k] + (h[k + 1] - h[k]) * fx + (h[k + n] - h[k]) * fy;
+      return h[k + n + 1] + (h[k + n] - h[k + n + 1]) * (1 - fx) + (h[k + 1] - h[k + n + 1]) * (1 - fy);
     };
     const slope = (x, y, out) => {
       const [i, j, fx, fy] = cellOf(x, y);
       const k = j * n + i;
-      out.gx = ((h[k + 1] - h[k]) * (1 - fy) + (h[k + n + 1] - h[k + n]) * fy) / TCELL;
-      out.gy = ((h[k + n] - h[k]) * (1 - fx) + (h[k + n + 1] - h[k + 1]) * fx) / TCELL;
+      if (fx + fy <= 1) {
+        out.gx = (h[k + 1] - h[k]) / TCELL;
+        out.gy = (h[k + n] - h[k]) / TCELL;
+      } else {
+        out.gx = (h[k + n + 1] - h[k + n]) / TCELL;
+        out.gy = (h[k + n + 1] - h[k + 1]) / TCELL;
+      }
       return out;
     };
     const land = { n, cell: TCELL, h, at, slope, kind: t.kind || 'grass' };
@@ -160,11 +190,60 @@
     // stand on: whatever comes down on top slides off them.
     return { type: CYL, kind: c.kind || 'stone', x: c.x, y: c.y, r: c.r, z0: Math.min(c.z0, c.z1), z1: Math.max(c.z0, c.z1), thin: c.r < 20, src: c, ...extra };
   }
+  // A straight piece of road from a to b, w wide (kerbs and decks alike): its top runs from za to zb
+  // along it and is banked (rise per unit across, towards the left of a -> b); it is `thick` deep.
+  // `ext` lengthens it at both ends, along the same slope, so the pieces of a bend overlap.
+  function seg(g) {
+    const dx = g.bx - g.ax;
+    const dy = g.by - g.ay;
+    const len = Math.hypot(dx, dy) || 1;
+    const ux = dx / len;
+    const uy = dy / len;
+    const hw = g.w / 2;
+    const ext = g.ext || 0;
+    const s = {
+      type: SEG, kind: g.kind || 'road', ax: g.ax, ay: g.ay, ux, uy, len, hw, u0: -ext, u1: len + ext,
+      za: g.za, grade: (g.zb - g.za) / len, bank: g.bank || 0, thick: g.thick || 16, src: g,
+    };
+    // Its footprint's bounding box (for the lookup grid) and the range of heights it spans.
+    const xs = [];
+    const ys = [];
+    const zs = [];
+    for (const u of [s.u0, s.u1]) {
+      for (const v of [-hw, hw]) {
+        xs.push(s.ax + u * ux - v * uy);
+        ys.push(s.ay + u * uy + v * ux);
+        zs.push(s.za + s.grade * u + s.bank * v);
+      }
+    }
+    s.x0 = Math.min(...xs); s.x1 = Math.max(...xs); s.y0 = Math.min(...ys); s.y1 = Math.max(...ys);
+    s.z1 = Math.max(...zs);
+    s.z0 = Math.min(...zs) - s.thick;
+    return s;
+  }
+  // (x, y) in a seg's own frame: u along it from a, v across it (left positive).
+  function segUV(s, x, y) {
+    const dx = x - s.ax;
+    const dy = y - s.ay;
+    return [dx * s.ux + dy * s.uy, -dx * s.uy + dy * s.ux];
+  }
   function contains(s, x, y) {
     if (s.type === CYL) return (x - s.x) ** 2 + (y - s.y) ** 2 <= s.r * s.r;
+    if (s.type === SEG) {
+      const [u, v] = segUV(s, x, y);
+      return u >= s.u0 && u <= s.u1 && v >= -s.hw && v <= s.hw;
+    }
     return x >= s.x0 && x <= s.x1 && y >= s.y0 && y <= s.y1;
   }
+  // Underside of a solid at (x, y): a seg's runs along it; everything else is flat underneath.
+  function bottomAt(s, x, y) {
+    return s.type === SEG ? topAt(s, x, y) - s.thick : s.z0;
+  }
   function topAt(s, x, y) {
+    if (s.type === SEG) {
+      const [u, v] = segUV(s, x, y);
+      return s.za + s.grade * u + s.bank * v;
+    }
     if (s.type !== RAMP) return s.z1;
     const p = s.axis ? y : x;
     const lo = s.axis ? s.y0 : s.x0;
@@ -172,6 +251,112 @@
     let u = clamp((p - lo) / (hi - lo || 1), 0, 1);
     if (s.sign < 0) u = 1 - u;
     return s.zl + (s.zh - s.zl) * u;
+  }
+
+  // ---------- raised roads ----------
+  // A road follows a Catmull-Rom curve through its points, sampled every PIECE units along the
+  // ground: each sample has a position, a height, a heading and a bank. Banking leans the road into
+  // its bends (the outside of a bend higher), and fades out at both ends, where it meets the ground.
+  const PIECE = 36;
+  function catmull(p0, p1, p2, p3, t) {
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return p1.map((_, k) => 0.5 * (2 * p1[k] + (-p0[k] + p2[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2 + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3));
+  }
+  function roadSamples(road, land) {
+    const pts = road.points.map(([x, y, z]) => [x, y, z === null || z === undefined ? (land ? land.at(x, y) : 0) : z]);
+    const ext = [pts[0], ...pts, pts[pts.length - 1]];
+    const dense = [];
+    for (let i = 1; i < ext.length - 2; i++) {
+      for (let k = 0; k < 40; k++) dense.push(catmull(ext[i - 1], ext[i], ext[i + 1], ext[i + 2], k / 40));
+    }
+    dense.push(pts[pts.length - 1]);
+    // Resample evenly along the ground.
+    const out = [];
+    let acc = 0;
+    let next = 0;
+    for (let i = 0; i < dense.length; i++) {
+      if (i > 0) acc += Math.hypot(dense[i][0] - dense[i - 1][0], dense[i][1] - dense[i - 1][1]);
+      while (acc >= next && i > 0) {
+        const a = dense[i - 1];
+        const b = dense[i];
+        const seglen = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        const f = clamp(1 - (acc - next) / seglen, 0, 1);
+        out.push({ x: a[0] + (b[0] - a[0]) * f, y: a[1] + (b[1] - a[1]) * f, z: a[2] + (b[2] - a[2]) * f, s: next });
+        next += PIECE;
+      }
+      if (i === 0) { out.push({ x: dense[0][0], y: dense[0][1], z: dense[0][2], s: 0 }); next = PIECE; }
+    }
+    const last = dense[dense.length - 1];
+    if (Math.hypot(last[0] - out[out.length - 1].x, last[1] - out[out.length - 1].y) > PIECE * 0.3) out.push({ x: last[0], y: last[1], z: last[2], s: acc });
+    // Headings, and the bank from how sharply the road turns.
+    for (let i = 0; i < out.length; i++) {
+      const a = out[Math.max(0, i - 1)];
+      const b = out[Math.min(out.length - 1, i + 1)];
+      const h = Math.atan2(b.y - a.y, b.x - a.x);
+      out[i].ux = Math.cos(h);
+      out[i].uy = Math.sin(h);
+      out[i].h = h;
+    }
+    const n = out.length;
+    const raw = out.map((o, i) => {
+      if (i === 0 || i === n - 1) return 0;
+      let dh = out[i + 1].h - out[i - 1].h;
+      dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+      const curve = dh / (out[i + 1].s - out[i - 1].s || 1); // + turning left
+      return clamp(-curve * (road.bank || 0), -0.2, 0.2);
+    });
+    for (let i = 0; i < n; i++) {
+      let sum = 0;
+      let cnt = 0;
+      for (let k = -3; k <= 3; k++) if (raw[i + k] !== undefined) { sum += raw[i + k]; cnt++; }
+      out[i].bank = (sum / cnt) * smoothstep(0, 4, Math.min(i, n - 1 - i));
+    }
+    return out;
+  }
+  // The solids of a road: deck pieces, a kerb along each side, pillars under it where it's high.
+  function roadSolids(road, land) {
+    const samples = roadSamples(road, land);
+    const w = road.w || 180;
+    const thick = road.thick || 18;
+    const curb = road.curb === false ? null : { w: 10, h: 13, ...(road.curb || {}) };
+    const segs = [];
+    const cyls = [];
+    for (let i = 0; i < samples.length - 1; i++) {
+      const a = samples[i];
+      const b = samples[i + 1];
+      const bank = (a.bank + b.bank) / 2;
+      let dh = b.h - a.h;
+      dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+      const ext = 2 + (w / 2) * Math.abs(dh); // enough overlap to close the outside of a bend
+      segs.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, za: a.z, zb: b.z, w, bank, thick, ext, kind: road.kind || 'road' });
+      if (curb) {
+        for (const side of [1, -1]) {
+          const v = side * (w / 2 - curb.w / 2);
+          const ox = -a.uy * v;
+          const oy = a.ux * v;
+          const ox2 = -b.uy * v;
+          const oy2 = b.ux * v;
+          segs.push({
+            ax: a.x + ox, ay: a.y + oy, bx: b.x + ox2, by: b.y + oy2, za: a.z + bank * v + curb.h, zb: b.z + bank * v + curb.h,
+            w: curb.w, bank, thick: thick + curb.h, ext: 1, kind: 'kerb',
+          });
+        }
+      }
+    }
+    // Pillars down to the ground wherever there's room for a kart underneath.
+    const pil = road.pillars;
+    if (pil) {
+      let nextAt = pil.every / 2;
+      for (const o of samples) {
+        if (o.s < nextAt) continue;
+        const g = land ? land.at(o.x, o.y) : 0;
+        if (o.z - thick - g < (pil.min || 60)) continue;
+        cyls.push({ x: o.x, y: o.y, r: pil.r || 24, z0: g - 30, z1: o.z - thick + 1, kind: pil.kind || 'pillar' });
+        nextAt = o.s + pil.every;
+      }
+    }
+    return { samples, segs, cyls, w, thick, curb, kind: road.kind || 'road' };
   }
 
   // The ground: one slab over the whole arena minus rectangular holes, cut into as few boxes as the
@@ -285,10 +470,16 @@
   function makeLayeredArena(def) {
     const S = def.size;
     const solids = [];
+    const land = makeTerrain(def); // rolling ground under everything (or none)
     for (const b of groundBlocks(def)) solids.push(box(b, 'ground'));
     for (const b of def.blocks || []) solids.push(box(b));
     for (const r of def.ramps || []) solids.push(ramp(r));
     for (const c of def.cyls || []) solids.push(cyl(c));
+    const roads = (def.roads || []).map((r) => roadSolids(r, land));
+    for (const r of roads) {
+      for (const g of r.segs) solids.push(seg(g));
+      for (const c of r.cyls) solids.push(cyl(c));
+    }
     const bumpers = (def.bumpers || []).map((b, i) => ({ r: 30, h: 30, kick: 520, ...b, i }));
     for (const b of bumpers) solids.push(cyl({ x: b.x, y: b.y, r: b.r, z0: b.z - 10, z1: b.z + b.h, kind: 'bumper' }, { kick: b.kick, bumper: b.i }));
     const movers = (def.movers || []).map(makeMover).filter(Boolean);
@@ -301,7 +492,6 @@
     const liquid = def.liquid || null;
     const deathZ = def.deathZ !== undefined ? def.deathZ : -320;
     const edge = def.edge || 'wall';
-    const land = makeTerrain(def); // rolling ground under everything (or none)
     const onLand = (x, y) => land && x >= 0 && y >= 0 && x <= S && y <= S;
     const LAND = { kind: land ? land.kind : 'grass', land: true };
 
@@ -334,6 +524,9 @@
       out.gy = 0;
       if (sol && sol.type === RAMP) {
         if (sol.axis) out.gy = sol.grade; else out.gx = sol.grade;
+      } else if (sol && sol.type === SEG) {
+        out.gx = sol.grade * sol.ux - sol.bank * sol.uy;
+        out.gy = sol.grade * sol.uy + sol.bank * sol.ux;
       }
       if (onLand(x, y)) {
         // The rolling ground is solid all the way down: a kart a little under it (a steep rise at
@@ -368,7 +561,7 @@
       if (onLand(x, y) && z < land.at(x, y) - 2) return true;
       for (const s of near(x, y)) {
         if (z <= s.z0 || z >= s.z1 || !contains(s, x, y)) continue;
-        if (z < topAt(s, x, y)) return true;
+        if (z < topAt(s, x, y) && z > bottomAt(s, x, y)) return true;
       }
       return false;
     }
@@ -377,7 +570,9 @@
     function ceilingAt(x, y, zFrom) {
       let best = Infinity;
       for (const s of near(x, y)) {
-        if (s.z0 >= zFrom && s.z0 < best && contains(s, x, y)) best = s.z0;
+        if (s.z1 <= zFrom || !contains(s, x, y)) continue;
+        const b = bottomAt(s, x, y);
+        if (b >= zFrom && b < best) best = b;
       }
       return best;
     }
@@ -401,6 +596,17 @@
           cx = s.x + dx * k;
           cy = s.y + dy * k;
           if (d <= 1e-6) cx = s.x + s.r;
+        } else if (s.type === SEG) {
+          const [u, v] = segUV(s, x, y);
+          const cu = clamp(u, s.u0, s.u1);
+          const cv = clamp(v, -s.hw, s.hw);
+          inside = cu === u && cv === v;
+          if (!inside && (u - cu) ** 2 + (v - cv) ** 2 >= r * r) continue;
+          cx = s.ax + cu * s.ux - cv * s.uy;
+          cy = s.ay + cu * s.uy + cv * s.ux;
+          // A road piece is a wall only where it stands between our wheels and our roof.
+          const top = topAt(s, cx, cy);
+          if (top <= z + STEP || top - s.thick >= z + KART_H) continue;
         } else {
           cx = clamp(x, s.x0, s.x1);
           cy = clamp(y, s.y0, s.y1);
@@ -418,6 +624,15 @@
           nx = d > 1e-6 ? dx / d : 1;
           ny = d > 1e-6 ? dy / d : 0;
           depth = s.r + r - Math.hypot(dx, dy);
+        } else if (inside && s.type === SEG) {
+          // Deep inside a road piece: out through its nearest side.
+          const [u, v] = segUV(s, x, y);
+          const opts = [[u - s.u0, -1, 0], [s.u1 - u, 1, 0], [v + s.hw, 0, -1], [s.hw - v, 0, 1]];
+          let best = opts[0];
+          for (const o of opts) if (o[0] < best[0]) best = o;
+          nx = best[1] * s.ux - best[2] * s.uy;
+          ny = best[1] * s.uy + best[2] * s.ux;
+          depth = best[0] + r;
         } else if (inside) {
           // Deep inside: out through the nearest side.
           const opts = [[x - s.x0, -1, 0], [s.x1 - x, 1, 0], [y - s.y0, 0, -1], [s.y1 - y, 0, 1]];
@@ -612,7 +827,7 @@
     const map = {
       ...def, type: 'arena', layered: true, size: S, edge, deathZ, liquid,
       center: [S / 2, S / 2], bounds: { minX: 0, minY: 0, maxX: S, maxY: S },
-      solids, movers, bumpers, pads, hazards, itemBoxes, spawns, boostPads,
+      solids, movers, bumpers, pads, hazards, itemBoxes, spawns, boostPads, roads,
       obstacles: [], // the flat arenas' round obstacles (none here: everything is a solid)
       land, floorInfo, floorAt, ceilingAt, walls, collide, blocked, hazardAt, padAt, heightAt, inside,
       sliderAt, pendulumAt, bridgeAt, bridgeFrame,
@@ -1127,9 +1342,137 @@
     return def;
   }
 
-  const ARENAS = [theKeep(), theGraveyard()];
+  // The Cinder Bowl: a green bowl of rolling hills ringed by jagged cliffs, a lava crater in the
+  // middle and a banked viaduct sweeping over it in an S, on pillars, under arches at both ends.
+  // Four raised plateaus to fight on, tyre stacks round the crater's lip to bounce off, pines and
+  // boulders on the hills, and two jump pads that throw you up onto the top of the bridge.
+  function theCinderBowl() {
+    const S = 3400;
+    const C = S / 2;
+    const CREST = 236; // the viaduct's highest point, over the lava
+    const PLATEAU = 34;
+    const plateaus = [0, 1, 2, 3].map((k) => {
+      const a = Math.PI / 4 + (k * Math.PI) / 2;
+      return { x: Math.round(C + Math.cos(a) * 800), y: Math.round(C + Math.sin(a) * 800), r: 220, z: PLATEAU, soft: 0.66 };
+    });
+    const def = {
+      id: 'cinder', name: 'The Cinder Bowl', emoji: '🌋', theme: 'cinder', size: S,
+      blurb: 'Hills round a lava crater, a banked viaduct over it and cliffs all round.',
+      edge: 'wall', deathZ: -320, liquid: { kind: 'lava', z: -50 },
+      terrain: {
+        seed: 29, amp: 50, scale: 620, base: 0, kind: 'grass', style: 'lowpoly', flats: plateaus,
+        bowl: { x: C, y: C, r: 1170, height: 150, width: 300, max: 760, jag: 0.35 },
+        craters: [{ x: C, y: C, r: 400, z: -100, lip: 20 }],
+      },
+      roads: [{
+        // An S over the crater: up from the hills in the south-west, over the lava, down to the north-east.
+        points: [[C - 1010, C + 400, null], [C - 760, C + 140, 76], [C - 420, C - 110, 182], [C, C, CREST], [C + 420, C + 110, 182], [C + 760, C - 140, 76], [C + 1010, C - 400, null]],
+        w: 190, thick: 18, bank: 70, curb: { w: 10, h: 13 }, pillars: { every: 300, r: 26, min: 60 }, kind: 'viaduct',
+      }],
+      blocks: [], ramps: [], cyls: [], pads: [], bumpers: [], boosts: [], hazards: [], boxes: [], spawns: [], movers: [], deco: [],
+    };
+    const land = makeTerrain(def);
+    const g = (x, y) => land.at(x, y);
+    const road = roadSolids(def.roads[0], land);
+    const along = road.samples;
+    const onRoad = (x, y, pad) => along.some((o) => Math.hypot(o.x - x, o.y - y) < road.w / 2 + pad);
+    const at = (frac) => along[Math.round(frac * (along.length - 1))];
+    // The deck's height at (x, y): its highest piece there (the pieces of a bend overlap a little).
+    const deck = road.segs.filter((r) => r.kind !== 'kerb').map(seg);
+    const deckZ = (x, y) => Math.max(...deck.filter((r) => contains(r, x, y)).map((r) => topAt(r, x, y)));
+    // Arches over both ends of the viaduct: a pillar either side, a neon banner across.
+    for (const o of [along[1], along[along.length - 2]]) {
+      for (const side of [1, -1]) {
+        const x = o.x - o.uy * side * (road.w / 2 + 34);
+        const y = o.y + o.ux * side * (road.w / 2 + 34);
+        def.cyls.push({ x: Math.round(x), y: Math.round(y), r: 22, z0: g(x, y) - 30, z1: g(x, y) + 210, kind: 'archpost' });
+      }
+      def.deco.push({ kind: 'gate', x: o.x, y: o.y, z: g(o.x, o.y), angle: o.h, w: road.w + 68, h: 200 });
+    }
+    // Tyre stacks round the crater's lip (clear of the viaduct), bouncy to hit.
+    for (let k = 0; k < 10; k++) {
+      const a = (k / 10) * Math.PI * 2 + 0.31;
+      const x = C + Math.cos(a) * 560;
+      const y = C + Math.sin(a) * 560;
+      if (onRoad(x, y, 90)) continue;
+      def.bumpers.push({ x: Math.round(x), y: Math.round(y), z: g(x, y), r: 30, h: 34, kick: 360, style: 'tyres' });
+    }
+    // Two jump pads up onto the crest, from the ground either side of the bridge.
+    const crest = at(0.5);
+    for (const side of [1, -1]) {
+      const x = C - crest.uy * side * 600;
+      const y = C + crest.ux * side * 600;
+      const tx = Math.round(crest.x - crest.uy * side * 30);
+      const ty = Math.round(crest.y + crest.ux * side * 30);
+      def.pads.push({ x: Math.round(x), y: Math.round(y), z: g(x, y), r: 42, to: [tx, ty, deckZ(tx, ty)], t: 1.3 });
+    }
+    // Item boxes: on the bridge (the crest and halfway up each side), on the plateaus, round the
+    // crater's lip and out on the hills.
+    for (const f of [0.5, 0.3, 0.7]) {
+      const o = at(f);
+      const x = Math.round(o.x);
+      const y = Math.round(o.y);
+      def.boxes.push({ x, y, z: deckZ(x, y) });
+    }
+    for (const p of plateaus) {
+      for (const d of [-70, 70]) def.boxes.push({ x: p.x + d, y: p.y - d, z: PLATEAU });
+    }
+    const ring = (n, r, phase, pad) => {
+      const out = [];
+      for (let k = 0; k < n; k++) {
+        const a = (k / n) * Math.PI * 2 + phase;
+        const x = Math.round(C + Math.cos(a) * r);
+        const y = Math.round(C + Math.sin(a) * r);
+        if (!onRoad(x, y, pad)) out.push([x, y, a]);
+      }
+      return out;
+    };
+    for (const [x, y] of ring(8, 500, 0, 70)) def.boxes.push({ x, y, z: g(x, y) });
+    for (const [x, y] of ring(8, 1040, Math.PI / 8, 80)) def.boxes.push({ x, y, z: g(x, y) });
+    // Spawns: two rings on the hills (and the plateaus), facing the crater.
+    for (const [x, y, a] of [...ring(14, 950, 0.12, 110), ...ring(14, 700, 0.34, 110)]) def.spawns.push({ x, y, z: g(x, y), angle: a + Math.PI });
+    // Pines and boulders out on the hills, where they're out of everything's way.
+    const taken = [...def.spawns, ...def.boxes, ...def.pads, ...def.bumpers, ...def.cyls, ...plateaus];
+    const free = (x, y, room) => !onRoad(x, y, 70) && taken.every((o) => Math.hypot(o.x - x, o.y - y) > room + (o.r || 0));
+    for (let i = 0; i < 400 && def.deco.filter((d) => d.kind === 'pine').length < 46; i++) {
+      const a = hash2(i, 1, 77) * Math.PI * 2;
+      const r = 640 + hash2(i, 2, 77) * 640;
+      const x = Math.round(C + Math.cos(a) * r);
+      const y = Math.round(C + Math.sin(a) * r);
+      if (!free(x, y, 120) || land.at(x, y) > 160) continue;
+      const big = hash2(i, 3, 77);
+      def.cyls.push({ x, y, r: 13, z0: g(x, y) - 20, z1: g(x, y) + 120, kind: 'trunk' });
+      def.deco.push({ kind: 'pine', x, y, z: g(x, y), s: 0.85 + big * 0.6, seed: i });
+      taken.push({ x, y, r: 40 });
+    }
+    for (let i = 0; i < 300 && def.deco.filter((d) => d.kind === 'boulder').length < 12; i++) {
+      const a = hash2(i, 4, 78) * Math.PI * 2;
+      const r = 620 + hash2(i, 5, 78) * 520;
+      const x = Math.round(C + Math.cos(a) * r);
+      const y = Math.round(C + Math.sin(a) * r);
+      if (!free(x, y, 110)) continue;
+      const size = 30 + hash2(i, 6, 78) * 22;
+      def.cyls.push({ x, y, r: Math.round(size), z0: g(x, y) - 20, z1: g(x, y) + size * 1.1, kind: 'boulder' });
+      def.deco.push({ kind: 'boulder', x, y, z: g(x, y), s: size, seed: i });
+      taken.push({ x, y, r: size + 40 });
+    }
+    // Rocks strewn up the cliffs (scenery only: nobody drives up there).
+    for (let i = 0; i < 70; i++) {
+      const a = hash2(i, 7, 79) * Math.PI * 2;
+      const r = 1250 + hash2(i, 8, 79) * 500;
+      const x = C + Math.cos(a) * r;
+      const y = C + Math.sin(a) * r;
+      if (x < 60 || y < 60 || x > S - 60 || y > S - 60) continue;
+      const slope = land.slope(x, y, {});
+      if (Math.hypot(slope.gx, slope.gy) > 1.1) continue; // nothing perches on a sheer face
+      def.deco.push({ kind: 'rock', x: Math.round(x), y: Math.round(y), z: g(x, y) - 8, s: 30 + hash2(i, 9, 79) * 60, seed: i });
+    }
+    return def;
+  }
+
+  const ARENAS = [theKeep(), theGraveyard(), theCinderBowl()];
 
   return {
-    KART_R, KART_H, STEP, NAV, EDGE, ARENAS, makeLayeredArena, makeTerrain, groundBlocks, turn, symmetric,
+    KART_R, KART_H, STEP, NAV, EDGE, ARENAS, makeLayeredArena, makeTerrain, groundBlocks, turn, symmetric, roadSolids, SEG,
   };
 });

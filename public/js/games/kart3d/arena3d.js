@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { tex, canvasTexture, rng, MOBILE, boostPad, decorate, addHills, addMoonlitTrees } from './world.js';
+import { buildSculpted, buildTyres, SCULPTED_KINDS } from './sculpt3d.js';
 
 const K = window.KartCore;
 const L = K.Layers;
@@ -381,6 +382,8 @@ const lookKit = (ground, stone, mortar, flag, steps) => ({
 KITS.ruins = lookKit('sand', '#bd8d58', '#76522f', '#c89e68', '#b98a57');
 KITS.glacier = lookKit('snow', '#9fbbd2', '#5d7b94', '#c4d7e7', '#94b1c8');
 KITS.basalt = lookKit('ash', '#6c5c59', '#2a2123', '#76696a', '#7d6d6b');
+// The Cinder Bowl: its ground, viaduct, pillars and props are drawn by sculpt3d.js; this covers the rest.
+KITS.cinder = lookKit('grass', '#8c6239', '#5a3d22', '#a0896e', '#9a7d5f');
 // Kinds drawn by their own builders instead of as plain blocks.
 const SPECIAL = new Set(['tomb', 'fence', 'deadtree']);
 const ROUGH = { planks: 0.85, timber: 0.9, tent: 0.95, grass: 1, dirt: 1, nightGrass: 1, slate: 0.7, sand: 1, snow: 0.8, ash: 1 };
@@ -535,8 +538,12 @@ export function buildLayered(scene, map, theme, ctx) {
   const roofs = [];
   const special = { tomb: [], fence: [], deadtree: [] };
   const glows = []; // acid pools that fizz
+  // Sculpted arenas (a low-poly ground, a viaduct): their own builder draws those and their props.
+  const sculpted = !!(map.terrain && map.terrain.style === 'lowpoly');
   for (const s of map.solids) {
     if (s.kind === 'bumper' || s.kind === 'hub') continue; // drawn with their bumper / sweeper
+    if (s.type === 3) continue; // road pieces: drawn as whole roads (sculpt3d.js)
+    if (sculpted && SCULPTED_KINDS.has(s.kind)) continue;
     if (SPECIAL.has(s.kind)) { special[s.kind].push(s); continue; }
     const footprint = s.type === 2 ? Math.PI * s.r * s.r : (s.x1 - s.x0) * (s.y1 - s.y0);
     // Anything big enough to drive under fades when it would hide your kart.
@@ -568,7 +575,8 @@ export function buildLayered(scene, map, theme, ctx) {
     mesh.receiveShadow = true;
     scene.add(mesh);
   }
-  if (map.land) buildLand(scene, map, kit);
+  if (sculpted) buildSculpted(scene, map, ctx);
+  else if (map.land) buildLand(scene, map, kit);
   if (special.tomb.length) buildTombs(scene, map, special.tomb);
   if (special.fence.length) buildFences(scene, map, special.fence);
   if (special.deadtree.length) {
@@ -595,10 +603,11 @@ export function buildLayered(scene, map, theme, ctx) {
   }
 
   // Edge walls: a palisade of sharpened logs (or wrought iron railings) where the physics wall stands.
-  if (map.edge === 'wall') addPalisade(scene, S, theme.railings);
+  if (map.edge === 'wall' && !sculpted) addPalisade(scene, S, theme.railings); // (cliffs ring a sculpted bowl)
 
   // Moat / lava lake: one sheet at the liquid's level (only seen through the holes in the floor).
-  if (map.liquid) {
+  // (A sculpted arena's lava fills its craters: sculpt3d.js.)
+  if (map.liquid && !sculpted) {
     if (map.liquid.kind === 'lava') {
       const lt = tex.lava().clone();
       lt.needsUpdate = true;
@@ -650,12 +659,18 @@ export function buildLayered(scene, map, theme, ctx) {
 
   for (const p of map.boostPads) ctx.pads.push(boostPad(scene, p));
   const pads = map.pads.map((p) => buildPad(scene, p));
-  const bumpers = map.bumpers.map((b) => (theme.pumpkins ? buildPumpkin(scene, b, S) : buildBumper(scene, b)));
+  const bumpers = map.bumpers.map((b) => (theme.pumpkins ? buildPumpkin(scene, b, S) : b.style === 'tyres' ? buildTyres(scene, b) : buildBumper(scene, b)));
   const movers = map.movers.map((m) => buildMover(scene, map, m, kit));
   const flames = []; // braziers: flames come off them in ambient()
   addScenery(scene, map, theme, ctx, kit, flames);
 
   const moon = theme.moon ? addMoon(scene) : null;
+  // Craters with lava in them (the pool's radius: where the ground dips under the lava).
+  const craters = map.liquid && map.liquid.kind === 'lava' && map.terrain ? (map.terrain.craters || []).map((c) => {
+    let pool = 0;
+    for (let r = 0; r < c.r; r += 8) if (map.land.at(c.x + r, c.y) < map.liquid.z) pool = r;
+    return { x: c.x, y: c.y, z: map.liquid.z, pool };
+  }) : [];
   const v0 = new THREE.Vector3();
   const v1 = new THREE.Vector3();
   let wispT = 0;
@@ -664,6 +679,14 @@ export function buildLayered(scene, map, theme, ctx) {
     // Particles the scenery gives off near the camera: acid fizzing, wisps drifting over the graves.
     ambient(dt, cam, fire, smoke) {
       if (moon) moon.position.set(cam.x - 5200, cam.y + 4200, cam.z - 6400);
+      // A lava crater spits embers up off its surface.
+      for (const c of craters) {
+        if (Math.hypot(c.x - cam.x, c.y - cam.z) > 2200 || Math.random() > dt * 24) continue;
+        const a = Math.random() * TAU;
+        const r = Math.random() * c.pool;
+        fire.emit(c.x + Math.cos(a) * r, c.z + 2, c.y + Math.sin(a) * r, (Math.random() - 0.5) * 30, 60 + Math.random() * 90, (Math.random() - 0.5) * 30,
+          FLAME_COLS[Math.floor(Math.random() * 3)], 4 + Math.random() * 4, 1.1, { drag: 0.6, rise: 20 });
+      }
       for (const f of flames) {
         if (Math.abs(f.x - cam.x) > 1400 || Math.abs(f.z - cam.z) > 1400) continue;
         f.acc = (f.acc || 0) + dt * 40;

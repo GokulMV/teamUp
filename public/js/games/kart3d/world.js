@@ -469,6 +469,12 @@ export const THEMES = {
     ground: () => tex.ground('#5c9a43', ['#4f8c3a', '#6aab4e']),
     trees: ['almond', 'casuarina'], bushes: ['grape'], grass: true, clouds: 26, hills: 0x5f8f55, water: 0x35706f,
   },
+  // The Cinder Bowl: high summer in a volcano's bowl; sky-blue haze far off (exponential fog).
+  cinder: {
+    sky: [0x3f93ef, 0xd6ecff], fog: [0xd0e8ff, 2200, 9000], fogExp: 0.00016, hemi: [0x87ceeb, 0x3a5f0b, 1.7], sun: [0xfff0d4, 3.1],
+    ground: () => tex.ground('#5ec962', ['#55bd59', '#68d06c']),
+    clouds: 22,
+  },
   // The weekly arena's other looks (with keep and graveyard above).
   ruins: {
     sky: [0x3f8fde, 0xf8e3bf], fog: [0xf3dcb4, 2200, 7800], hemi: [0xffe9c8, 0xa06a3a, 1.2], sun: [0xffe2b0, 2.9],

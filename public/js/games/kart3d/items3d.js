@@ -713,7 +713,8 @@ function boxMaterial(fog) {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime: TIME, uAlpha: { value: 1 }, uFlash: { value: 0 },
-      uFogColor: { value: fog.color }, uFogNear: { value: fog.near }, uFogFar: { value: fog.far },
+      // (Exponential fog has no near and far: a linear ramp that looks about the same.)
+      uFogColor: { value: fog.color }, uFogNear: { value: fog.isFogExp2 ? 0 : fog.near }, uFogFar: { value: fog.isFogExp2 ? 2.2 / fog.density : fog.far },
     },
     vertexShader: VIEW_VERT,
     fragmentShader: `

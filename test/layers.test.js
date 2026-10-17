@@ -376,8 +376,100 @@ test('layers: CPU drivers on The Keep collect boxes, use the jump pads and keep 
   assert.ok(drowned <= 5, `${drowned} karts drove into the moat by themselves`);
 });
 
-test('layers: The Keep and The Graveyard: every spawn and box stands on its floor, and each is reachable from every other', () => {
-  for (const id of ['keep', 'graveyard']) checkArena(K.getMap(id, 'arena'));
+test('layers: CPU drivers on The Cinder Bowl collect boxes, drive the viaduct and keep out of the lava', () => {
+  const Bots = require('../server/games/kart-bots');
+  const events = [];
+  const room = {
+    settings: { kartMode: 'arena', kartMap: 'cinder', arenaTime: 600, kartItems: 'none', kartBots: 6, kartBotSkill: 'normal' },
+    players: new Map(), connectedPlayers: [], emit: (e, d) => events.push([e, d]), emitTo() {}, teamList: () => [], systemMessage() {},
+    buildResults: () => ({ players: [] }), finishGame() {},
+  };
+  const game = new KartBattle(room);
+  assert.strictEqual(game.map.id, 'cinder');
+  Bots.makeBots(6, { skill: 'normal' }).forEach((b, i) => game.addKart(b, i));
+  game.items = ['rocket']; // boxes to chase, nothing that knocks anyone in
+  game.boxes = game.map.itemBoxes.map(() => 0);
+  game.rollItem = () => null;
+  game.phase = 'racing';
+  game.raceStart = 0;
+  let boxes = 0;
+  let high = 0;
+  for (let i = 0; i < 60 * 30; i++) {
+    game.time += 1 / 30;
+    const before = game.boxes.filter((b) => b > 0).length;
+    game.simulate(1 / 30);
+    boxes += Math.max(0, game.boxes.filter((b) => b > 0).length - before);
+    for (const k of game.karts.values()) if (k.dead <= 0 && k.z > 90) high += 1 / 30;
+  }
+  assert.strictEqual(game.botError, false);
+  const burnt = events.filter(([e, d]) => e === 'game:kart:hit' && d.kill && d.by < 0).length;
+  assert.ok(boxes >= 20, `${boxes} boxes picked up`);
+  assert.ok(high > 3, `${high.toFixed(0)} kart-seconds up on the viaduct`);
+  assert.ok(burnt <= 3, `${burnt} karts drove into the lava by themselves`);
+});
+
+test('layers: The Keep, The Graveyard and The Cinder Bowl: every spawn and box stands on its floor, and each is reachable from every other', () => {
+  for (const id of ['keep', 'graveyard', 'cinder']) checkArena(K.getMap(id, 'arena'));
+});
+
+// A raised road over flat ground: up from the west, a crest 120 high in the middle, down to the east.
+const ROAD = {
+  id: 'roadbed', size: 2000, ground: { z: 0 },
+  roads: [{ points: [[200, 1000, 0], [600, 1000, 70], [1000, 1000, 120], [1400, 1000, 70], [1800, 1000, 0]], w: 160, thick: 18, curb: { w: 10, h: 13 }, pillars: { every: 300, r: 22, min: 60 } }],
+};
+
+test('layers: a raised road: drive its whole length on the deck, the kerbs keep you on it, and you can drive under it', () => {
+  const map = L.makeLayeredArena(ROAD);
+  const road = map.roads[0];
+  assert.ok(road.samples.length > 40 && map.solids.some((s) => s.type === L.SEG), 'cut into road pieces');
+  assert.ok(road.cyls.length >= 2, `${road.cyls.length} pillars under the high part`);
+  // Along the deck from one end to the other: always on it, up to the crest and down again.
+  const k = kartAt(205, 1000, 0, 0);
+  let top = 0;
+  drive(map, k, UP, 6, 0, (kk) => {
+    if (kk.x > 240 && kk.x < 1760) {
+      const deck = map.floorAt(kk.x, kk.y, kk.z + L.STEP);
+      assert.ok(Math.abs(kk.z - deck) < 3, `on the deck at x ${kk.x.toFixed(0)} (z ${kk.z.toFixed(1)}, deck ${deck.toFixed(1)})`);
+    }
+    top = Math.max(top, kk.z);
+  });
+  assert.ok(top > 115, `over the crest (top ${top.toFixed(0)})`);
+  assert.ok(k.x > 1800 && Math.abs(k.z) < 2, `down the far end onto the ground (x ${k.x.toFixed(0)}, z ${k.z.toFixed(1)})`);
+  // Straight at the kerb on the crest: it holds you on.
+  const side = kartAt(1000, 1000, map.floorAt(1000, 1000, 1000), Math.PI / 2);
+  drive(map, side, UP, 1.5);
+  assert.ok(side.y < 1000 + 80 && side.z > 100, `still on the deck (y ${side.y.toFixed(0)}, z ${side.z.toFixed(0)})`);
+  // Under the crest along the ground (wide of the pillar in the middle).
+  const under = kartAt(1060, 700, 0, Math.PI / 2);
+  drive(map, under, UP, 1.6);
+  assert.ok(under.y > 1000 + 80 + L.KART_R && Math.abs(under.z) < 1, `drove under it and out the other side (y ${under.y.toFixed(0)}, z ${under.z.toFixed(1)})`);
+  // But a kart can't drive into the deck's side where it's too low to get under.
+  const low = kartAt(400, 800, 0, Math.PI / 2);
+  drive(map, low, UP, 1.5);
+  assert.ok(low.y < 1000 - 80 + 20 && low.z < 5, `stopped by the deck's side (y ${low.y.toFixed(0)}, z ${low.z.toFixed(1)})`);
+});
+
+test('layers: a sculpted bowl: cliffs all round, a crater dipping into lava, and a banked bend', () => {
+  const map = K.getMap('cinder', 'arena');
+  const C = map.size / 2;
+  const land = map.land;
+  assert.ok(land.at(C, C) < map.liquid.z - 30, 'the crater dips under the lava');
+  assert.strictEqual(map.hazardAt(C, C, land.at(C, C)), 'lava');
+  assert.ok(land.at(C, 60) > 300 && land.at(60, C) > 300, 'cliffs at the edges');
+  // The ground's height is a flat triangle per half cell: three points in one triangle are collinear-planar.
+  const a = land.at(1000, 1000);
+  const b = land.at(1004, 1000);
+  const c = land.at(1008, 1000);
+  assert.ok(Math.abs(b - (a + c) / 2) < 1e-6, 'flat faces');
+  // The viaduct leans into its bends: one edge higher than the other somewhere along it.
+  const road = map.roads[0];
+  const banked = road.samples.filter((o) => Math.abs(o.bank) > 0.05);
+  assert.ok(banked.length > 6, `${banked.length} banked samples`);
+  const o = banked[0];
+  const hw = road.w / 2 - 20;
+  const left = map.floorAt(o.x - o.uy * hw, o.y + o.ux * hw, o.z + 60);
+  const right = map.floorAt(o.x + o.uy * hw, o.y - o.ux * hw, o.z + 60);
+  assert.ok(Math.abs(left - right) > 5, `the edges differ by ${Math.abs(left - right).toFixed(1)}`);
 });
 
 function checkArena(map) {
