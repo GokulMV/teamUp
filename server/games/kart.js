@@ -70,7 +70,7 @@ const DAMAGE = {
 };
 
 // Lava, water and falling into the void: nothing protects you, and the kill goes to whoever hit you last.
-const ENV_KILLS = new Set(['lava', 'water', 'void', 'acid']);
+const ENV_KILLS = new Set(['lava', 'water', 'void', 'acid', 'cup']); // (cup: a golf hole you drive into)
 // Layered arenas: how close in height things must be to touch (shots, traps and boxes are on one floor).
 const LEVEL = { shot: 26, trap: 20, box: 30, shock: 90 };
 const BOMB_LOB = { apex: 110, reach: 60 }; // a bomb lands on a floor up to `reach` above the thrower

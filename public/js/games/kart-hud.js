@@ -16,6 +16,8 @@
   ICONS.water = '<svg viewBox="0 0 24 24" class="hud-ic"><path d="M12 2.5c3 4.2 6 7.4 6 11a6 6 0 0 1-12 0c0-3.6 3-6.8 6-11z" fill="#38bdf8"/><path d="M9.2 14.5a3 3 0 0 0 2.6 3" stroke="#e0f2fe" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M2 21c1.7-1.3 3.3-1.3 5 0s3.3 1.3 5 0 3.3-1.3 5 0 3.3 1.3 5 0" stroke="#7dd3fc" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>';
   ICONS.ram = '<svg viewBox="0 0 24 24" class="hud-ic" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h7M5.5 8.5 9 12l-3.5 3.5" stroke="#e5e7eb" stroke-width="2.4"/><path d="M22 12h-7M18.5 8.5 15 12l3.5 3.5" stroke="#e5e7eb" stroke-width="2.4"/><path d="M12 5v3M12 16v3M9.5 6.5l1 2M14.5 6.5l-1 2M9.5 17.5l1-2M14.5 17.5l-1-2" stroke="#ffb547" stroke-width="1.8"/></svg>';
   ICONS.acid = '<svg viewBox="0 0 24 24" class="hud-ic"><path d="M4 13c0-2 2-3.5 4-3s2.5-2.5 5-2.5 4 2 4 3.5 3 1 3 3.5c0 3.5-3.6 6.5-8 6.5s-8-3-8-6.5z" fill="#84cc16"/><circle cx="9" cy="14" r="1.6" fill="#ecfccb"/><circle cx="14.5" cy="12.5" r="1.1" fill="#ecfccb"/><circle cx="17" cy="5" r="1.5" fill="#a3e635"/><circle cx="12" cy="3.6" r="1" fill="#a3e635"/></svg>';
+  // A golf cup: the hole in a disc of green, the pin and its flag.
+  ICONS.cup = '<svg viewBox="0 0 24 24" class="hud-ic"><ellipse cx="12" cy="18.5" rx="9" ry="3.6" fill="#4fcf56"/><ellipse cx="10.2" cy="18.6" rx="4.2" ry="1.7" fill="#0b1220"/><path d="M12 18.4V3.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/><path d="M12.8 3.6l7.2 2.9-7.2 2.9z" fill="#ef4444"/></svg>';
   ICONS.drop = '<svg viewBox="0 0 24 24" class="hud-ic" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9h7M14 9h7" stroke="#e5e7eb" stroke-width="2.4"/><path d="M12 6v10M8 12.5l4 4 4-4" stroke="#ffb547" stroke-width="2.6"/><path d="M8 21h8" stroke="#ffb547" stroke-width="2" opacity="0.5"/></svg>';
   // Weapon that did it -> ItemIcons id (items not listed use their own id when an icon exists).
   const KIND_ICON = {
@@ -41,6 +43,7 @@
     if (kind === 'water') return ICONS.water;
     if (kind === 'void' || kind === 'gap' || kind === 'fall') return ICONS.drop;
     if (kind === 'acid') return ICONS.acid;
+    if (kind === 'cup') return ICONS.cup;
     if (kind === 'ram') return ICONS.ram;
     const id = KIND_ICON[kind] || kind;
     return window.ItemIcons && ItemIcons.ids.includes(id) ? ItemIcons.svg(id, cls) : ICONS.boom;
@@ -200,7 +203,7 @@
         deathShown = true;
         const killer = d.by >= 0 ? ctx.metaOf(d.by) : null;
         const title = killer ? `<span class="kd-kicker">Smashed by</span><span class="kd-who">${tag(killer)}${weaponIcon(d.kind)}</span>`
-          : `<span class="kd-kicker">Wiped out</span><span class="kd-who">${weaponIcon(d.kind || 'boom')}<b>${{ lava: 'Into the lava', water: 'Into the moat', void: 'Into the void', acid: 'Into an open grave' }[d.kind] || 'Destroyed'}</b></span>`;
+          : `<span class="kd-kicker">Wiped out</span><span class="kd-who">${weaponIcon(d.kind || 'boom')}<b>${{ lava: 'Into the lava', water: 'Into the moat', void: 'Into the void', acid: 'Into an open grave', cup: 'Holed out!' }[d.kind] || 'Destroyed'}</b></span>`;
         el.dead.innerHTML = `<div class="kd-ring"><svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="19" class="bg"/><circle cx="22" cy="22" r="19" class="fg" pathLength="100"/></svg><b></b></div>
           <div class="kd-text">${title}<span class="kd-watch"></span></div>`;
         deathRing = { fg: el.dead.querySelector('.fg'), num: el.dead.querySelector('.kd-ring b'), watch: el.dead.querySelector('.kd-watch'), last: null, watching: undefined };

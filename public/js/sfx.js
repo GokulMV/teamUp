@@ -345,6 +345,14 @@
       noise({ dur: 1.2, vol: 0.5 * v, filter: 'highpass', from: 5000, to: 1500 });
       tone(110, { type: 'sawtooth', dur: 0.5, vol: 0.12 * v, slide: 0.4 });
     },
+    // Into a golf cup: the knock on its bottom, a rattle round the rim, then a polite little clap.
+    holeOut(volume = 1) {
+      const v = Math.max(0.05, Math.min(1, volume));
+      tone(430, { type: 'sine', dur: 0.12, vol: 0.34 * v, slide: 0.55 });
+      tone(250, { type: 'sine', dur: 0.18, vol: 0.3 * v, slide: 0.7, delay: 0.09 });
+      for (let i = 0; i < 3; i++) noise({ dur: 0.03, vol: 0.12 * v, filter: 'bandpass', from: 2800, to: 2200, q: 2, delay: 0.2 + i * 0.07 });
+      for (let i = 0; i < 7; i++) noise({ dur: 0.05, vol: 0.16 * v, filter: 'bandpass', from: 1800, to: 1200, q: 1.4, delay: 0.6 + i * 0.12 + Math.random() * 0.05 });
+    },
     fall(volume = 1) {
       const v = Math.max(0.05, Math.min(1, volume));
       tone(700, { type: 'triangle', dur: 0.7, vol: 0.16 * v, slide: 0.25 });

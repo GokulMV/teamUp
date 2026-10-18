@@ -13,9 +13,10 @@ import { buildSkyGardens } from './skygarden3d.js';
 import { buildKeep } from './keep3d.js';
 import { buildGraveyard } from './graveyard3d.js';
 import { buildWeekly } from './weekly3d.js';
+import { buildMiniGolf } from './golf3d.js';
 
 // Bright arenas' own set dressing (and models for their moving obstacles), by theme.
-const DRESSINGS = { harbour: buildHarbour, skygarden: buildSkyGardens, keep: buildKeep, graveyard: buildGraveyard };
+const DRESSINGS = { harbour: buildHarbour, skygarden: buildSkyGardens, keep: buildKeep, graveyard: buildGraveyard, minigolf: buildMiniGolf };
 
 const K = window.KartCore;
 const L = K.Layers;
@@ -648,7 +649,9 @@ export function buildLayered(scene, map, theme, ctx) {
   }
 
   // Lava or acid pools on a floor (an open grave full of acid sits a little down in a dug-out pit).
+  // (A dressing draws its own kinds: golf cups.)
   for (const h of map.hazards) {
+    if (dress?.skip?.has(h.kind)) continue;
     const acid = h.kind === 'acid';
     const lt = (acid ? texture('acid') : tex.lava()).clone();
     lt.needsUpdate = true;
@@ -702,6 +705,7 @@ export function buildLayered(scene, map, theme, ctx) {
     roofs,
     // Particles the scenery gives off near the camera: acid fizzing, wisps drifting over the graves.
     ambient(dt, cam, fire, smoke) {
+      dress?.ambient?.(dt, cam, fire, smoke);
       if (moon) moon.position.set(cam.x - 5200, cam.y + 4200, cam.z - 6400);
       // A lava crater spits embers up off its surface.
       for (const c of craters) {

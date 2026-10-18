@@ -809,6 +809,15 @@ export class Kart3D {
       }
       for (let i = 0; i < 10; i++) this.smoke.emit(x + (Math.random() - 0.5) * 40, gy + 8, z + (Math.random() - 0.5) * 40, 0, 40 + Math.random() * 40, 0, goo[1], 16, 1, { alpha: 0.35, grow: 2 });
       this.ring(x, z, 0xa3e635, 110, 0.8, gy);
+    } else if (kind === 'cup') {
+      // Holed out: turf and confetti thrown up out of the cup, and a white ring round it.
+      const cols = [new THREE.Color(0x4fcf56), new THREE.Color(0xffffff), new THREE.Color(0xef4444), new THREE.Color(0xffd23f), new THREE.Color(0x3fa9f5)];
+      for (let i = 0; i < 80; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 30 + Math.random() * 170;
+        this.smoke.emit(x, gy + 6, z, Math.cos(a) * sp * 0.6, 280 + Math.random() * 340, Math.sin(a) * sp * 0.6, cols[i % 5], 3 + Math.random() * 3, 1.3, { alpha: 1, drag: 0.7, rise: -650 });
+      }
+      this.ring(x, z, 0xffffff, 100, 0.8, gy);
     } else if (kind === 'lava') {
       // A burst of flame and embers with a short, light orange-grey puff: never a big dark disc.
       for (let i = 0; i < 46; i++) {

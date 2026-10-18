@@ -491,6 +491,14 @@ export const THEMES = {
     ground: () => tex.ground('#86d46e', ['#7fd06a', '#8edb74']),
     clouds: 20,
   },
+  // Mini Golf Mayhem: a summer afternoon in a back garden. A warm sun high in the south-west, a
+  // clear blue sky, the garden's far end fading into a soft haze.
+  minigolf: {
+    sky: [0x2f86ee, 0xc9e6ff], fog: [0xcfe7fb, 3200, 14000], fogExp: 0.00005, hemi: [0xfff6e8, 0x5f8f4e, 1.3], sun: [0xfff0d8, 3.1],
+    sunOffset: [-560, 1000, 420],
+    ground: () => tex.ground('#7ed36a', ['#74c95f', '#86d672']),
+    clouds: 16,
+  },
   // The weekly arena's other looks (with keep and graveyard above).
   ruins: {
     sky: [0x3b8be0, 0xf6dcae], fog: [0xf4dfb8, 3200, 13000], hemi: [0xffe9c8, 0xa06a3a, 1.2], sun: [0xffe2b0, 2.9],

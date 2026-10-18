@@ -918,6 +918,9 @@
           if (k + 1 < tops.length && tops[k + 1][0] - z < 1) continue; // the same floor twice (seams)
           if (map.ceilingAt(x, y, z + 0.5) - z < KART_H) continue; // no headroom
           if (map.hazardAt(x, y, z)) continue;
+          // A kart's width clear of a round pool or a cup, so a way between two spots either side
+          // of it never clips it.
+          if (map.hazards.some((h) => h.r !== undefined && Math.abs(z - h.z) <= 6 && (x - h.x) ** 2 + (y - h.y) ** 2 < (h.r + KART_R) ** 2)) continue;
           const f = map.floorInfo(x, y, z + 0.5, 0, {});
           if (Math.hypot(f.gx, f.gy) > NAV_SLOPE) continue; // a crater wall, a cliff
           if (map.walls(x, y, z, KART_R - 2, null) > 0) continue;
@@ -1865,7 +1868,195 @@
     return def;
   }
 
-  const ARENAS = [theHarbour(), theSkyGardens(), theCinderBowl(), theKeep(), theGraveyard()]; // in the lobby's order
+  // Mini Golf Mayhem: crazy golf at toy scale. The karts are the size of golf balls on a fenced back
+  // lawn: a raised 18th green in the middle with its cup (a hole you can drive into), a windmill
+  // you drive through past a giant swinging putter, a volcano with a spiral path up to the crater,
+  // a castle on an island in a moat with a drawbridge, and a lily pond with a footbridge.
+  function theMiniGolf() {
+    const S = 2800;
+    const C = S / 2;
+    const GREEN = 36; // the putting greens stand this high on the lawn
+    const TOP = 170; // the volcano's crater rim
+    const deg = Math.PI / 180;
+    const NW = [690, 690];
+    const NE = [2110, 690];
+    const SW = [690, 2110];
+    const SE = [2110, 2110];
+    const POND = { x0: 430, y0: 1850, x1: 950, y1: 2370 };
+    const MOAT = 120; // its width; the castle's walls rise straight out of it
+    const KEEP = 170; // the castle's half-width
+    const def = {
+      id: 'minigolf', name: 'Mini Golf Mayhem', emoji: '⛳', theme: 'minigolf', size: S, look: 'bright',
+      blurb: 'Crazy golf at toy scale: a windmill, a volcano, a castle and a lily pond, and every cup is a hole you can drive into.',
+      edge: 'wall', deathZ: -320, liquid: { kind: 'water', z: -24 },
+      ground: {
+        z: 0, depth: 60, kind: 'lawn',
+        holes: [
+          POND,
+          // The castle's moat, all round it.
+          { x0: SE[0] - KEEP - MOAT, y0: SE[1] - KEEP - MOAT, x1: SE[0] + KEEP + MOAT, y1: SE[1] - KEEP },
+          { x0: SE[0] - KEEP - MOAT, y0: SE[1] + KEEP, x1: SE[0] + KEEP + MOAT, y1: SE[1] + KEEP + MOAT },
+          { x0: SE[0] - KEEP - MOAT, y0: SE[1] - KEEP, x1: SE[0] - KEEP, y1: SE[1] + KEEP },
+          { x0: SE[0] + KEEP, y0: SE[1] - KEEP, x1: SE[0] + KEEP + MOAT, y1: SE[1] + KEEP },
+        ],
+      },
+      blocks: [], ramps: [], cyls: [], roads: [], pads: [], bumpers: [], boosts: [], hazards: [], boxes: [], spawns: [], movers: [], deco: [], paint: [],
+    };
+    const at = (o, a, r) => [Math.round(o[0] + Math.cos(a * deg) * r), Math.round(o[1] + Math.sin(a * deg) * r)];
+    // A giant golf ball sitting down in the turf (its middle 0.55 r up): as wide as it looks where a
+    // kart would touch it.
+    const ball = (x, y, z, r = 62) => {
+      def.cyls.push({ x, y, r: Math.round(r * 0.93), z0: z - 2, z1: z + Math.round(r * 1.55), kind: 'golfball' });
+      def.deco.push({ kind: 'golfball', x, y, z, r });
+    };
+
+    // ---------- the 18th green ----------
+    def.cyls.push({ x: C, y: C, r: 330, z0: -10, z1: GREEN, kind: 'green' });
+    def.hazards.push({ x: C, y: C, r: 44, z: GREEN, kind: 'cup' });
+    def.deco.push({ kind: 'flag', x: C, y: C, z: GREEN, h: 330, big: true, hole: 18 });
+    for (const [x0, y0, x1, y1, dir] of [
+      [C + 300, C - 75, C + 500, C + 75, 'x-'], [C - 500, C - 75, C - 300, C + 75, 'x+'],
+      [C - 75, C + 300, C + 75, C + 500, 'y-'], [C - 75, C - 500, C + 75, C - 300, 'y+'],
+    ]) def.ramps.push({ x0, y0, x1, y1, z0: 0, z1: GREEN, dir, base: -10, kind: 'carpet' });
+    for (const a of [45, 135, 225, 315]) ball(...at([C, C], a, 215), GREEN, 52);
+
+    // ---------- the windmill (north-west) ----------
+    def.cyls.push({ x: NW[0], y: NW[1], r: 300, z0: -10, z1: GREEN, kind: 'green' });
+    def.ramps.push(
+      { x0: NW[0] + 270, y0: NW[1] - 70, x1: NW[0] + 470, y1: NW[1] + 70, z0: 0, z1: GREEN, dir: 'x-', base: -10, kind: 'carpet' },
+      { x0: NW[0] - 70, y0: NW[1] + 270, x1: NW[0] + 70, y1: NW[1] + 470, z0: 0, z1: GREEN, dir: 'y-', base: -10, kind: 'carpet' },
+    );
+    // A tunnel through its base, east to west; the sails turn over the east door.
+    const MILL = 90;
+    const DOOR = 60;
+    const millTop = GREEN + 300;
+    def.blocks.push(
+      { x0: NW[0] - MILL, y0: NW[1] - MILL, x1: NW[0] + MILL, y1: NW[1] - DOOR, z0: GREEN - 10, z1: millTop, kind: 'mill' },
+      { x0: NW[0] - MILL, y0: NW[1] + DOOR, x1: NW[0] + MILL, y1: NW[1] + MILL, z0: GREEN - 10, z1: millTop, kind: 'mill' },
+      { x0: NW[0] - MILL, y0: NW[1] - DOOR, x1: NW[0] + MILL, y1: NW[1] + DOOR, z0: GREEN + 72, z1: millTop, kind: 'mill' },
+    );
+    def.deco.push({ kind: 'windmill', x: NW[0], y: NW[1], z: GREEN, w: MILL * 2, top: millTop, face: NW[0] + MILL });
+    // A giant putter swings across the way in, hung from a gantry (its posts stand just off the green).
+    def.movers.push({ type: 'pendulum', x: NW[0] + 175, y: NW[1], z: GREEN + 262, len: 240, r: 30, axis: 'y', amp: 0.95, period: 3.4, phase: 0, kind: 'putter' });
+    for (const sy of [-1, 1]) def.cyls.push({ x: NW[0] + 175, y: NW[1] + sy * 290, r: 12, z0: -10, z1: GREEN + 280, kind: 'gantry' });
+
+    // ---------- the volcano (north-east) ----------
+    def.cyls.push({ x: NE[0], y: NE[1], r: 150, z0: -10, z1: TOP, kind: 'volcano' });
+    def.hazards.push({ x: NE[0], y: NE[1], r: 46, z: TOP, kind: 'cup' });
+    def.deco.push({ kind: 'crater', x: NE[0], y: NE[1], z: TOP, r: 150 }, { kind: 'flag', x: NE[0], y: NE[1], z: TOP, h: 200, hole: 13 });
+    // A path spiralling up round it from the side facing the middle, one and a quarter turns, then in
+    // onto the rim; a rail along the outside.
+    const spiral = [];
+    const turns = 450;
+    const N = 16;
+    for (let k = 0; k <= N; k++) {
+      const u = k / N;
+      const a = 135 + turns * u;
+      const r = u < 0.86 ? 206 : 206 - 96 * ease((u - 0.86) / 0.14);
+      spiral.push([...at(NE, a, r), Math.round(TOP * u)]);
+    }
+    def.roads.push({ points: spiral, w: 108, thick: 18, curb: { w: 12, h: 14, side: 1, inset: 30 }, kind: 'path' });
+
+    // ---------- the castle (south-east) ----------
+    const W = 30; // wall thickness
+    const H = 92;
+    const GATE = 70;
+    const [kx, ky] = SE;
+    def.blocks.push(
+      // West wall with the gate (from the bridge), north wall with the drawbridge's gate.
+      { x0: kx - KEEP, y0: ky - KEEP, x1: kx - KEEP + W, y1: ky - GATE, z0: -30, z1: H, kind: 'castle' },
+      { x0: kx - KEEP, y0: ky + GATE, x1: kx - KEEP + W, y1: ky + KEEP, z0: -30, z1: H, kind: 'castle' },
+      { x0: kx - KEEP + W, y0: ky - KEEP, x1: kx - GATE, y1: ky - KEEP + W, z0: -30, z1: H, kind: 'castle' },
+      { x0: kx + GATE, y0: ky - KEEP, x1: kx + KEEP - W, y1: ky - KEEP + W, z0: -30, z1: H, kind: 'castle' },
+      { x0: kx + KEEP - W, y0: ky - KEEP, x1: kx + KEEP, y1: ky + KEEP, z0: -30, z1: H, kind: 'castle' },
+      { x0: kx - KEEP + W, y0: ky + KEEP - W, x1: kx + KEEP - W, y1: ky + KEEP, z0: -30, z1: H, kind: 'castle' },
+      // The bridge over the moat to the west gate.
+      { x0: kx - KEEP - MOAT - 10, y0: ky - GATE, x1: kx - KEEP + 4, y1: ky + GATE, z0: -14, z1: 0, kind: 'bridge' },
+    );
+    for (const [dx, dy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      def.cyls.push({ x: kx + dx * (KEEP - 14), y: ky + dy * (KEEP - 14), r: 52, z0: -30, z1: H + 64, kind: 'turret' });
+    }
+    def.movers.push({ type: 'drawbridge', x0: kx - GATE, y0: ky - KEEP - MOAT - 10, x1: kx + GATE, y1: ky - KEEP + 4, hinge: 'y1', period: 26, at: 13, move: 1.6, hold: 5, max: 1.32, phase: 0.2, kind: 'drawbridge' });
+    def.hazards.push({ x: kx, y: ky, r: 44, z: 0, kind: 'cup' });
+    def.deco.push({ kind: 'castle', x: kx, y: ky, z: 0, half: KEEP, wall: W, h: H, gate: GATE }, { kind: 'flag', x: kx, y: ky, z: 0, h: 210, hole: 9 });
+
+    // ---------- the lily pond (south-west) ----------
+    def.roads.push({ points: [[620, 1826, 0], [585, 1975, 12], [690, 2110, 26], [800, 2245, 12], [770, 2394, 0]], w: 110, thick: 16, curb: { w: 12, h: 14, inset: 26 }, kind: 'footbridge' });
+    def.cyls.push({ x: 545, y: 2265, r: 96, z0: -46, z1: -6, kind: 'lilypad' });
+    def.pads.push({ x: 300, y: 2110, z: 0, r: 38, to: [530, 2280, -6], t: 0.9 });
+    def.pads.push({ x: 585, y: 2222, z: -6, r: 32, to: [1080, 1980, 0], t: 1.2 });
+    def.deco.push({ kind: 'pond', ...POND }, { kind: 'fountain', x: 860, y: 1950, z: -24 });
+    for (const [x, y, r] of [[480, 1950, 44], [860, 2300, 52], [900, 2040, 36], [470, 2120, 30]]) def.deco.push({ kind: 'lily', x, y, z: -24, r });
+
+    // ---------- the lawn between them ----------
+    ball(C, 560, 0);
+    ball(C, S - 560, 0);
+    ball(560, C, 0);
+    ball(S - 560, C, 0);
+    // Boost chevrons down the fairways from the 18th to the four holes.
+    for (const a of [45, 135, 225, 315]) {
+      const [x, y] = at([C, C], a, 560);
+      def.boosts.push({ x, y, z: 0, angle: a * deg });
+    }
+    def.pads.push({ x: NE[0] - 100 * Math.SQRT1_2, y: NE[1] + 100 * Math.SQRT1_2, z: TOP, r: 34, to: [C + 130, C - 130, GREEN], t: 1.5 });
+    def.pads[def.pads.length - 1].x = Math.round(def.pads[def.pads.length - 1].x);
+    def.pads[def.pads.length - 1].y = Math.round(def.pads[def.pads.length - 1].y);
+
+    // ---------- item boxes ----------
+    // The paths' and bridges' height at (x, y): the highest piece of deck there.
+    const decks = def.roads.map((r) => roadSolids(r, null, -Infinity)).flatMap((r) => r.segs.filter((g) => g.kind !== 'kerb').map(seg));
+    const deckZ = (x, y) => Math.max(...decks.filter((g) => contains(g, x, y)).map((g) => topAt(g, x, y)));
+    for (const a of [0, 90, 180, 270]) def.boxes.push({ ...xy(at([C, C], a, 230)), z: GREEN });
+    def.boxes.push({ x: C, y: 440, z: 0 }, { x: C, y: S - 440, z: 0 }, { x: 440, y: C, z: 0 }, { x: S - 440, y: C, z: 0 });
+    // Out along the fairways to the windmill and the volcano; either side of the pond and the moat.
+    for (const a of [225, 315]) def.boxes.push({ ...xy(at([C, C], a, 760)), z: 0 });
+    def.boxes.push({ x: 1700, y: 1900, z: 0 }, { x: 1900, y: 1700, z: 0 }, { x: 900, y: 1720, z: 0 }, { x: 1120, y: 1880, z: 0 });
+    def.boxes.push({ x: NW[0], y: NW[1], z: GREEN }, { x: NW[0] - 240, y: NW[1], z: GREEN });
+    // Up the volcano: half way round the path, and on the rim.
+    const [hx, hy] = spiral[N / 2];
+    def.boxes.push({ x: hx, y: hy, z: deckZ(hx, hy) }, { ...xy(at(NE, 315, 96)), z: TOP });
+    def.boxes.push({ x: kx - 92, y: ky + 92, z: 0 }, { x: kx + 92, y: ky - 92, z: 0 });
+    // The lily pad, and the top of the footbridge.
+    def.boxes.push({ x: 505, y: 2310, z: -6 }, { x: 690, y: 2110, z: deckZ(690, 2110) });
+
+    // ---------- spawns ----------
+    for (let k = 0; k < 8; k++) {
+      const a = 22.5 + 45 * k;
+      def.spawns.push({ ...xy(at([C, C], a, 545)), z: 0, angle: (a + 90) * deg });
+    }
+    for (const [x, y, a] of [[520, 480, 0], [860, 470, 90], [520, 900, 270], [860, 910, 180]]) def.spawns.push({ x, y, z: GREEN, angle: a * deg });
+    for (const a of [0, 90, 180, 270]) def.spawns.push({ ...xy(at(NE, a, 310)), z: 0, angle: (a + 180) * deg });
+    def.spawns.push(
+      { x: kx - 70, y: ky + 30, z: 0, angle: 0 }, { x: kx + 30, y: ky + 80, z: 0, angle: -90 * deg },
+      { x: kx - KEEP - MOAT - 110, y: ky, z: 0, angle: 180 * deg }, { x: kx, y: ky - KEEP - MOAT - 110, z: 0, angle: -90 * deg },
+    );
+    def.spawns.push(
+      { x: 820, y: 1760, z: 0, angle: 0 }, { x: 1060, y: 2110, z: 0, angle: -90 * deg },
+      { x: 330, y: 1880, z: 0, angle: -90 * deg }, { x: 600, y: 2480, z: 0, angle: 0 },
+    );
+    def.palette = {
+      lawn: { top: '#7ed36a', side: '#8a5a36', top2: '#74c95f', pattern: 'checker', cell: 220, round: 0 },
+      green: { top: '#4fcf56', side: '#f2f2f2', top2: '#43bf4b', side2: '#e5484d', pattern: 'bands', cell: 60, angle: 0.785, sidePattern: 'bands', sideCell: 18, round: 0, foot: 0.9 },
+      carpet: { top: '#3fa9f5', side: '#2b7fc2', top2: '#ffffff', pattern: 'chevrons', cell: 40, round: 0 },
+      mill: { top: '#f6efe2', side: '#f6efe2', top2: '#e8ddca', side2: '#e3d6c0', pattern: 'slabs', cell: 30, sidePattern: 'boards', sideCell: 26, round: 3, foot: 0.93, roof: true },
+      volcano: { top: '#5a4740', side: '#6e554b', side2: '#ff7a2e', sidePattern: 'ribs', sideCell: 46, round: 0, foot: 0.8 },
+      path: { top: '#f3d9a4', side: '#c9874a', top2: '#e6c88e', pattern: 'slabs', cell: 36 },
+      castle: { top: '#f7dfb0', side: '#f7dfb0', top2: '#ead0a0', side2: '#e9c58e', pattern: 'slabs', cell: 30, sidePattern: 'slabs', sideCell: 40, round: 3, foot: 0.93 },
+      turret: { top: '#f7dfb0', side: '#f7dfb0', side2: '#e9c58e', sidePattern: 'slabs', sideCell: 40 },
+      bridge: { top: '#c98c50', side: '#9c6334', top2: '#a8703e', pattern: 'planks', cell: 18 },
+      footbridge: { top: '#d79a5d', side: '#b5743d', top2: '#b97b44', pattern: 'planks', cell: 16 },
+      lilypad: { top: '#45c16a', side: '#2f9a50', top2: '#3bb05e', pattern: 'checker', cell: 60, round: 0 },
+      golfball: { top: '#ffffff', side: '#f4f6fb' },
+      gantry: { top: '#ffffff', side: '#ffffff', side2: '#e5484d', sidePattern: 'bands', sideCell: 40 },
+      kerb: { top: '#ffffff', side: '#ffffff', top2: '#e5484d' },
+      rim: ['#ffffff', '#e5484d'], hazardRim: ['#ffffff', '#1d2733'],
+      water: { shallow: '#43c6e8', deep: '#1a7fb8', line: '#e2fbff' },
+    };
+    return def;
+  }
+
+  const xy = ([x, y]) => ({ x, y });
+  const ARENAS = [theHarbour(), theSkyGardens(), theMiniGolf(), theCinderBowl(), theKeep(), theGraveyard()]; // in the lobby's order
 
   return {
     KART_R, KART_H, STEP, NAV, NAV_SLOPE, EDGE, ARENAS, makeLayeredArena, makeTerrain, groundBlocks, turn, symmetric, roadSolids, SEG,

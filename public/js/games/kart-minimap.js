@@ -488,6 +488,12 @@
         c.restore();
       }
       for (const h of map.hazards) {
+        if (h.kind === 'cup') {
+          // A golf cup: the hole, ringed white.
+          c.fillStyle = '#0b1220'; c.strokeStyle = '#ffffff'; c.lineWidth = 1.2 * k;
+          c.beginPath(); c.arc(X(h.x), Y(h.y), Math.max(2 * k, h.r * s), 0, TAU); c.fill(); c.stroke();
+          continue;
+        }
         c.fillStyle = h.kind === 'acid' ? '#84cc16' : '#ff6a1a';
         c.beginPath();
         if (h.r !== undefined) c.arc(X(h.x), Y(h.y), Math.max(1.5 * k, h.r * s), 0, TAU);

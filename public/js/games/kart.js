@@ -930,7 +930,7 @@ window.Games.kart = {
 
     const ITEM_SOUND = { rocket: 'rocket', triple: 'rocket', bomb: 'rocket', banana: 'banana', mine: 'banana', shield: 'shield', ghost: 'shield', bouncer: 'bouncer', ink: 'ink',
       snowball: 'snowThrow', sticky: 'banana', spikes: 'spikes', decoy: 'banana' };
-    const QUIET_HITS = ['mine', 'bomb', 'shock', 'lava', 'water', 'void', 'acid', 'comet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy']; // their own effect covers it
+    const QUIET_HITS = ['mine', 'bomb', 'shock', 'lava', 'water', 'void', 'acid', 'cup', 'comet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy']; // their own effect covers it
     const nameOf = (idx) => api.escapeHtml(kartsByIdx.get(idx)?.name || 'Someone');
     const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
@@ -1008,10 +1008,11 @@ window.Games.kart = {
           // arrives with the server's word on my kart).
           if (data.kx !== undefined) view3d?.buck?.(data.target, Math.hypot(data.kx, data.ky));
           const victim = kartsByIdx.get(data.target);
-          if (data.kind === 'water' || data.kind === 'acid') {
-            // Into the moat, or an open grave full of acid: a splash (green and fizzing for acid).
+          if (data.kind === 'water' || data.kind === 'acid' || data.kind === 'cup') {
+            // Into the moat, an open grave full of acid or a golf cup: a splash (green and fizzing
+            // for acid; turf and confetti, and a polite round of applause, for a hole in one).
             view3d?.fallFx(data.x, data.y, data.kind, data.z);
-            (data.kind === 'acid' ? Sfx.sizzle : Sfx.splash)?.(data.target === myIdx ? 1 : volumeAt(data.x, data.y));
+            ({ acid: Sfx.sizzle, cup: Sfx.holeOut }[data.kind] || Sfx.splash)?.(data.target === myIdx ? 1 : volumeAt(data.x, data.y));
           } else if (!QUIET_HITS.includes(data.kind) || data.kill) view3d?.explode(data.x, data.y, kind, data.kill ? 90 : 50, colorOf(victim), data.z);
           if (!['bullet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy'].includes(data.kind) || data.kill) Sfx.explosion(volumeAt(data.x, data.y) * (data.kill ? 1 : 0.4));
           if (data.kind === 'snowball') Sfx.freeze?.(data.target === myIdx ? 1 : volumeAt(data.x, data.y));

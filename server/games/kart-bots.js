@@ -627,6 +627,17 @@ function deadly(map, x, y, z, t) {
   if (!Number.isFinite(f.z) || map.hazardAt(x, y, f.z)) return true;
   return f.s && f.s.land ? Math.hypot(f.gx, f.gy) > K.Layers.NAV_SLOPE : false;
 }
+// Nothing deadly behind the kart, out to `reach`: straight back and either way it might swing as it
+// reverses with the wheels turned (so a small pool or a golf cup a little to one side counts too).
+function clearBehind(map, k, z, t, reach = 70) {
+  for (const da of [0, 0.45, -0.45]) {
+    const a = k.angle + Math.PI + da;
+    for (const d of [reach * 0.4, reach * 0.7, reach]) {
+      if (deadly(map, k.x + Math.cos(a) * d, k.y + Math.sin(a) * d, z, t)) return false;
+    }
+  }
+  return true;
+}
 // Drive (in thought) from where the kart is straight towards (x, y) for `dist`, following the
 // floor as the kart would: up ramps, and off ledges (just off one it is still up in the air, clear
 // of the side it fell from). Blocked by a wall at the height it would be at by then (`pad` wide),
@@ -766,7 +777,7 @@ function layeredDrive(game, k, ai, sk, input) {
   while (room > 4 && map.blocked(k.x, k.y, room, kz, t)) room -= 4;
   const bad = (a) => lineBlocked(map, k, k.x + Math.cos(a), k.y + Math.sin(a), probe, room, t);
   // Backing up (to turn onto a rival, or out of a corner) is only safe with floor behind.
-  const behindSafe = () => !deadly(map, k.x - Math.cos(k.angle) * 70, k.y - Math.sin(k.angle) * 70, kz, t);
+  const behindSafe = () => clearBehind(map, k, kz, t);
   if (bad(want)) {
     if (!bad(want + 0.7)) want += 0.7;
     else if (!bad(want - 0.7)) want -= 0.7;
@@ -965,7 +976,7 @@ function think(game, k, dt) {
   if (ai.reverse > 0) {
     ai.reverse -= dt;
     const d = 30 + Math.max(0, -k.speed) * 0.3;
-    if (game.layered && deadly(game.map, k.x - Math.cos(k.angle) * d, k.y - Math.sin(k.angle) * d, k.z || 0, game.time)) {
+    if (game.layered && !clearBehind(game.map, k, k.z || 0, game.time, d)) {
       ai.reverse = 0;
       Object.assign(input, { up: k.speed < -10, down: false, drift: false, left: false, right: false });
       return;
@@ -996,7 +1007,7 @@ function think(game, k, dt) {
     if (ai.stuck > 0.8) {
       ai.stuck = 0;
       Object.assign(spot, { x: k.x, y: k.y, t: game.time });
-      const behind = (d) => !game.layered || !deadly(game.map, k.x - Math.cos(k.angle) * d, k.y - Math.sin(k.angle) * d, k.z || 0, game.time);
+      const behind = (d) => !game.layered || clearBehind(game.map, k, k.z || 0, game.time, d);
       // Back out: a good way if there's floor for it, or just a little (the edge close behind).
       const back = behind(80) ? 0.6 + Math.random() * 0.4 : behind(34) ? 0.3 : 0;
       if (back) {

@@ -419,8 +419,69 @@ test('layers: CPU drivers on The Cinder Bowl collect boxes, drive the viaduct an
   assert.ok(burnt <= 3, `${burnt} karts drove into the lava by themselves`);
 }));
 
-test('layers: The Keep, The Graveyard, The Cinder Bowl, Harbour Havoc and Sky Gardens: every spawn and box stands on its floor, and each is reachable from every other', () => {
-  for (const id of ['keep', 'graveyard', 'cinder', 'harbour', 'skygardens']) checkArena(K.getMap(id, 'arena'));
+test('layers: The Keep, The Graveyard, The Cinder Bowl, Harbour Havoc, Sky Gardens and Mini Golf Mayhem: every spawn and box stands on its floor, and each is reachable from every other', () => {
+  for (const id of ['keep', 'graveyard', 'cinder', 'harbour', 'skygardens', 'minigolf']) checkArena(K.getMap(id, 'arena'));
+});
+
+test('layers: CPU drivers on Mini Golf Mayhem collect boxes, get up onto the 18th green and keep out of the cups and the pond', () => seeded(1, () => {
+  const Bots = require('../server/games/kart-bots');
+  const events = [];
+  const room = {
+    settings: { kartMode: 'arena', kartMap: 'minigolf', arenaTime: 600, kartItems: 'none', kartBots: 6, kartBotSkill: 'normal' },
+    players: new Map(), connectedPlayers: [], emit: (e, d) => events.push([e, d]), emitTo() {}, teamList: () => [], systemMessage() {},
+    buildResults: () => ({ players: [] }), finishGame() {},
+  };
+  const game = new KartBattle(room);
+  assert.strictEqual(game.map.id, 'minigolf');
+  Bots.makeBots(6, { skill: 'normal' }).forEach((b, i) => game.addKart(b, i));
+  game.items = ['rocket'];
+  game.boxes = game.map.itemBoxes.map(() => 0);
+  game.rollItem = () => null;
+  game.phase = 'racing';
+  game.raceStart = 0;
+  const C = game.map.size / 2;
+  let boxes = 0;
+  let green = 0;
+  for (let i = 0; i < 60 * 30; i++) {
+    game.time += 1 / 30;
+    const before = game.boxes.filter((b) => b > 0).length;
+    game.simulate(1 / 30);
+    boxes += Math.max(0, game.boxes.filter((b) => b > 0).length - before);
+    for (const k of game.karts.values()) if (k.dead <= 0 && k.z > 30 && Math.hypot(k.x - C, k.y - C) < 330) green += 1 / 30;
+  }
+  assert.strictEqual(game.botError, false);
+  const lost = events.filter(([e, d]) => e === 'game:kart:hit' && d.kill && d.by < 0).length;
+  assert.ok(boxes >= 20, `${boxes} boxes picked up`);
+  assert.ok(green > 3, `${green.toFixed(0)} kart-seconds up on the 18th green`);
+  assert.ok(lost <= 2, `${lost} karts holed out or drove into the pond by themselves`);
+}));
+
+test('layers: Mini Golf Mayhem: a cup is a hole you drive into (the kill goes to whoever knocked you in); the giant putter swings across the way into the windmill', () => {
+  const map = K.getMap('minigolf', 'arena');
+  const cups = map.hazards.filter((h) => h.kind === 'cup');
+  assert.strictEqual(cups.length, 3, 'the 18th green, the volcano and the castle');
+  const C = map.size / 2;
+  const green = cups.find((h) => h.x === C && h.y === C);
+  assert.strictEqual(map.hazardAt(green.x + 20, green.y, green.z), 'cup');
+  assert.strictEqual(map.hazardAt(green.x + 60, green.y, green.z), null, 'the green round it is fine');
+  // Driven at from the green's edge, a kart drops into it.
+  const kart = { x: green.x - 140, y: green.y, angle: 0, heading: 0, speed: 300, z: green.z };
+  let lost = null;
+  for (let i = 0; i < 40 && !lost; i++) {
+    K.stepKart(kart, { up: true }, 1 / 30, map, { t: i / 30 });
+    lost = kart.lost;
+  }
+  assert.strictEqual(lost, 'cup');
+  // The putter: hung over the east side of the windmill's green, swinging north and south through
+  // kart height, its gantry posts solid either side.
+  const putter = map.movers.find((m) => m.kind === 'putter');
+  const low = map.pendulumAt(putter, putter.period / 2);
+  assert.ok(low.z - map.floorAt(low.x, low.y, low.z) < 30, 'it comes down to kart height');
+  const reach = Math.max(...Array.from({ length: 40 }, (_, i) => Math.abs(map.pendulumAt(putter, (i / 40) * putter.period).y - putter.y)));
+  assert.ok(reach > 150, `it sweeps ${Math.round(reach)} either way`);
+  const posts = map.solids.filter((s) => s.kind === 'gantry');
+  assert.strictEqual(posts.length, 2);
+  for (const p of posts) assert.ok(Math.abs(p.y - putter.y) > reach + 40, 'the posts stand clear of its swing');
 });
 
 test('layers: CPU drivers on Harbour Havoc work the yard, climb the pyramid, use the pads and mostly stay dry', () => seeded(1, () => {

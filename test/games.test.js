@@ -1702,10 +1702,10 @@ test('race maps are built on first use, not when kart-core loads', () => {
   const r = JSON.parse(out);
   assert.strictEqual(r.before, 0, 'nothing built on load');
   assert.strictEqual(r.after, 0, 'the catalogue and map info build nothing');
-  assert.strictEqual(r.n, 12);
+  assert.strictEqual(r.n, 13);
   assert.deepStrictEqual(r.info, { id: 'coast', name: 'Coral Coast', emoji: r.info.emoji, type: 'race', blurb: r.info.blurb });
   assert.deepStrictEqual(r.built, ['coast'], 'only the map asked for');
-  assert.ok(r.same && r.keys === 12, 'MAPS still lists every map and caches what it built');
+  assert.ok(r.same && r.keys === 13, 'MAPS still lists every map and caches what it built');
 });
 
 test('CPU drivers lap every race track, forward and reversed', async () => {
