@@ -12,6 +12,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { MOBILE, THEMES, tex, part, buildArena, loadMoonlit } from './kart3d/world.js';
 import { buildRace } from './kart3d/track.js';
 import { buildLayered } from './kart3d/arena3d.js';
+import { SEE } from './kart3d/bright3d.js';
 import { ItemFX, shieldMaterial, shieldGeometry, ghostMaterial, starVariant } from './kart3d/items3d.js';
 import { buildGoKart, setNight, kartMaterials, EXHAUSTS } from './kart3d/gokart.js';
 import { Juice, ease } from './kart3d/juice.js';
@@ -352,6 +353,8 @@ export class Kart3D {
     this.map = K.getMap(opts.mapId, opts.type, { reverse: !!opts.reverse });
     this.arena = this.map.type === 'arena';
     this.layered = !!this.map.layered; // floors at several heights: karts and effects come with their own height
+    this.bright = this.layered && this.map.look === 'bright'; // clean colour blocks (kart3d/bright3d.js)
+    SEE.on.value = 0;
     this.mapTime = 0; // the game clock the moving obstacles run on
     this.theme = THEMES[this.map.theme] || THEMES.meadow;
     const theme = this.theme;
@@ -1338,11 +1341,15 @@ export class Kart3D {
       // In the arena, pull the camera in when a wall or obstacle is behind the kart, and lift it
       // so it looks over the top instead of into the driver's head.
       let dist = back;
+      // Bright arenas: a block low enough for the camera to stay above (a dais, a planter, a kerb)
+      // doesn't pull it in: you see your kart through it instead (bright3d's see-through hole).
+      const overTop = (focus.z || 0) + mix('up') - 24;
+      const inWay = (x, y, z) => this.map.inside(x, y, z) && !(this.bright && this.map.heightAt(x, y) < overTop);
       if (this.layered) {
         // Layered arenas: nothing solid between the kart and the camera, walls taller than it included.
         const kz = (focus.z || 0) + 30;
         for (let d = 24; d <= back; d += 12) {
-          if (this.map.inside(focus.x - ch * d, focus.y - sh * d, kz + (mix('up') - 30) * (d / back))) { dist = Math.max(40, d - 24); break; }
+          if (inWay(focus.x - ch * d, focus.y - sh * d, kz + (mix('up') - 30) * (d / back))) { dist = Math.max(40, d - 24); break; }
         }
       } else if (this.arena) {
         for (let d = 20; d <= back; d += 10) {
@@ -1397,7 +1404,7 @@ export class Kart3D {
           const x = ax + (this.camPos.x - ax) * f;
           const y = ay + (this.camPos.y - ay) * f;
           const z = az + (this.camPos.z - az) * f;
-          if (!this.map.inside(x, z, y)) continue;
+          if (!inWay(x, z, y)) continue;
           const g = Math.max(0.15, f - 0.12);
           this.camPos.set(ax + (this.camPos.x - ax) * g, ay + (this.camPos.y - ay) * g, az + (this.camPos.z - az) * g);
           break;
@@ -1417,10 +1424,16 @@ export class Kart3D {
       this.camera.position.copy(this.camPos);
       this.camera.lookAt(this.camLook);
       this.juice.applyShake(this.camera, dt);
+      if (this.bright) {
+        SEE.cam.value.copy(this.camera.position);
+        SEE.kart.value.set(focus.x, fy + 16, focus.y);
+        SEE.on.value = 1;
+      }
       // The shadow camera follows the player.
       this.sun.position.set(focus.x + this.sunOffset[0], fy + this.sunOffset[1], focus.y + this.sunOffset[2]);
       this.sun.target.position.set(focus.x, fy, focus.y);
     } else {
+      SEE.on.value = 0;
       const [cx, cz] = this.map.center;
       if (this.topY === undefined) this.topY = this.layered ? Math.max(...this.map.solids.map((s) => s.z1)) : this.arena ? 0 : Math.max(...this.map.heights);
       this.camera.position.set(cx + Math.cos(t * 0.1) * 2600, this.topY + 1700, cz + Math.sin(t * 0.1) * 2600);
@@ -1449,6 +1462,44 @@ export class Kart3D {
       kart.fade = focus?.snap ? +clear : Math.max(0, Math.min(1, kart.fade + (clear ? dt : -dt) / 0.15));
       if (kart.fade <= 0) kart.group.visible = false;
       applyLook(kart);
+    }
+  }
+
+  // A still of a map from the air, the way the lobby cards show every map. The weekly arena is new
+  // every week, so its card's picture is drawn here, in the page, rather than shipped as a file.
+  // Returns a JPEG data URL.
+  static preview(mapId, type, { width = 640, height = 400 } = {}) {
+    const box = document.createElement('div');
+    box.style.cssText = `position:fixed;left:${-width - 100}px;top:0;width:${width}px;height:${height}px;pointer-events:none`;
+    document.body.appendChild(box);
+    let r = null;
+    try {
+      r = new Kart3D(box, { mapId, type });
+      const map = r.map;
+      const [cx, cz] = map.center;
+      const size = map.type === 'arena' ? map.size * 1.25 : Math.max(map.bounds.maxX - map.bounds.minX, map.bounds.maxY - map.bounds.minY);
+      const fog = r.scene.fog;
+      if (fog.isFogExp2) fog.density /= 2.3;
+      else { fog.near *= 2.2; fog.far *= 2.4; }
+      r.renderer.toneMappingExposure += 0.15;
+      r.camera.fov = 50;
+      r.updateCamera = function () {
+        const d = size * 0.32 * 1.6;
+        this.camera.position.set(cx + Math.cos(2.3) * d, size * 0.34 * 1.6, cz + Math.sin(2.3) * d);
+        this.camera.lookAt(cx, 0, cz);
+        this.camera.updateProjectionMatrix();
+        this.sun.position.set(cx + 900, 1400, cz + 500);
+        this.sun.target.position.set(cx, 0, cz);
+        const sc = this.sun.shadow.camera;
+        Object.assign(sc, { left: -size, right: size, top: size, bottom: -size, far: 6000 });
+        sc.updateProjectionMatrix();
+        this.sky.position.copy(this.camera.position);
+      };
+      r.update({ karts: [], shots: [], mines: [], bananas: [], boxes: null, focus: null }, 0.016, 1000);
+      return r.renderer.domElement.toDataURL('image/jpeg', 0.85);
+    } finally {
+      r?.dispose();
+      box.remove();
     }
   }
 

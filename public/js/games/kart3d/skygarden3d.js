@@ -8,7 +8,7 @@
 // Physics (x, y, z) is three (x, z, y).
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { brightMaterial, flatGeo, outward, box, post, ball, strut, merged, darker, glow } from './bright3d.js';
+import { brightMaterial, flatGeo, outward, box, post, ball, strut, merged, darker, glow, nearFade } from './bright3d.js';
 import { tex, rng } from './world.js';
 
 const TAU = Math.PI * 2;
@@ -295,7 +295,7 @@ function sprinkler(scene, map, m, ctx) {
   parts.push(ball(m.x, m.y, z + 84, 6, GOLD));
   scene.add(piece(parts));
   // Water: the basin's surface, sheets falling off both bowls, the jet (all scroll in the shader).
-  const water = new THREE.MeshBasicMaterial({ color: '#7fe0ff', transparent: true, opacity: 0.72, depthWrite: false });
+  const water = nearFade(new THREE.MeshBasicMaterial({ color: '#7fe0ff', transparent: true, opacity: 0.72, depthWrite: false }));
   const surface = new THREE.Mesh(new THREE.CircleGeometry(45, 32).rotateX(-Math.PI / 2), water);
   surface.position.set(m.x, z + 15, m.y);
   const falls = [];
@@ -339,7 +339,7 @@ function sprinkler(scene, map, m, ctx) {
       }
     }
   }
-  spin.add(new THREE.Mesh(mergeGeometries(drops), new THREE.MeshBasicMaterial({ color: '#d9f6ff', transparent: true, opacity: 0.75, depthWrite: false })));
+  spin.add(new THREE.Mesh(mergeGeometries(drops), nearFade(new THREE.MeshBasicMaterial({ color: '#d9f6ff', transparent: true, opacity: 0.75, depthWrite: false }))));
   scene.add(spin);
   return {
     update(t) {

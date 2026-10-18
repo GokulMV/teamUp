@@ -733,7 +733,8 @@ function boxMaterial(fog) {
         float second = max(min(q.x, q.y), max(min(q.y, q.z), min(q.x, q.z)));
         float edge = smoothstep(0.78, 0.96, second);
         vec3 col = rainbow * (0.45 + 1.1 * f) + vec3(1.0) * (spec * 1.6 + edge * 0.85 + uFlash);
-        float a = clamp(0.42 + f * 0.45 + edge * 0.5 + spec, 0.0, 1.0) * uAlpha;
+        // (Right up against the lens a box would fill the screen: it fades out instead.)
+        float a = clamp(0.42 + f * 0.45 + edge * 0.5 + spec, 0.0, 1.0) * uAlpha * smoothstep(40.0, 95.0, length(vW - cameraPosition));
         float fogF = smoothstep(uFogNear, uFogFar, length(vW - cameraPosition));
         gl_FragColor = vec4(mix(col, uFogColor, fogF), a);
       }`,
@@ -1523,7 +1524,11 @@ export class ItemFX {
         b.mat.uniforms.uFlash.value = 0;
       }
       b.g.visible = b.state !== 'off';
-      b.ink.visible = b.state !== 'pop'; // a box bursting into shards has no outline
+      // A box bursting into shards has no outline; nor does one fading out by the camera (its "?" goes too).
+      const cam = this.r.camera.position;
+      const near = (cam.x - b.x) ** 2 + (cam.z - b.z) ** 2 + (cam.y - b.g.position.y) ** 2 < 75 * 75;
+      b.ink.visible = b.state !== 'pop' && !near;
+      b.g.children[1].visible = !near;
       if (!b.g.visible) return;
       b.g.scale.setScalar(Math.max(0.01, s));
       b.mesh.rotation.set(t * 0.9 + b.phase, t * 1.3 + b.phase, 0);

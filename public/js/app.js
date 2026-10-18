@@ -475,6 +475,49 @@
     return `<img class="map-inset" src="${url}" alt="">`;
   }
 
+  // The weekly arena's card picture: the 3D renderer draws it in this page (Kart3D.preview) the first
+  // time the card shows, once the page is idle, and it's kept for the week (the arena doesn't change
+  // until the next one). Until then the card shows the arena's colours and its map.
+  const weeklyArt = { id: null, url: null, busy: false };
+  const blobUrl = (dataUrl) => {
+    const [head, b64] = dataUrl.split(',');
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: head.slice(5, head.indexOf(';')) }));
+  };
+  try {
+    const saved = JSON.parse(localStorage.getItem('teamup-weekly-art') || 'null');
+    if (saved?.id && saved?.url) Object.assign(weeklyArt, { id: saved.id, url: blobUrl(saved.url) });
+  } catch { /* storage blocked, or an old entry */ }
+  function weeklyArtFor(m) {
+    if (!m.weekly?.mapId) return null;
+    const id = m.weekly.mapId;
+    if (weeklyArt.id === id) return weeklyArt.url;
+    if (weeklyArt.busy) return null;
+    weeklyArt.busy = true;
+    const draw = () => {
+      try {
+        const big = !matchMedia('(pointer: coarse)').matches;
+        const data = window.Kart3D.preview(id, 'arena', { width: big ? 960 : 640, height: big ? 600 : 400 });
+        if (weeklyArt.url) URL.revokeObjectURL(weeklyArt.url);
+        Object.assign(weeklyArt, { id, url: blobUrl(data), busy: false });
+        try { localStorage.setItem('teamup-weekly-art', JSON.stringify({ id, url: data })); } catch { /* full or blocked: drawn again next time */ }
+        document.querySelectorAll('[data-weekly-art]').forEach((el) => {
+          if (el.dataset.weeklyArt !== id) return;
+          el.style.setProperty('--art', `url('${weeklyArt.url}')`);
+          el.classList.add('has-art');
+        });
+      } catch (err) {
+        console.error(err); // (no WebGL: the card keeps its colours and map)
+      }
+    };
+    const idle = () => (window.requestIdleCallback ? requestIdleCallback(draw, { timeout: 3000 }) : setTimeout(draw, 400));
+    if (window.Kart3D) idle();
+    else window.addEventListener('kart3d-ready', idle, { once: true });
+    return null;
+  }
+
   // "3d 4h" until the next weekly arena.
   function untilNext(ms) {
     const h = Math.max(0, Math.floor((ms - Date.now()) / 3600000));
@@ -526,8 +569,15 @@
     const cur = maps.find((m) => m.id === v) || maps[0];
     if (!cur) return '';
     const wk = cur.weekly;
+    // The weekly arena's card: its picture once drawn (see weeklyArtFor), its colours until then.
+    const artOf = (m) => {
+      if (!m.weekly) return { cls: '', attrs: `style="--art:url('/img/maps/${m.id}.jpg')"` };
+      const url = weeklyArtFor(m);
+      return { cls: `weekly wk-${m.weekly.theme}${url ? ' has-art' : ''}`, attrs: `data-weekly-art="${escapeHtml(m.weekly.mapId || '')}"${url ? ` style="--art:url('${url}')"` : ''}` };
+    };
+    const curArt = artOf(cur);
     return `<div class="map-overview" style="--art:url('/img/maps/${cur.id}.jpg')">
-        <div class="mo-art ${wk ? `weekly wk-${wk.theme}` : ''}">${mapInset(cur)}${wk ? `<span class="mo-ribbon">New this week · ${escapeHtml(wk.week.slice(5))}</span>` : ''}</div>
+        <div class="mo-art ${curArt.cls}" ${wk ? curArt.attrs : ''}>${mapInset(cur)}${wk ? `<span class="mo-ribbon">New this week · ${escapeHtml(wk.week.slice(5))}</span>` : ''}</div>
         <div class="mo-info">
           <span class="mo-kicker">${wk ? `Weekly arena · next one in ${untilNext(wk.next)}` : cur.type === 'race' ? 'Race track' : 'Battle arena'}</span>
           <h4>${cur.emoji} ${escapeHtml(cur.name)}</h4>
@@ -535,8 +585,11 @@
           <div class="mo-chips">${mapStats(cur).map((t) => `<span>${t}</span>`).join('')}</div>
         </div>
       </div>
-      <div class="map-thumbs">${maps.map((m) => `<button class="map-thumb ${m.id === cur.id ? 'on' : ''} ${m.weekly ? `weekly wk-${m.weekly.theme}` : ''}" data-key="kartMap" data-value="${m.id}" ${host ? '' : 'disabled'} style="--art:url('/img/maps/${m.id}.jpg')" title="${escapeHtml(m.name)}">
-        ${m.weekly ? '<span class="mt-tag">Weekly</span>' : ''}<span class="mt-name">${m.emoji} ${escapeHtml(m.name)}</span></button>`).join('')}</div>`;
+      <div class="map-thumbs">${maps.map((m) => {
+    const art = artOf(m);
+    return `<button class="map-thumb ${m.id === cur.id ? 'on' : ''} ${art.cls}" data-key="kartMap" data-value="${m.id}" ${host ? '' : 'disabled'} ${art.attrs} title="${escapeHtml(m.name)}">
+        ${m.weekly ? '<span class="mt-tag">Weekly</span>' : ''}<span class="mt-name">${m.emoji} ${escapeHtml(m.name)}</span></button>`;
+  }).join('')}</div>`;
   }
 
   function controlInner(def, s, host) {

@@ -24,6 +24,25 @@ export const PAT = { none: 0, checker: 1, slabs: 2, planks: 3, grate: 4, hazard:
 // space from three attributes per vertex: aPat (pattern id, cell size, angle, shade) and aCol2 (the
 // pattern's second colour). Shade darkens a solid's sides towards its foot (soft contact shadow).
 let brightMat = null;
+// See-through: whatever stands between the camera and the kart it follows gets a soft hole about a
+// kart wide (only above that kart's own floor, so the ground round it stays), so a dais or a
+// planter behind you never hides your kart. kart3d.js moves it every frame; off without a kart.
+export const SEE = { cam: { value: new THREE.Vector3() }, kart: { value: new THREE.Vector3() }, on: { value: 0 } };
+// A see-through material (water, spray) fades out close to the camera instead of washing the
+// screen white as the camera passes through it.
+export function nearFade(mat, near = 40, far = 110) {
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vNearW;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvNearW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vNearW;')
+      .replace('#include <dithering_fragment>', `#include <dithering_fragment>
+        gl_FragColor.a *= smoothstep(${near.toFixed(1)}, ${far.toFixed(1)}, distance(vNearW, cameraPosition));`);
+  };
+  mat.customProgramCacheKey = () => `near-fade-${near}-${far}`;
+  return mat;
+}
 export function brightMaterial() {
   if (brightMat) return brightMat;
   brightMat = makeMaterial();
@@ -33,6 +52,9 @@ export function brightMaterial() {
 export function makeMaterial() {
   const m = new THREE.MeshToonMaterial({ gradientMap: toonGradient(), vertexColors: true });
   m.onBeforeCompile = (sh) => {
+    sh.uniforms.uSeeCam = SEE.cam;
+    sh.uniforms.uSeeKart = SEE.kart;
+    sh.uniforms.uSeeOn = SEE.on;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
         attribute vec4 aPat;
@@ -56,6 +78,9 @@ export function makeMaterial() {
         varying vec2 vLoc;
         varying vec3 vWPos;
         varying vec3 vWNor;
+        uniform vec3 uSeeCam;
+        uniform vec3 uSeeKart;
+        uniform float uSeeOn;
         // A line of half-width hw (in cells) on every whole number of x, antialiased.
         float lineAt(float x, float hw) {
           float d = abs(fract(x + 0.5) - 0.5);
@@ -120,10 +145,29 @@ export function makeMaterial() {
           }
           return 0.0;
         }`)
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+        if (uSeeOn > 0.5) {
+          // The hole: the cone from the camera to a ball round the kart, so exactly what covers the
+          // kart on screen (and a little round it) goes, with a dithered rim (a fixed per-pixel
+          // pattern, so it doesn't crawl).
+          vec3 toK = uSeeKart - uSeeCam;
+          float dk = max(length(toK), 1.0);
+          vec3 dir = toK / dk;
+          vec3 toP = vWPos - uSeeCam;
+          float along = dot(toP, dir);
+          float n = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+          if (along > 0.0 && along < dk - 14.0 && vWPos.y > uSeeKart.y - 6.0) {
+            float r = 46.0 * along / dk;
+            float d = length(toP - dir * along);
+            if (d < r && n > smoothstep(r * 0.55, r, d)) discard;
+          }
+          // Anything right up against the lens (a post, a sweeping arm) dissolves too.
+          if (n > smoothstep(18.0, 46.0, length(toP))) discard;
+        }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         diffuseColor.rgb = mix(diffuseColor.rgb, vCol2, patternMask(vPat)) * vPat.w;`);
   };
-  m.customProgramCacheKey = () => 'bright-v3';
+  m.customProgramCacheKey = () => 'bright-v4';
   return m;
 }
 
