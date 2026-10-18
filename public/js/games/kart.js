@@ -91,9 +91,24 @@ window.Games.kart = {
     const clock = { hist: [], delay: 110, drawT: null, at: 0 };
     let latest = null;
     let myIdx = -1;
+    // My own kart runs here first, in the server's 30 Hz steps, so it answers the keys at once.
+    // Every input says which of my steps it starts at; the server uses it at the matching tick
+    // (see onInput in server/games/kart.js) and sends my kart back in full after each of my steps,
+    // and this screen replays its newer inputs from there. So the two agree all the time, and
+    // when something only the server knows about moves my kart (a bump, a hit), it glides over.
     let local = null; // predicted state of my kart
-    let predictAcc = 0; // time not yet simulated (less than one STEP)
+    // My steps count real time from here, 30 a second, whatever my kart is doing (and however
+    // late the frames are): the server times my inputs by them.
+    const clock0 = performance.now();
+    const stepClock = (t) => (t - clock0) / 1000 / STEP;
+    let stepNo = 0; // the last step run
+    let stepAcc = 0; // how far into the next step this frame is (seconds, under one STEP)
     let predPrev = null; // my kart one STEP ago, to draw it smoothly between steps
+    const inputLog = [{ c: 0, input: { up: false, down: false, left: false, right: false, drift: false } }]; // input changes: { c: the step it starts at, input }
+    let ack = null; // the server's latest word on my kart: { L: my step, t: game time, s: kart, f }
+    let pendingAck = null;
+    const fix = { x: 0, y: 0, a: 0, z: 0 }; // corrections still gliding away
+    const netStats = { acks: 0, replays: 0, snaps: 0, err: 0, maxErr: 0 };
     let rtt = 80;
     let lastFrame = performance.now();
     let raf = 0;
@@ -137,7 +152,7 @@ window.Games.kart = {
     const onReady = () => createRenderer();
     window.addEventListener('kart3d-ready', onReady);
     // For automated checks: what this screen is showing.
-    window.__kartStats = { get view3d() { return view3d; }, get local() { return local; } };
+    window.__kartStats = { get view3d() { return view3d; }, get local() { return local; }, net: netStats, fix, get stepNo() { return stepNo; } };
 
     // ---------- Input ----------
     const keyMap = {
@@ -145,7 +160,26 @@ window.Games.kart = {
       ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
       ShiftLeft: 'drift', ShiftRight: 'drift', KeyX: 'drift', ControlLeft: 'drift',
     };
-    function sendInput() { api.socket.emit('game:input', input); }
+    // c: the step the input starts at; n: the step it is now (the server times its inputs by it).
+    function sendInput(change = true) {
+      const last = inputLog[inputLog.length - 1];
+      const n = Math.floor(stepClock(performance.now()));
+      if (change && Object.keys(input).some((k) => input[k] !== last.input[k])) {
+        const c = Math.max(n, stepNo) + 1;
+        if (last.c === c) last.input = { ...input };
+        else inputLog.push({ c, input: { ...input } });
+        while (inputLog.length > 2 && inputLog[1].c <= stepNo - 150) inputLog.shift();
+      }
+      const cur = inputLog[inputLog.length - 1];
+      api.socket.emit('game:input', { ...cur.input, c: cur.c, n });
+    }
+    // The input in force at step j.
+    function inputAt(j) {
+      for (let i = inputLog.length - 1; i > 0; i--) if (inputLog[i].c <= j) return inputLog[i].input;
+      return inputLog[0].input;
+    }
+    // The game time the server runs my step j at (moving obstacles are where they'll be then).
+    const tAt = (j) => ack.t + (j - ack.L) * STEP;
     function useItem() { if (!local?.falling) api.socket.emit('game:use'); }
     // Bombs are aimed: hold fire and the landing ring sweeps out to far, back to near and out again;
     // let go to throw. A quick tap throws it at the middle distance, like any other item.
@@ -247,7 +281,7 @@ window.Games.kart = {
         q('[data-rotate]').onclick = () => q('[data-rotate]').classList.add('hidden');
       }
     } catch { /* storage blocked: skip the tip */ }
-    const resend = setInterval(sendInput, 1000);
+    const resend = setInterval(() => sendInput(false), 500);
     const pinger = setInterval(() => {
       const t0 = performance.now();
       api.emit('game:ping').then(() => { rtt = rtt * 0.7 + (performance.now() - t0) * 0.3; });
@@ -261,7 +295,10 @@ window.Games.kart = {
       if ((!known || known.type !== data.map) && window.TeamUpStale?.()) return;
       const sameRound = info && info.round === data.round && info.mapId === data.mapId && !!info.reverse === !!data.reverse && info.items === data.items && info.karts.length === data.karts.length;
       // A new round's clock starts again at 0: forget the last one's snapshots and timing.
-      if (!sameRound) { snapshots.length = 0; latest = null; clockOffset = null; Object.assign(clock, { hist: [], delay: 110, drawT: null }); }
+      if (!sameRound) {
+        snapshots.length = 0; latest = null; clockOffset = null; Object.assign(clock, { hist: [], delay: 110, drawT: null });
+        ack = null; pendingAck = null;
+      }
       info = data;
       map = K.getMap(data.mapId, data.map, { reverse: !!data.reverse });
       kartsByIdx = new Map(data.karts.map((k) => [k.idx, k]));
@@ -282,6 +319,8 @@ window.Games.kart = {
       stage.classList.toggle('mode-race', map.type !== 'arena');
       stage.classList.toggle('no-items', data.items === false);
       hud.setRound(data, map, myIdx);
+      Object.assign(fix, { x: 0, y: 0, a: 0, z: 0 });
+      if (myIdx >= 0) sendInput(false);
     }
 
     function onState(s) {
@@ -298,7 +337,6 @@ window.Games.kart = {
       snapshots.push({ t: s.t, data: s });
       while (snapshots.length > 30) snapshots.shift();
       latest = s;
-      reconcile(s);
       // A fresh roulette shows as the time left going back up. Checked per snapshot, not per frame,
       // so a slow frame rate can't miss a short roulette for the same item as before.
       const row = s.k.find((r) => r[0] === myIdx);
@@ -310,53 +348,57 @@ window.Games.kart = {
       reserve.cs = cs2;
     }
 
-    function reconcile(s) {
-      const row = s.k.find((r) => r[0] === myIdx);
-      if (!row) return;
-      const [, x, y, a1000, speed, , , , , flags, , , , air = 0, fx = 0] = row;
-      const angle = a1000 / 1000;
-      // Layered arenas send the kart's height (20); elsewhere the physics finds it from the ground.
-      const z = map?.layered ? row[20] : null;
-      if (!local || flags & F.dead) {
-        local = { x, y, angle, heading: angle, speed, boost: 0, spin: 0, trackIndex: null, dead: !!(flags & F.dead), air: 0, z };
-        return;
+    // The server's word on my kart (the newest one is used once per frame, see frame()): its kart
+    // after my step a.L. `upTo`: the step this frame runs to; `skipped`: steps went unrun.
+    function reconcile(a, upTo, skipped) {
+      ack = a;
+      netStats.acks++;
+      // Frames behind my clock (a slow one): the server's kart is where my steps carry on from.
+      if (a.L > stepNo) {
+        if (a.L <= upTo) stepNo = a.L;
+        skipped = true;
       }
-      if (local.dead) { local.dead = false; Object.assign(local, { x, y, angle, heading: angle, speed, air: 0, z, vz: 0, gz: null, kx: 0, ky: 0 }); snapCamera = true; return; }
-      // Falls into water/lava/gaps are the server's call: freeze on its position until we are fished out.
-      if (fx & 1) { Object.assign(local, { x, y, angle, heading: angle, speed: 0, falling: true, air: 0, z: null, drift: 0 }); return; }
-      if (local.falling) {
-        Object.assign(local, { x, y, angle, heading: angle, speed, falling: false, air, z: null, vz: 0, trackIndex: null });
-        snapCamera = true;
-        return;
-      }
-      // Server state is ~half an RTT old; project it forward before comparing.
-      const lead = Math.min(0.25, rtt / 2000);
-      const sx = x + Math.cos(angle) * speed * lead;
-      const sy = y + Math.sin(angle) * speed * lead;
-      const ex = sx - local.x;
-      const ey = sy - local.y;
-      const err = Math.hypot(ex, ey);
-      const spinning = flags & F.spin;
-      if (spinning) local.spin = Math.max(local.spin, 0.15);
-      if (flags & F.boost) local.boost = Math.max(local.boost, 0.15);
-      local.flags = flags; // star / shrink change the top speed in prediction too
-      // Layered arenas: on a different floor from the server (both on the ground), it's a real miss.
-      const level = map?.layered && Math.abs((local.z ?? z) - z) > 45 && !(local.air > 0) && !air;
-      if (err > 140 || level || spinning || s.phase !== 'racing') {
-        Object.assign(local, { x: sx, y: sy, angle, heading: angle, speed });
-        if (err > 140 || level || (map?.layered && s.phase !== 'racing')) Object.assign(local, { air, z, vz: 0, gz: null, trackIndex: null });
-        predPrev = null;
-      } else {
-        let da = angle - local.angle;
-        da = Math.atan2(Math.sin(da), Math.cos(da));
-        // Nudge the previous step too, so the correction doesn't read as extra speed.
-        for (const st of predPrev ? [local, predPrev] : [local]) {
-          st.x += ex * 0.2;
-          st.y += ey * 0.2;
-          st.angle += da * 0.2;
+      const server = K.unpackKart(a.s);
+      if (a.f & 2) { local = Object.assign(server, { dead: true }); predPrev = null; return; }
+      // Falls into water/lava/gaps are the server's call: hold on its kart until it's fished out.
+      if (a.f & 4) { local = Object.assign(server, { falling: true, speed: 0 }); predPrev = null; return; }
+      const was = local;
+      predPrev = null;
+      // Replay my inputs since that step on top of it, from the start of the race on (not after a
+      // long stall: the server's kart as it is).
+      if (!(a.f & 8) && a.L <= stepNo && stepNo - a.L <= 90) {
+        netStats.replays++;
+        for (let j = Math.max(a.L + 1, a.g); j <= stepNo; j++) {
+          if (j === stepNo) predPrev = { x: server.x, y: server.y, angle: server.angle, air: server.air || 0, z: server.z };
+          K.stepNet(server, inputAt(j), STEP, map, { speed: info.speedMul || 1, noFall: true, t: tAt(j) });
         }
-        local.speed += (speed - local.speed) * 0.2;
       }
+      server.padded = 0; server.bumper = 0; server.whacked = 0; // their sounds played when they happened
+      local = server;
+      if (!was || was.dead || was.falling || skipped) {
+        if (was && !skipped) snapCamera = true; // back on the road
+        Object.assign(fix, { x: 0, y: 0, a: 0, z: 0 });
+        return;
+      }
+      // Glide over the difference from what this screen showed (a jump across the map: no glide).
+      let da = was.angle - local.angle;
+      da = Math.atan2(Math.sin(da), Math.cos(da));
+      const dx = was.x - local.x;
+      const dy = was.y - local.y;
+      const err = Math.hypot(dx, dy);
+      // (For automated checks: every correction, when a probe asks for them.)
+      window.__kartNetLog?.push([a.L, stepNo, Math.round(dx * 10) / 10, Math.round(dy * 10) / 10, Math.round(da * 1000) / 1000, Math.round(performance.now())]);
+      netStats.err += err;
+      netStats.maxErr = Math.max(netStats.maxErr, err);
+      if (err > 160 || Math.abs(da) > 1.2) {
+        netStats.snaps++;
+        Object.assign(fix, { x: 0, y: 0, a: 0, z: 0 });
+        return;
+      }
+      fix.x += dx;
+      fix.y += dy;
+      fix.a += da;
+      if (Number.isFinite(was.z) && Number.isFinite(local.z)) fix.z += was.z - local.z;
     }
 
     // Interpolated positions for rendering.
@@ -746,44 +788,48 @@ window.Games.kart = {
       if (chatOpen && !chatWasOpen) release(); // the chat sheet covers the controls
       chatWasOpen = chatOpen;
 
-      // Predict my kart locally so steering feels instant, in fixed server-sized steps
-      // (with the same item speed factors as the server).
+      // Steps to run up to now (back from a hidden tab: only the last second's, the server's word on
+      // my kart fills the gap).
+      const clockNow = stepClock(now);
+      const target = Math.max(stepNo, Math.floor(clockNow));
+      stepAcc = Math.min(1, clockNow - target) * STEP;
+      const skip = target - stepNo > 30;
+      if (skip) stepNo = target - 30;
+      if (pendingAck && map) { reconcile(pendingAck, target, skip); pendingAck = null; }
+      const steps = target - stepNo;
       const myRow = latest?.k.find((r) => r[0] === myIdx);
-      // The game clock the moving obstacles run on: the server's, plus the half round trip my
-      // predicted kart is ahead of it (so they line up with my kart; everyone else is a little behind).
-      const mapTime = clockOffset === null ? 0 : (now - clockOffset + rtt / 2) / 1000;
+      // The game clock the moving obstacles run on: the one my steps run at (so they line up with my
+      // kart; everyone else is drawn a little behind). Spectators: the server's.
+      const mapTime = ack && local ? tAt(stepNo) + stepAcc : clockOffset === null ? 0 : (now - clockOffset + rtt / 2) / 1000;
       if (map?.layered && local && !local.dead && latest?.phase === 'racing') warnBridges(mapTime);
-      if (local && !local.dead && !local.falling && latest?.phase === 'racing') {
-        // Real time, not the capped frame time: on a slow phone (under 20 frames a second) my kart
-        // would otherwise drive slower than the server's and keep getting dragged forward.
-        predictAcc = Math.min(predictAcc + Math.min(elapsed, 0.25), 0.25);
-        let stepT = mapTime - predictAcc;
-        while (predictAcc >= STEP) {
-          predictAcc -= STEP;
-          stepT += STEP;
-          predPrev = { x: local.x, y: local.y, angle: local.angle, air: local.air || 0, z: local.z };
-          const fl = local.flags || 0;
-          K.stepKart(local, input, STEP, map, { speed: (info.speedMul || 1) * K.itemSpeed(fl & F.star, fl & F.shrunk), noFall: true, frozen: !!(fl & F.frozen), t: stepT });
-          // Layered arenas: my own jump pads and bumpers sound right away (the server sends the rest).
-          if (local.padded) { local.padded = 0; Sfx.pad?.(1); }
-          if (local.bumper) { local.bumper = 0; Sfx.boing?.(1); }
-          if (local.whacked) { local.whacked = 0; Sfx.bump?.(1); }
-          // Hops, tricks and landings feel instant for your own kart.
-          if (local.hopping && !prev.hopping) Sfx.hop?.();
-          prev.hopping = !!local.hopping;
-          if (local.trick > 0 && !prev.trick) Sfx.trick?.();
-          prev.trick = local.trick > 0;
-          if (prev.air > 12 && !(local.air > 0)) {
-            Sfx.land?.(Math.min(1, prev.air / 90));
-            if (local.boost > 0 && prev.trickBoost) hud.callout('TRICK BOOST!', { kind: 'small gold', hold: 800 });
-          }
-          prev.trickBoost = !!local.tricked;
-          prev.air = local.air || 0;
+      // Predict my kart: the same steps as the server, with the same item speed and ice, from the
+      // very step the race starts at.
+      const predicting = local && !local.dead && !local.falling && ack && !(ack.f & 8);
+      for (let i = 0; i < steps; i++) {
+        stepNo++;
+        if (!predicting || stepNo < ack.g) continue;
+        predPrev = { x: local.x, y: local.y, angle: local.angle, air: local.air || 0, z: local.z };
+        K.stepNet(local, inputAt(stepNo), STEP, map, { speed: info.speedMul || 1, noFall: true, t: tAt(stepNo) });
+        // Layered arenas: my own jump pads and bumpers sound right away (the server sends the rest).
+        if (local.padded) { local.padded = 0; Sfx.pad?.(1); }
+        if (local.bumper) { local.bumper = 0; Sfx.boing?.(1); }
+        if (local.whacked) { local.whacked = 0; Sfx.bump?.(1); }
+        // Hops, tricks and landings feel instant for your own kart.
+        if (local.hopping && !prev.hopping) Sfx.hop?.();
+        prev.hopping = !!local.hopping;
+        if (local.trick > 0 && !prev.trick) Sfx.trick?.();
+        prev.trick = local.trick > 0;
+        if (prev.air > 12 && !(local.air > 0)) {
+          Sfx.land?.(Math.min(1, prev.air / 90));
+          if (local.boost > 0 && prev.trickBoost) hud.callout('TRICK BOOST!', { kind: 'small gold', hold: 800 });
         }
-      } else {
-        predictAcc = 0;
-        predPrev = null;
+        prev.trickBoost = !!local.tricked;
+        prev.air = local.air || 0;
       }
+      if (!predicting) predPrev = null;
+      // Corrections glide away (most of one in a tenth of a second).
+      const keep = Math.exp(-dt * 12);
+      fix.x *= keep; fix.y *= keep; fix.a *= keep; fix.z *= keep;
       if (local && myRow && latest?.phase === 'racing' && !(myRow[9] & F.dead)) {
         Sfx.engine(Math.abs(local.speed) / K.PHYS.maxSpeed, !!(myRow[9] & (F.boost | F.star)), !!(myRow[9] & F.drift), local.falling ? 0 : local.surface);
       } else {
@@ -797,18 +843,18 @@ window.Games.kart = {
       const view = interpolated();
       const karts = view ? view.karts : [];
       const me = karts.find((k) => k.idx === myIdx);
-      if (local && me && !(me.flags & F.dead) && !(me.fx & 1)) {
+      if (local && ack && me && !(me.flags & F.dead) && !(me.fx & 1) && !local.dead && !local.falling) {
         // Carry the last step's motion on for the time since it (no added input lag).
         const pp = predPrev || local;
-        const f = predPrev ? predictAcc / STEP : 0;
+        const f = predPrev ? stepAcc / STEP : 0;
         let da = local.angle - pp.angle;
         da = Math.atan2(Math.sin(da), Math.cos(da));
-        me.x = local.x + (local.x - pp.x) * f;
-        me.y = local.y + (local.y - pp.y) * f;
-        me.angle = local.angle + da * f;
+        me.x = local.x + (local.x - pp.x) * f + fix.x;
+        me.y = local.y + (local.y - pp.y) * f + fix.y;
+        me.angle = local.angle + da * f + fix.a;
         me.speed = local.speed;
         me.air = Math.max(0, (local.air || 0) + ((local.air || 0) - pp.air) * f);
-        if (map.layered && Number.isFinite(local.z)) me.z = local.z + (local.z - (Number.isFinite(pp.z) ? pp.z : local.z)) * f;
+        if (map.layered && Number.isFinite(local.z)) me.z = local.z + (local.z - (Number.isFinite(pp.z) ? pp.z : local.z)) * f + fix.z;
         me.fx = (me.fx & ~2) | (local.trick > 0 ? 2 : 0);
       }
       // Aiming a bomb: the ring shows where it comes down (ahead of where I'll be by then).
@@ -893,6 +939,7 @@ window.Games.kart = {
       onEvent(event, data) {
         if (event === 'game:kart:init') onInit(data);
         else if (event === 'game:kart:state') onState(data);
+        else if (event === 'game:kart:me') pendingAck = data;
         else if (event === 'game:kart:stick') {
           if (data.idx === myIdx) {
             Sfx.stick?.();
@@ -902,13 +949,8 @@ window.Games.kart = {
             hud.callout('PASSED IT ON!', { kind: 'small gold', hold: 900, sub: nameOf(data.idx) });
           }
         } else if (event === 'game:kart:bump') {
-          // The server's shove lands on my predicted kart too, so it slides now, not a round trip later.
+          // (My own kart's shove arrives with the server's word on it, see reconcile.)
           const mine = data.s.find((r) => r[0] === myIdx);
-          if (mine && local && !local.dead && !local.falling) {
-            local.speed += mine[1];
-            local.kx = (local.kx || 0) + mine[2];
-            local.ky = (local.ky || 0) + mine[3];
-          }
           Sfx.bump(Math.min(1, 0.2 + data.p) * (mine ? 1 : volumeAt(data.x, data.y)));
           view3d?.bumpFx?.(data.x, data.y, data.p, data.ram >= 0, data.z);
           if (mine && data.ram >= 0) hud.callout(data.ram === myIdx ? 'RAM!' : 'RAMMED!', { kind: 'small', hold: 650 });
@@ -962,15 +1004,9 @@ window.Games.kart = {
           }
         } else if (event === 'game:kart:hit') {
           const kind = data.kill ? 'kill' : data.kind === 'bullet' ? 'bullet' : 'hit';
-          // A blast or shell threw the kart: mine moves at once, not a round trip later; and the
-          // kart bucks up into the air (drawn only).
-          if (data.kx !== undefined) {
-            if (data.target === myIdx && local && !local.dead && !local.falling) {
-              local.kx = (local.kx || 0) + data.kx;
-              local.ky = (local.ky || 0) + data.ky;
-            }
-            view3d?.buck?.(data.target, Math.hypot(data.kx, data.ky));
-          }
+          // A blast or shell threw the kart: it bucks up into the air (drawn only; the throw itself
+          // arrives with the server's word on my kart).
+          if (data.kx !== undefined) view3d?.buck?.(data.target, Math.hypot(data.kx, data.ky));
           const victim = kartsByIdx.get(data.target);
           if (data.kind === 'water' || data.kind === 'acid') {
             // Into the moat, or an open grave full of acid: a splash (green and fizzing for acid).

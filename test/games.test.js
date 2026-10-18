@@ -2527,3 +2527,158 @@ test('page assets: every kart ES module is versioned and every classic script is
   assert.ok(html.indexOf('/js/shared/kart-layers.js') < html.indexOf('/js/shared/kart-weekly.js')
     && html.indexOf('/js/shared/kart-weekly.js') < html.indexOf('/js/shared/kart-core.js'), 'the weekly arena loads after the layers it builds on and before kart-core');
 });
+
+// ---------- kart netcode ----------
+// A tiny seeded generator, so the input patterns below are the same every run.
+function mulberry(seed) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+test('kart netcode: an input is used at the tick matching its step; a late one as soon as it can be, and the gap grows to fit', async () => {
+  const c = await kartGame(1, { kartMap: 'grandprix', kartItems: 'none' });
+  const g = c.game;
+  const player = c.room.players.get(c.players[0].id);
+  const kart = g.karts.get(player.id);
+  const send = (input, step, now) => g.onEvent(player, 'input', { up: false, down: false, left: false, right: false, drift: false, ...input, c: step, n: now });
+  const tickTo = (t) => { while (g.tickCount < t) g.tick(1 / 30); };
+  g.tickCount = 1000;
+  // Sent at step 500, starting at 501: from now on step s is used at tick s + 501 (500 to get here, one to spare).
+  send({ up: true }, 501, 500);
+  assert.strictEqual(kart.net.off, 501);
+  tickTo(1001);
+  assert.strictEqual(kart.input.up, false, 'not before its tick');
+  tickTo(1002);
+  assert.strictEqual(kart.input.up, true, 'on its tick');
+  assert.strictEqual(kart.net.L, 501, 'this tick is the player\'s step 501');
+  // An early one waits for its tick.
+  send({ up: true, left: true }, 504, 503);
+  tickTo(1004);
+  assert.strictEqual(kart.input.left, false);
+  tickTo(1005);
+  assert.strictEqual(kart.input.left, true);
+  // Two changes in one step: the last one counts.
+  send({ up: true, right: true }, 507, 506);
+  send({ up: true }, 507, 506);
+  tickTo(1008);
+  assert.deepStrictEqual([kart.input.left, kart.input.right], [false, false]);
+  // Late: sent at step 508, due at tick 1009, but held up until tick 1014. The gap grows to 507 (506
+  // to get here, one to spare), and it's used at 509 + 507 = 1016...
+  tickTo(1014);
+  send({ up: true, right: true }, 509, 508);
+  assert.strictEqual(kart.net.off, 507);
+  tickTo(1015);
+  assert.strictEqual(kart.input.right, false);
+  tickTo(1016);
+  assert.strictEqual(kart.input.right, true);
+  assert.strictEqual(kart.net.L, 509);
+  // ...and an older input sent again changes nothing.
+  send({ up: false }, 505, 510);
+  assert.strictEqual(kart.input.up, true);
+  // An input can't start before it was sent.
+  send({ up: true, left: true }, 600, 511);
+  assert.strictEqual(kart.net.q.at(-1).c, 512);
+  // A page that starts counting again (reloaded) starts over; one without step numbers is used at once.
+  send({ up: true, drift: true }, 3, 2);
+  assert.strictEqual(kart.net.off, g.tickCount - 2 + 1);
+  assert.strictEqual(kart.net.q.length, 1);
+  g.onEvent(player, 'input', { down: true });
+  assert.strictEqual(kart.input.down, true);
+  c.room.destroy();
+});
+
+// Drives one player's kart through the server tick by tick with a seeded pattern of inputs, sent as
+// their page would and held up 2-4 ticks on the way, and checks that the server used nearly all of
+// them at exactly the page's steps, and that replaying the page's inputs from any server update
+// lands exactly on a later one: the page and the server agree to the last bit.
+async function replayCheck(settings, seed, ticks, place) {
+  const K = require('../public/js/shared/kart-core');
+  const c = await kartGame(1, { kartItems: 'none', ...settings });
+  const g = c.game;
+  g.time = 0;
+  const player = c.room.players.get(c.players[0].id);
+  const kart = g.karts.get(player.id);
+  if (place) place(g, kart);
+  const acks = [];
+  const emitTo = c.room.emitTo.bind(c.room);
+  c.room.emitTo = (id, event, data) => { if (event === 'game:kart:me') acks.push(JSON.parse(JSON.stringify(data))); emitTo(id, event, data); };
+  g.tickCount = 2000;
+  const rand = mulberry(seed);
+  const log = [];
+  let input = { up: true, down: false, left: false, right: false, drift: false };
+  let step = 900; // the page's own clock
+  const inFlight = [];
+  const used = new Map(); // `${gap}:${step}` -> the input the server used for that step
+  for (let i = 0; i < ticks; i++) {
+    // The page: now and then a new input, starting at its next step.
+    if (i % 4 === 0 && rand() < 0.6) {
+      const r = rand();
+      input = { up: r > 0.08, down: r < 0.08, left: r > 0.55 && r < 0.75, right: r >= 0.75, drift: rand() < 0.2 };
+      log.push({ c: step + 1, input });
+      inFlight.push({ at: i + 2 + Math.floor(rand() * 3), data: { ...input, c: step + 1, n: step } });
+    }
+    step++;
+    for (const m of inFlight.filter((m) => m.at === i)) g.onEvent(player, 'input', m.data);
+    g.tick(1 / 30);
+    if (kart.net.L !== null) used.set(`${kart.net.off}:${kart.net.L}`, { ...kart.input });
+  }
+  const inputAt = (j) => {
+    let cur = { up: false, down: false, left: false, right: false, drift: false };
+    for (const e of log) if (e.c <= j) cur = e.input;
+    return cur;
+  };
+  const same = (a, b) => Object.keys(a).every((k) => a[k] === b[k]);
+  // How often the server used the page's input for a step (it can't when an input comes in late).
+  const steps = [...used.entries()].filter(([key]) => +key.split(':')[1] > log[0].c);
+  const onTime = steps.filter(([key, inp]) => same(inp, inputAt(+key.split(':')[1]))).length / steps.length;
+  let compared = 0;
+  for (let a = 0; a < acks.length; a++) {
+    for (let b = a + 1; b < Math.min(acks.length, a + 6); b++) {
+      const [A, B] = [acks[a], acks[b]];
+      const gap = 121 - A.g;
+      // (Not across a wreck or a fall, nor a change of gap, nor a step whose input came in late:
+      // the server used the one before, so the page's replay is rightly corrected there.)
+      const span = acks.slice(a, b + 1);
+      if (span.some((x) => x.f & 6 || x.g !== A.g) || B.L <= A.L) continue;
+      let late = false;
+      for (let j = A.L + 1; j <= B.L; j++) if (!same(used.get(`${gap}:${j}`) || {}, inputAt(j))) late = true;
+      if (late) continue;
+      const st = K.unpackKart(A.s);
+      for (let j = Math.max(A.L + 1, A.g); j <= B.L; j++) {
+        K.stepNet(st, inputAt(j), 1 / 30, g.map, { speed: c.init.speedMul || 1, noFall: true, t: A.t + (j - A.L) / 30 });
+      }
+      const want = K.unpackKart(B.s);
+      for (const f of K.NET_FIELDS) {
+        const x = st[f] ?? undefined; // (unset or null: the physics reads both the same)
+        const y = want[f] ?? undefined;
+        if (x === undefined || y === undefined) {
+          assert.strictEqual(x === undefined, y === undefined, `${settings.kartMap} ${f} set on one side only (ack ${a} to ${b})`);
+          continue;
+        }
+        const d = typeof x === 'boolean' || typeof y === 'boolean' ? Number(x) - Number(y) : x - y;
+        assert.ok(Math.abs(d) < 1e-6, `${settings.kartMap} ${f}: replay ${x} vs server ${y} (ack ${a} to ${b})`);
+      }
+      compared++;
+    }
+  }
+  c.room.destroy();
+  return { compared, onTime, acks: acks.length };
+}
+
+test('kart netcode: replaying a player\'s inputs from a server update lands exactly on the next ones (race track)', async () => {
+  const r = await replayCheck({ kartMap: 'grandprix' }, 7, 240, (g, k) => onTrack(g, k, 30));
+  assert.ok(r.compared > 300, `compared ${r.compared} pairs`);
+  assert.ok(r.onTime > 0.95, `the server used the page's input for ${Math.round(r.onTime * 100)}% of its steps`);
+});
+
+test('kart netcode: replays agree on a layered arena too (moving obstacles, ramps, jump pads)', async () => {
+  for (const [map, seed] of [['keep', 3], ['harbour', 5], ['skygardens', 11], ['graveyard', 2], ['cinderbowl', 4]]) {
+    const r = await replayCheck({ kartMode: 'arena', kartMap: map, arenaTime: 600 }, seed, 240);
+    assert.ok(r.compared > 100, `${map}: compared ${r.compared} pairs`);
+    assert.ok(r.onTime > 0.95, `${map}: the server used the page's input for ${Math.round(r.onTime * 100)}% of its steps`);
+  }
+});

@@ -79,6 +79,10 @@ const SHOT_CODE = { rocket: 1, bullet: 2, bomb: 3, bouncer: 4, comet: 5, snowbal
 const SHOT_SPEED = { rocket: ROCKET.speed, bullet: BULLET.speed, snowball: SNOW.speed, sticky: STICKY.speed };
 const SHOT_LIFE = { rocket: ROCKET.life, bullet: BULLET.life, snowball: SNOW.life, sticky: STICKY.flight };
 const NO_INPUT = { up: false, down: false, left: false, right: false, drift: false };
+// Input timing: how many ticks a late input is remembered for when choosing how long inputs wait,
+// and how many inputs can wait at once.
+const NET = { window: 90, queue: 32 };
+const newNet = () => ({ q: [], off: null, c: -Infinity, n: null, L: null, hist: [], eased: 0 });
 const TIMERS = ['shield', 'invuln', 'ghost', 'star', 'shrink', 'ink', 'roulette', 'roulette2', 'freeze', 'spikes']; // per-kart countdowns (seconds)
 
 // Item odds. Arena favours weapons; in a race, karts at the back get stronger items.
@@ -230,6 +234,7 @@ class KartBattle {
       item: null, ammo: 0, roulette: 0, // the item can't be used until the roulette stops
       item2: null, ammo2: 0, roulette2: 0, // a second item held in reserve (two at most)
       input: { ...NO_INPUT },
+      net: bot ? null : newNet(), // when this player's inputs are used (see onInput)
       finished: false, finishTime: null,
       hits: 0, kills: 0, deaths: 0, streak: 0,
       progress: this.arena ? 0 : g.index - this.map.n,
@@ -275,7 +280,9 @@ class KartBattle {
 
   onPlayerLeave(player) {
     const kart = this.karts.get(player.id);
-    if (kart) kart.input = { ...NO_INPUT };
+    if (!kart) return;
+    kart.input = { ...NO_INPUT };
+    if (kart.net) kart.net.q = [];
   }
 
   onPlayerDisconnect(player) {
@@ -287,12 +294,67 @@ class KartBattle {
     const kart = this.karts.get(player.id);
     if (!kart) return;
     if (event === 'input') {
-      kart.input = { up: !!data?.up, down: !!data?.down, left: !!data?.left, right: !!data?.right, drift: !!data?.drift };
+      this.onInput(kart, data);
     } else if (event === 'use') {
       // A bomb thrown after aiming says how far (0 near .. 1 far); everything else ignores it.
       if (this.phase === 'racing') this.useItem(kart, { power: data && typeof data === 'object' ? data.power : undefined });
     } else if (event === 'swap') {
       if (this.phase === 'racing') this.swapItems(kart);
+    }
+  }
+
+  // ---------- input timing ----------
+  // Every input says which of the player's own 30 Hz steps it starts at (c) and which step their
+  // screen was on when it was sent (n). The server uses it from tick c + off, where off is the
+  // smallest gap that got this player's recent inputs here in time: so the server drives their
+  // kart with the same inputs at the same moments as their own screen did, however much the
+  // network delay wobbles, and the two never drift apart. An input that still turns up late is
+  // used at once, and the gap grows to fit; it shrinks again once the connection settles.
+  onInput(kart, data) {
+    const input = { up: !!data?.up, down: !!data?.down, left: !!data?.left, right: !!data?.right, drift: !!data?.drift };
+    const net = kart.net;
+    const n = data?.n;
+    if (!net || !Number.isSafeInteger(n) || !Number.isSafeInteger(data.c)) { kart.input = input; return; }
+    const c = Math.min(data.c, n + 1); // an input can't start before it was sent
+    const now = this.tickCount;
+    // A page that started counting again (reloaded): start over.
+    if (net.n !== null && n < net.n - 30) Object.assign(net, newNet());
+    net.n = Math.max(net.n ?? n, n);
+    const need = now - n; // the gap at which this input is just in time
+    net.hist.push([now, need]);
+    while (net.hist.length > 64 || (net.hist.length && now - net.hist[0][0] > NET.window)) net.hist.shift();
+    if (net.off === null || need > net.off) {
+      net.off = need + 1; // and a tick to spare
+      net.eased = now;
+    } else if (now - net.eased > 30 && !kart.input.left && !kart.input.right && !kart.input.drift) {
+      // Over two ticks more than the last three seconds needed: come down to one to spare (once a
+      // second at most, and only while driving straight, where it only nudges the kart along).
+      let most = -Infinity;
+      for (const h of net.hist) most = Math.max(most, h[1]);
+      if (net.off > most + 2) { net.off = most + 1; net.eased = now; }
+    }
+    if (c < net.c) return; // an older input sent again
+    if (c === net.c) { kart.input = input; return; }
+    const q = net.q;
+    let i = q.length;
+    while (i > 0 && q[i - 1].c >= c) i--;
+    if (q[i] && q[i].c === c) q[i].input = input;
+    else q.splice(i, 0, { c, input });
+    while (q.length > NET.queue) { const it = q.shift(); kart.input = it.input; net.c = it.c; }
+  }
+
+  // Start of a tick: the inputs due by now, and which of each player's steps this tick is.
+  pumpInputs() {
+    for (const k of this.karts.values()) {
+      const net = k.net;
+      if (!net || net.off === null) continue;
+      const due = this.tickCount - net.off;
+      while (net.q.length && net.q[0].c <= due) {
+        const it = net.q.shift();
+        k.input = it.input;
+        net.c = it.c;
+      }
+      net.L = due;
     }
   }
 
@@ -719,9 +781,11 @@ class KartBattle {
   tick(dt) {
     this.time += dt;
     this.tickCount++;
+    this.pumpInputs();
 
     if (this.phase === 'countdown') {
-      if (this.time >= COUNTDOWN_S) { this.phase = 'racing'; this.raceStart = this.time; }
+      // Counted in ticks, so every player's screen knows exactly which step the race starts at.
+      if (this.tickCount >= COUNTDOWN_S * TICK_HZ) { this.phase = 'racing'; this.raceStart = this.time; }
     } else if (this.phase === 'racing') {
       this.simulate(dt);
       const elapsed = this.time - this.raceStart;
@@ -1398,6 +1462,16 @@ class KartBattle {
       d: this.decoys.map((d) => this.zRow([d.id, Math.round(d.x), Math.round(d.y), this.karts.get(d.owner)?.idx ?? -1], d.z)),
       x: this.boxes.map((t) => (t > 0 ? 0 : 1)),
     });
+    // Each player's own kart, in full, and which of their steps it is after (see onInput): their
+    // screen replays its newer inputs from here. g: their first step of the race (karts only move
+    // from the tick after the countdown's last); f: 1 racing, 2 wrecked, 4 falling, 8 over.
+    for (const k of this.karts.values()) {
+      if (!k.net || k.net.L === null) continue;
+      this.room.emitTo(k.id, 'game:kart:me', {
+        L: k.net.L, t: this.time, s: K.packKart(k), g: COUNTDOWN_S * TICK_HZ + 1 - k.net.off,
+        f: (this.phase === 'racing' ? 1 : 0) | (k.dead > 0 ? 2 : 0) | (k.fall > 0 ? 4 : 0) | (this.phase === 'done' ? 8 : 0),
+      });
+    }
   }
 
   // Layered arenas: a snapshot row ends with the height of what it describes.

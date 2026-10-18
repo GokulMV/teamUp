@@ -1536,9 +1536,41 @@
     return kart;
   }
 
+  // ---------- netcode ----------
+  // A player's own kart as the server sends it back to them: everything stepKart carries from one
+  // step to the next, plus the item timers that change how it drives. Their screen replays its
+  // newer inputs from exactly there, so it ends up where the server's kart will be.
+  const NET_FIELDS = ['x', 'y', 'angle', 'heading', 'speed', 'kx', 'ky', 'z', 'vz', 'air', 'airTime', 'gz',
+    'drift', 'driftTime', 'boost', 'spin', 'hopHeld', 'hopCd', 'hopping', 'padCd', 'launch',
+    'trick', 'tricked', 'trickable', 'prevDrift', 'trackIndex', 'safeIndex', 'star', 'shrink', 'freeze'];
+  // Item timers the server counts down after each step (see TIMERS in server/games/kart.js).
+  const NET_TIMERS = ['star', 'shrink', 'freeze'];
+  // Full precision: a replay from it then matches the server's own steps to the last bit.
+  function packKart(kart) {
+    return NET_FIELDS.map((f) => {
+      const v = kart[f];
+      if (typeof v === 'boolean') return v ? 1 : 0;
+      return Number.isFinite(v) ? v : null;
+    });
+  }
+  // Unset fields stay unset (stepKart tells "no heading yet" from a heading of 0).
+  function unpackKart(row, into = {}) {
+    NET_FIELDS.forEach((f, i) => { into[f] = row[i] === null ? undefined : row[i]; });
+    return into;
+  }
+  // One server tick for a player's kart, as prediction and replay run it: the step with the item
+  // speed and ice of that moment, then the item timers run down.
+  function stepNet(kart, input, dt, map, opts) {
+    stepKart(kart, input, dt, map, {
+      ...opts, speed: (opts.speed || 1) * itemSpeed(kart.star > 0, kart.shrink > 0), frozen: kart.freeze > 0,
+    });
+    for (const f of NET_TIMERS) if (kart[f] > 0) kart[f] = Math.max(0, kart[f] - dt);
+    return kart;
+  }
+
   return {
     KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, CHARACTERS, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP, Layers, Weekly,
-    getMap, mapList, mapInfo, mapsBuilt, weeklyMap, setWeeklyCheck, weeklyTries, stepKart, driftLevel, itemSpeed, bombLead, respawnOnTrack, makeRaceMap, timeToLand,
+    getMap, mapList, mapInfo, mapsBuilt, weeklyMap, setWeeklyCheck, weeklyTries, stepKart, stepNet, NET_FIELDS, packKart, unpackKart, driftLevel, itemSpeed, bombLead, respawnOnTrack, makeRaceMap, timeToLand,
     noise: { vnoise, fbm, smoothstep, polyDist },
   };
 });
