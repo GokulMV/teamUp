@@ -410,6 +410,7 @@ class Pictionary {
     this.phase = 'reveal';
     this.setTimer(REVEAL_TIME, () => this.nextTurn());
     this.room.systemMessage(`The word was "${this.word}"`);
+    this.room.record?.('pictionary_round', this.drawerId, { word: this.word, guessed: [...this.guessed], guessers: this.room.connectedPlayers.length - 1 });
     this.broadcastPhase();
   }
 

@@ -6,6 +6,7 @@ const { playtest } = require('./games/kart-playtest');
 const { Telephone } = require('./games/telephone');
 const { BallChain } = require('./games/ballchain');
 const { ControlRoom } = require('./games/controlroom');
+const { Database } = require('./db');
 
 const MAX_PLAYERS = 30;
 const AVATAR_COUNT = 24; // public/js/avatars.js
@@ -109,6 +110,9 @@ function cleanName(name) {
 }
 
 // Strict integer: a whole number (or a string of one) inside [min, max], else null.
+// The browser's own id (kept in its localStorage), if it sent a well-formed one.
+const profileOf = (data) => (typeof data?.profile === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.profile) ? data.profile.toLowerCase() : null);
+
 function strictInt(v, min, max) {
   if (typeof v === 'string' && /^\s*-?\d+\s*$/.test(v)) v = Number(v);
   if (typeof v !== 'number' || !Number.isInteger(v) || v < min || v > max) return null;
@@ -135,6 +139,13 @@ class Room {
     this.lastResults = null;
     this.colorIndex = 0;
     this.hostTimer = null;
+    // The database's record of this room and of the game being played (see server/db.js).
+    this.db = manager.db;
+    this.dbId = crypto.randomUUID();
+    this.gameRec = null;
+    this.peakPlayers = 0;
+    this.gamesStarted = 0;
+    this.chatMessages = 0;
   }
 
   get channel() {
@@ -149,7 +160,7 @@ class Room {
     return TEAMS.slice(0, this.settings.teamCount);
   }
 
-  addPlayer(socket, name, avatar) {
+  addPlayer(socket, name, avatar, profile = null) {
     const taken = new Set([...this.players.values()].map((p) => p.name.toLowerCase()));
     let finalName = cleanName(name);
     for (let i = 2; taken.has(finalName.toLowerCase()); i++) {
@@ -165,8 +176,13 @@ class Room {
       socketId: socket.id,
       connected: true,
       leaveTimer: null,
+      profile, // the browser's own id (its localStorage), for the record
+      chatCount: 0,
     };
     this.players.set(player.id, player);
+    this.peakPlayers = Math.max(this.peakPlayers, this.players.size);
+    this.db.playerJoined(this, player, socket);
+    this.gameRec?.profiles.set(player.id, profile);
     if (!this.hostId) { this.hostId = player.id; this.ownerId = player.id; }
     this.attach(socket, player);
     if (this.game) this.game.onPlayerJoin?.(player);
@@ -281,6 +297,7 @@ class Room {
     if (!player) return;
     clearTimeout(player.leaveTimer);
     this.players.delete(playerId);
+    this.db.playerLeft(player);
     if (player.connected) {
       const sock = this.io.sockets.sockets.get(player.socketId);
       if (sock) {
@@ -317,8 +334,12 @@ class Room {
     if (typeof check === 'string') return { ok: false, error: check };
     if (check && check.ok === false) return check;
     this.game?.stop();
+    this.endRecord('stopped');
     this.state = 'playing';
     this.lastResults = null;
+    this.gameRec = { id: crypto.randomUUID(), startedAt: Date.now(), profiles: new Map([...this.players.values()].map((p) => [p.id, p.profile])) };
+    this.gamesStarted++;
+    this.db.gameStarted(this, this.gameRec, this.settings);
     this.game = new GameClass(this);
     this.broadcastState();
     try {
@@ -326,6 +347,7 @@ class Room {
     } catch (err) {
       // Never leave everyone stuck on a game screen that isn't running.
       console.error(`Failed to start ${this.settings.mode}:`, err);
+      this.endRecord('failed');
       this.backToLobby();
       return { ok: false, error: 'The game failed to start. Please try again.' };
     }
@@ -339,14 +361,28 @@ class Room {
     this.game = null;
     this.state = 'results';
     this.lastResults = { mode: this.settings.mode, teamMode: this.settings.teamMode, ...results };
+    this.endRecord('finished', this.lastResults);
     this.broadcastState();
   }
 
   backToLobby() {
     this.game?.stop();
     this.game = null;
+    this.endRecord('stopped');
     this.state = 'lobby';
     this.broadcastState();
+  }
+
+  // The database: how the game being recorded ended (once), and things that happen during it
+  // (games call room.record: a kart kill, a Pictionary round...).
+  endRecord(outcome, results = null) {
+    if (!this.gameRec) return;
+    this.db.gameEnded(this, this.gameRec, outcome, results);
+    this.gameRec = null;
+  }
+
+  record(type, playerId, data) {
+    if (this.gameRec) this.db.gameEvent(this.gameRec, type, playerId, data);
   }
 
   // Helper for games: rank players and teams from a score map.
@@ -383,6 +419,8 @@ class Room {
           return;
         }
         player.chatTimes.push(now);
+        player.chatCount = (player.chatCount || 0) + 1;
+        this.chatMessages++;
         if (this.game?.onChat?.(player, text)) return; // game consumed it (e.g. a correct guess)
         this.emit('chat', { from: player.name, color: player.color, avatar: player.avatar, team: player.team, text });
         return;
@@ -522,6 +560,9 @@ class Room {
   destroy() {
     this.game?.stop();
     this.game = null;
+    this.endRecord('abandoned');
+    for (const p of this.players.values()) this.db.playerLeft(p);
+    this.db.roomClosed(this);
     clearTimeout(this.hostTimer);
     for (const p of this.players.values()) clearTimeout(p.leaveTimer);
     this.manager.rooms.delete(this.code);
@@ -531,8 +572,9 @@ class Room {
 KartCore.setWeeklyCheck(playtest);
 
 class RoomManager {
-  constructor(io) {
+  constructor(io, db = new Database(null)) {
     this.io = io;
+    this.db = db;
     this.rooms = new Map();
     this.weeklyTimer = null;
   }
@@ -562,7 +604,9 @@ class RoomManager {
       return null;
     }
     console.log(`[weekly] ${map.name} (${map.id}) ready in ${Date.now() - t} ms`);
-    for (const tr of KartCore.weeklyTries()) console.log(`[weekly]   layout ${tr.attempt} turned down: ${tr.why.join('; ')}`);
+    const tries = KartCore.weeklyTries();
+    for (const tr of tries) console.log(`[weekly]   layout ${tr.attempt} turned down: ${tr.why.join('; ')}`);
+    this.db.weeklyArena(map, Date.now() - t, tries.length);
     if (announce) {
       for (const room of this.rooms.values()) {
         room.systemMessage(`🗓️ New weekly arena: ${map.emoji} ${map.name}. It's in Kart Battle's arenas until next Monday.`);
@@ -598,7 +642,10 @@ class RoomManager {
     do code = makeCode(); while (this.rooms.has(code));
     const room = new Room(this, code);
     this.rooms.set(code, room);
-    const player = room.addPlayer(socket, data?.name, data?.avatar);
+    const profile = profileOf(data);
+    this.db.profileSeen(profile, cleanName(data?.name), data?.avatar);
+    this.db.roomOpened(room, profile);
+    const player = room.addPlayer(socket, data?.name, data?.avatar, profile);
     this.sendWelcome(socket, room, player, ack);
   }
 
@@ -618,6 +665,7 @@ class RoomManager {
         }
         this.leaveCurrent(socket);
         room.attach(socket, existing);
+        this.db.playerReconnected(existing);
         room.game?.onPlayerReconnect?.(existing);
         return this.sendWelcome(socket, room, existing, ack);
       }
@@ -625,7 +673,9 @@ class RoomManager {
 
     if (room.players.size >= MAX_PLAYERS) return ack({ ok: false, error: `Room is full (${MAX_PLAYERS} players max)` });
     this.leaveCurrent(socket);
-    const player = room.addPlayer(socket, data?.name, data?.avatar);
+    const profile = profileOf(data);
+    this.db.profileSeen(profile, cleanName(data?.name), data?.avatar);
+    const player = room.addPlayer(socket, data?.name, data?.avatar, profile);
     room.systemMessage(`${player.name} joined`);
     this.sendWelcome(socket, room, player, ack);
   }

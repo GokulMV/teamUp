@@ -84,8 +84,29 @@ The repo includes `railway.json` and a `Dockerfile`, so Railway needs no extra s
 2. Railway builds the `Dockerfile` and starts the server. It checks `/health` before switching traffic over.
 3. Open the service's **Settings → Networking → Generate Domain** to get a public URL, then share `https://<your-domain>/?room=CODE` with friends.
 
-Nothing else is needed: no database and no environment variables (Railway sets `PORT` itself).
-Errors from players' browsers are logged by the server as `[client error] ...`, so they show up in Railway's **Deploy Logs**.
+That's enough to play: Railway sets `PORT` itself. Errors from players' browsers are logged by the server as `[client error] ...`, so they show up in Railway's **Deploy Logs**.
+
+### Database (optional: Postgres)
+
+With a Postgres database the server keeps a record of play. Without one, nothing is recorded and everything else works the same.
+
+1. In the Railway project, **+ New → Database → PostgreSQL**.
+2. In the TeamUp service, **Variables → New Variable → Add Reference** and pick the database's `DATABASE_URL`, then redeploy.
+
+On start the server creates and updates its tables itself (`server/migrations`, logged as `[db] applied ...` and `[db] ready`). Writes happen in the background and never hold up a game; if the database goes away, the games carry on and the server reconnects. What's kept:
+
+| Table | What's in it |
+|---|---|
+| `profiles` | each browser that has played (a random id kept in its localStorage: no account, nothing personal), its last name and avatar, visits, games played, wins, and XP and coins for later |
+| `rooms` | every room: its code, when it opened and closed, its peak player count, games and chat messages |
+| `room_players` | who was in each room: name, avatar, phone, tablet or desktop, browser, country (from Cloudflare), when they joined and left, reconnects, chat messages |
+| `games` | every game: mode, kart race or arena, map, all its settings, players and CPU drivers, start, end, how it ended (finished, stopped, abandoned or failed), the full results |
+| `game_players` | how each player and CPU driver did in each game: place, score and the game's own stats (kart kills, deaths, hits, finish time...) |
+| `game_events` | what happened during games: every kart kill (who, whom, with what, where) and finish, every Pictionary round (the word, the drawer, who guessed it) |
+| `weekly_arenas` | each week's generated arena and how many layouts the play test turned down first |
+| `client_errors` | errors from players' browsers, with the build they ran |
+
+The `profile_stats` view adds up each browser's games, wins and kart kills across every game. To run the database tests locally: `TEST_DATABASE_URL=postgres://... npm test` (they're skipped otherwise).
 Game rooms live in memory, so keep the service at **1 replica** (already set in `railway.json`), and expect rooms to reset when you redeploy.
 
 ### Anywhere else

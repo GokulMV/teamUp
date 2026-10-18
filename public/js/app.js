@@ -168,6 +168,16 @@
     set(k, v) { try { if (v === null) sessionStorage.removeItem(k); else sessionStorage.setItem(k, v); } catch { /* ignore */ } },
   };
   store.set('teamup-session', null); // where older builds kept it, shared by every tab
+  // This browser's own id, kept for good (the server's record of who played what: no account,
+  // nothing personal). Shared by every tab.
+  const profileId = (() => {
+    let id = store.get('teamup-profile');
+    if (!/^[0-9a-f-]{36}$/.test(id || '')) {
+      id = crypto.randomUUID?.() || '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) => (c ^ (Math.random() * 16) >> (c / 4)).toString(16));
+      store.set('teamup-profile', id);
+    }
+    return id;
+  })();
   const savedSession = () => { try { return JSON.parse(tabStore.get('teamup-session') || 'null'); } catch { return null; } };
   const saveSession = (s) => tabStore.set('teamup-session', s ? JSON.stringify(s) : null);
 
@@ -275,7 +285,7 @@
   $('btn-create').onclick = async () => {
     const name = getName();
     if (!name) return;
-    enterRoom(await emit('room:create', { name, avatar: state.avatar }));
+    enterRoom(await emit('room:create', { name, avatar: state.avatar, profile: profileId }));
   };
 
   async function join() {
@@ -285,7 +295,7 @@
     if (code.length !== 4) { $('home-error').textContent = 'Room codes are 4 letters'; codeInputs[code.length]?.focus(); return; }
     const saved = savedSession();
     const token = saved && saved.code === code ? saved.token : undefined;
-    enterRoom(await emit('room:join', { name, code, token, avatar: state.avatar }));
+    enterRoom(await emit('room:join', { name, code, token, avatar: state.avatar, profile: profileId }));
   }
   $('btn-join').onclick = join;
   $('name-input').addEventListener('keydown', (e) => {
@@ -298,7 +308,7 @@
     if (!saved) return;
     const urlCode = new URLSearchParams(location.search).get('room');
     if (urlCode && urlCode.toUpperCase() !== saved.code) return;
-    const res = await emit('room:join', { code: saved.code, token: saved.token, name: $('name-input').value || 'Player', avatar: state.avatar });
+    const res = await emit('room:join', { code: saved.code, token: saved.token, name: $('name-input').value || 'Player', avatar: state.avatar, profile: profileId });
     if (res.ok) enterRoom(res);
     else if (state.me) { leaveLocal(); toast('That room has closed'); }
     else saveSession(null);

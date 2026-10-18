@@ -721,6 +721,9 @@ class KartBattle {
     event.by = killer ? killer.idx : -1;
     event.kill = true;
     this.room.emit('game:kart:hit', event);
+    this.room.record?.('kart_kill', killer ? killer.id : null, {
+      victim: target.id, kind, map: this.map.id, streak: event.streak, x: event.x, y: event.y, at: Math.round((this.time - this.raceStart) * 10) / 10,
+    });
     if (killer) this.checkKillLimit(killer);
     return true;
   }
@@ -1390,6 +1393,7 @@ class KartBattle {
       const p = this.room.players.get(k.id);
       const name = k.bot ? `🤖 ${k.name}` : p ? p.name : null;
       this.room.emit('game:kart:finish', { idx: k.idx, place: this.finishOrder.length, time: k.finishTime });
+      this.room.record?.('kart_finish', k.id, { place: this.finishOrder.length, time: Math.round(k.finishTime * 1000) / 1000, bot: k.bot, map: this.map.id });
       if (name) this.room.systemMessage(`🏁 ${name} finished #${this.finishOrder.length}`);
     }
   }

@@ -3,6 +3,7 @@ const http = require('http');
 const express = require('express');
 const { Server } = require('socket.io');
 const { RoomManager } = require('./rooms');
+const { Database } = require('./db');
 
 const { renderIndex, buildId } = require('./assets');
 
@@ -37,7 +38,10 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 let clientErrors = 0;
 setInterval(() => { clientErrors = 0; }, 60_000).unref();
 app.post('/api/client-error', express.text({ type: '*/*', limit: '8kb' }), (req, res) => {
-  if (clientErrors++ < 50) console.warn('[client error]', String(req.body || '').slice(0, 2000));
+  if (clientErrors++ < 50) {
+    console.warn('[client error]', String(req.body || '').slice(0, 2000));
+    db.clientError(req.body || '', buildId(PUBLIC));
+  }
   res.status(204).end();
 });
 
@@ -47,7 +51,9 @@ const io = new Server(server, {
   maxHttpBufferSize: 2e6,
 });
 
-const rooms = new RoomManager(io);
+// Postgres when DATABASE_URL is set (only when run as the server: tests bring their own).
+const db = new Database(require.main === module ? process.env.DATABASE_URL : null);
+const rooms = new RoomManager(io, db);
 
 io.on('connection', (socket) => {
   // Which build this server runs: a page from an older deploy reloads itself (public/js/app.js).
@@ -67,17 +73,17 @@ if (require.main === module) {
   server.listen(PORT, () => {
     console.log(`TeamUp running on http://localhost:${PORT}`);
   });
-  rooms.startWeekly();
+  db.start().finally(() => rooms.startWeekly());
   // Hosts like Railway send SIGTERM before replacing the container: stop cleanly.
   for (const sig of ['SIGTERM', 'SIGINT']) {
     process.on(sig, () => {
       console.log(`${sig} received, shutting down`);
       // io.close() disconnects every player and closes the HTTP server too.
-      io.close(() => process.exit(0));
+      io.close(() => db.close().finally(() => process.exit(0)));
       server.closeAllConnections?.();
       setTimeout(() => process.exit(0), 5000).unref();
     });
   }
 }
 
-module.exports = { app, server, io, rooms };
+module.exports = { app, server, io, rooms, db };
