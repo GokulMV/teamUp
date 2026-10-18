@@ -14,9 +14,10 @@ import { buildKeep } from './keep3d.js';
 import { buildGraveyard } from './graveyard3d.js';
 import { buildWeekly } from './weekly3d.js';
 import { buildMiniGolf } from './golf3d.js';
+import { buildFunfair } from './funfair3d.js';
 
 // Bright arenas' own set dressing (and models for their moving obstacles), by theme.
-const DRESSINGS = { harbour: buildHarbour, skygarden: buildSkyGardens, keep: buildKeep, graveyard: buildGraveyard, minigolf: buildMiniGolf };
+const DRESSINGS = { harbour: buildHarbour, skygarden: buildSkyGardens, keep: buildKeep, graveyard: buildGraveyard, minigolf: buildMiniGolf, funfair: buildFunfair };
 
 const K = window.KartCore;
 const L = K.Layers;
@@ -678,7 +679,7 @@ export function buildLayered(scene, map, theme, ctx) {
 
   for (const p of map.boostPads) ctx.pads.push(boostPad(scene, p));
   const pads = map.pads.map((p) => buildPad(scene, p));
-  const bumpers = map.bumpers.map((b) => (theme.pumpkins ? buildPumpkin(scene, b, S) : b.style === 'tyres' ? buildTyres(scene, b) : buildBumper(scene, b)));
+  const bumpers = map.bumpers.map((b) => dress?.bumper?.(b) || (theme.pumpkins ? buildPumpkin(scene, b, S) : b.style === 'tyres' ? buildTyres(scene, b) : buildBumper(scene, b)));
   const movers = map.movers.map((m) => (dress && dress.mover(m)) || buildMover(scene, map, m, kit));
   const flames = []; // braziers: flames come off them in ambient()
   if (bright) {

@@ -1286,6 +1286,7 @@
     if (!Number.isFinite(kart.z)) settle(kart, map, t);
     const f = map.floorInfo(kart.x, kart.y, kart.z + Layers.STEP, t, FLOOR);
     const g = f.z;
+    const under = f.s;
     const floor = Number.isFinite(g) ? g : map.deathZ;
     // The floor's own rise under a kart driving along it (ramps); steps are clamped to it, so a
     // kerb is a bump, never a catapult.
@@ -1325,6 +1326,19 @@
     if (!(kart.air > 0) && !(kart.padCd > 0)) {
       const p = map.padAt(kart.x, kart.y, kart.z);
       if (p) launchPad(kart, p);
+    }
+    // A turntable (a carousel's deck) carries whatever stands on it round with it.
+    const spin = !(kart.air > 0) && under && under.src && under.src.spin;
+    if (spin) {
+      const a = spin * dt;
+      const c = Math.cos(a);
+      const sn = Math.sin(a);
+      const dx = kart.x - under.x;
+      const dy = kart.y - under.y;
+      kart.x = under.x + dx * c - dy * sn;
+      kart.y = under.y + dx * sn + dy * c;
+      kart.angle += a;
+      kart.heading = (kart.heading === undefined ? kart.angle - a : kart.heading) + a;
     }
     const lost = map.hazardAt(kart.x, kart.y, kart.z);
     if (lost) kart.lost = lost;

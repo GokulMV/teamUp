@@ -162,12 +162,12 @@ export function makeMaterial() {
             if (d < r && n > smoothstep(r * 0.55, r, d)) discard;
           }
           // Anything right up against the lens (a post, a sweeping arm) dissolves too.
-          if (n > smoothstep(18.0, 46.0, length(toP))) discard;
+          if (n > smoothstep(22.0, 70.0, length(toP))) discard;
         }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         diffuseColor.rgb = mix(diffuseColor.rgb, vCol2, patternMask(vPat)) * vPat.w;`);
   };
-  m.customProgramCacheKey = () => 'bright-v4';
+  m.customProgramCacheKey = () => 'bright-v5';
   return m;
 }
 

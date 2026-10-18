@@ -500,8 +500,9 @@
     const bumpers = (def.bumpers || []).map((b, i) => ({ r: 30, h: 30, kick: 520, ...b, i }));
     for (const b of bumpers) solids.push(cyl({ x: b.x, y: b.y, r: b.r, z0: b.z - 10, z1: b.z + b.h, kind: 'bumper' }, { kick: b.kick, bumper: b.i }));
     const movers = (def.movers || []).map(makeMover).filter(Boolean);
-    // A sweeper turns round a solid hub.
-    for (const m of movers) if (m.type === 'sweeper') solids.push(cyl({ x: m.x, y: m.y, r: m.hub, z0: m.z - 10, z1: m.z + m.hi + 24, kind: 'hub' }));
+    // A sweeper turns round a solid hub (unless it has none: a carousel's horses ride round a
+    // turntable, whose middle is a solid of its own).
+    for (const m of movers) if (m.type === 'sweeper' && !m.hubless) solids.push(cyl({ x: m.x, y: m.y, r: m.hub, z0: m.z - 10, z1: m.z + m.hi + 24, kind: 'hub' }));
     const bridges = movers.filter((m) => m.type === 'drawbridge');
     const solidMovers = movers.filter((m) => m.type !== 'drawbridge');
     const pads = (def.pads || []).map((p, i) => ({ r: 40, t: 1, ...p, i, tx: p.to[0], ty: p.to[1], tz: p.to[2] }));
@@ -2055,8 +2056,148 @@
     return def;
   }
 
+  // The Funfair at dusk: a carousel in the middle whose deck turns (and carries you round with it)
+  // among horses that really ride round on it; a pirate ship swinging across the west lane; a
+  // dodgems pit full of bumpers; a helter-skelter you reach by jump pad and slide down; a circus
+  // big top with a cannon that fires you onto the turning carousel; and the log flume's lagoon.
+  function theFunfair() {
+    const S = 3000;
+    const C = S / 2;
+    const DECK = 24; // the carousel's deck
+    const TOWER = 240; // the helter-skelter's top
+    const deg = Math.PI / 180;
+    const HS = [C, 560]; // the helter-skelter
+    const SHIP = [560, C]; // the pirate ship's pivot
+    const DODGE = { x0: 2160, y0: 1150, x1: 2760, y1: 1850 }; // the dodgems pit
+    const TENT = [C, 2440]; // the big top
+    const LAGOON = { x0: 2120, y0: 2160, x1: 2760, y1: 2760 }; // the log flume's lagoon
+    const def = {
+      id: 'funfair', name: 'Funfair Frenzy', emoji: '🎠', theme: 'funfair', size: S, look: 'bright',
+      blurb: 'A funfair at dusk: a turning carousel, a swinging pirate ship, dodgems, a helter-skelter and a circus cannon.',
+      edge: 'wall', deathZ: -320, liquid: { kind: 'water', z: -24 },
+      ground: { z: 0, depth: 60, kind: 'boards', holes: [LAGOON] },
+      blocks: [], ramps: [], cyls: [], roads: [], pads: [], bumpers: [], boosts: [], hazards: [], boxes: [], spawns: [], movers: [], deco: [], paint: [],
+    };
+    const at = (o, a, r) => [Math.round(o[0] + Math.cos(a * deg) * r), Math.round(o[1] + Math.sin(a * deg) * r)];
+
+    // ---------- the carousel ----------
+    def.cyls.push({ x: C, y: C, r: 330, z0: -10, z1: DECK, kind: 'carousel', spin: 0.5 });
+    def.cyls.push({ x: C, y: C, r: 74, z0: 0, z1: 236, kind: 'carouselcore' });
+    // Eight horses riding round on poles (they turn with the deck: a sweeper whose arms are short
+    // and far out, with no hub of its own).
+    def.movers.push({ type: 'sweeper', x: C, y: C, z: DECK, len: 286, hub: 262, w: 12, lo: 0, hi: 196, arms: 8, speed: 0.5, phase: 0, hubless: true, kind: 'horses' });
+    for (const a of [0, 90, 180, 270]) {
+      const [x, y] = at([C, C], a, 410);
+      const along = a % 180 === 0;
+      def.ramps.push(along
+        ? { x0: Math.min(x, C + Math.cos(a * deg) * 320) - (a === 180 ? 0 : 0), y0: C - 70, x1: Math.max(x, C + Math.cos(a * deg) * 320), y1: C + 70, z0: 0, z1: DECK, dir: a === 0 ? 'x-' : 'x+', base: -10, kind: 'steps' }
+        : { x0: C - 70, y0: Math.min(y, C + Math.sin(a * deg) * 320), x1: C + 70, y1: Math.max(y, C + Math.sin(a * deg) * 320), z0: 0, z1: DECK, dir: a === 90 ? 'y-' : 'y+', base: -10, kind: 'steps' });
+    }
+    def.deco.push({ kind: 'carousel', x: C, y: C, z: DECK, r: 330, core: 74, top: 236, spin: 0.5, horses: 8, horseR: 274 });
+
+    // ---------- the helter-skelter (north) ----------
+    def.cyls.push({ x: HS[0], y: HS[1], r: 120, z0: -10, z1: TOWER, kind: 'helter' });
+    const slide = [];
+    const N = 18;
+    for (let k = 0; k <= N; k++) {
+      const u = k / N;
+      const a = 200 + 540 * u;
+      const r = u < 0.12 ? 64 + 140 * ease(u / 0.12) : 204;
+      slide.push([...at(HS, a, r), Math.round(TOWER * (1 - u) * (1 - u * 0.15) / 0.85 * 0.85)]);
+    }
+    slide[slide.length - 1][2] = 0;
+    def.roads.push({ points: slide, w: 100, thick: 16, curb: { w: 10, h: 14, side: 1, inset: 24 }, kind: 'slide' });
+    def.deco.push({ kind: 'helter', x: HS[0], y: HS[1], z: TOWER, r: 120 });
+    // Up by jump pad from beside it (the way down is the slide).
+    def.pads.push({ ...xy(at(HS, 110, 330)), z: 0, r: 38, to: [HS[0] - 20, HS[1] + 20, TOWER], t: 1.3 });
+
+    // ---------- the pirate ship (west) ----------
+    // Hung from an A-frame either side of the lane, it swings north and south across it.
+    def.movers.push({ type: 'pendulum', x: SHIP[0], y: SHIP[1], z: 340, len: 300, r: 58, axis: 'y', amp: 1.0, period: 4.4, phase: 0.1, kind: 'ship' });
+    for (const sx of [-1, 1]) {
+      for (const sy of [-1, 1]) def.cyls.push({ x: SHIP[0] + sx * 150, y: SHIP[1] + sy * 70, r: 16, z0: -10, z1: 330, kind: 'aframe' });
+    }
+
+    // ---------- the dodgems (east) ----------
+    const D = DODGE;
+    def.blocks.push({ ...D, z0: -10, z1: 8, kind: 'dodgemfloor' });
+    // A low rail round it with ways in from the west and the north.
+    const RAIL = 26;
+    const gapY = [(D.y0 + D.y1) / 2 - 90, (D.y0 + D.y1) / 2 + 90];
+    def.blocks.push(
+      { x0: D.x0, y0: D.y0, x1: D.x0 + 18, y1: gapY[0], z0: 8, z1: 8 + RAIL, kind: 'rail' },
+      { x0: D.x0, y0: gapY[1], x1: D.x0 + 18, y1: D.y1, z0: 8, z1: 8 + RAIL, kind: 'rail' },
+      { x0: D.x1 - 18, y0: D.y0, x1: D.x1, y1: D.y1, z0: 8, z1: 8 + RAIL, kind: 'rail' },
+      { x0: D.x0 + 18, y0: D.y1 - 18, x1: D.x1 - 18, y1: D.y1, z0: 8, z1: 8 + RAIL, kind: 'rail' },
+      { x0: D.x0 + 18, y0: D.y0, x1: (D.x0 + D.x1) / 2 - 90, y1: D.y0 + 18, z0: 8, z1: 8 + RAIL, kind: 'rail' },
+      { x0: (D.x0 + D.x1) / 2 + 90, y0: D.y0, x1: D.x1 - 18, y1: D.y0 + 18, z0: 8, z1: 8 + RAIL, kind: 'rail' },
+    );
+    for (const [x, y] of [[2330, 1330], [2600, 1420], [2400, 1640], [2640, 1700], [2470, 1480]]) def.bumpers.push({ x, y, z: 8, r: 30, h: 30, kick: 460, style: 'dodgem' });
+    def.deco.push({ kind: 'dodgems', ...D, z: 8 });
+
+    // ---------- the big top (south) ----------
+    const [tx, ty] = TENT;
+    def.blocks.push({ x0: tx - 300, y0: ty - 250, x1: tx + 300, y1: ty + 250, z0: 168, z1: 186, kind: 'bigtop' });
+    def.cyls.push({ x: tx - 110, y: ty, r: 16, z0: -10, z1: 300, kind: 'kingpole' }, { x: tx + 110, y: ty, r: 16, z0: -10, z1: 300, kind: 'kingpole' });
+    def.paint.push({ kind: 'circle', x: tx, y: ty, r: 150, w: 14, colour: '#ffd23f' });
+    def.deco.push({ kind: 'bigtop', x: tx, y: ty, w: 600, d: 500, z: 186 });
+    // The circus cannon: out of the big top's front onto the carousel's turning deck.
+    def.pads.push({ x: tx, y: ty - 330, z: 0, r: 40, to: [C + 120, C + 170, DECK], t: 1.3 });
+    def.deco.push({ kind: 'cannon', x: tx, y: ty - 330, z: 0, aim: -90 * deg });
+
+    // ---------- the log flume's lagoon (south-east) ----------
+    const L2 = LAGOON;
+    def.roads.push({ points: [[L2.x0 - 30, L2.y0 + 120, 0], [L2.x0 + 180, L2.y0 + 230, 18], [L2.x0 + 360, L2.y0 + 380, 18], [L2.x0 + 520, L2.y1 + 30, 0]], w: 110, thick: 16, curb: { w: 12, h: 14, inset: 26 }, kind: 'jetty' });
+    def.deco.push({ kind: 'flume', ...L2, z: -24 });
+
+    // ---------- stalls round the edge (cover) ----------
+    for (const [x, y, w, d, c] of [[700, 420, 260, 120, 0], [2300, 420, 260, 120, 1], [420, 2300, 120, 260, 2], [1000, 2620, 260, 120, 3], [2000, 2620, 260, 120, 4], [2640, 700, 120, 260, 5]]) {
+      def.blocks.push({ x0: x - w / 2, y0: y - d / 2, x1: x + w / 2, y1: y + d / 2, z0: -10, z1: 70, kind: 'stall' });
+      def.deco.push({ kind: 'stall', x, y, w, d, z: 70, style: c });
+    }
+
+    // ---------- boosts, boxes, spawns ----------
+    for (const a of [45, 135, 225, 315]) def.boosts.push({ ...xy(at([C, C], a, 560)), z: 0, angle: (a + 90) * deg });
+    for (const a of [0, 90, 180, 270]) def.boxes.push({ ...xy(at([C, C], a, 200)), z: DECK });
+    for (const a of [45, 135, 225, 315]) def.boxes.push({ ...xy(at([C, C], a, 720)), z: 0 });
+    def.boxes.push({ x: HS[0], y: HS[1], z: TOWER }, { ...xy(at(HS, 0, 330)), z: 0 }, { ...xy(at(HS, 180, 330)), z: 0 });
+    def.boxes.push({ x: SHIP[0], y: SHIP[1] - 330, z: 0 }, { x: SHIP[0], y: SHIP[1] + 330, z: 0 }, { x: SHIP[0], y: SHIP[1], z: 0 });
+    def.boxes.push({ x: 2330, y: 1500, z: 8 }, { x: 2600, y: 1560, z: 8 });
+    def.boxes.push({ x: tx, y: ty, z: 0 }, { x: tx - 200, y: ty + 120, z: 0 }, { x: tx + 200, y: ty + 120, z: 0 });
+    def.boxes.push({ x: 1950, y: 2350, z: 0 }, { x: 2440, y: 2050, z: 0 }, { x: 1050, y: 1950, z: 0 }, { x: 1950, y: 1050, z: 0 });
+    for (let k = 0; k < 8; k++) {
+      const a = 22.5 + 45 * k;
+      def.spawns.push({ ...xy(at([C, C], a, 640)), z: 0, angle: (a + 180) * deg });
+    }
+    // ...and round the fair, facing in (each checked: open ground, clear of everything).
+    for (const [x, y, a] of [[2279, 1950, 30], [1733, 2369, 75], [1267, 2369, 105], [864, 2136, 135], [721, 1050, 210], [1050, 721, 240],
+      [1950, 721, 300], [2279, 1050, 330], [1500, 2700, 90], [461, 2100, 150], [341, 1189, 195], [651, 651, 225], [1189, 341, 255],
+      [1811, 341, 285], [2349, 651, 315], [2626, 2150, 30]]) {
+      def.spawns.push({ x, y, z: 0, angle: (a + 180) * deg });
+    }
+    def.palette = {
+      boards: { top: '#c49a6e', side: '#8f5d34', top2: '#a97d52', pattern: 'planks', cell: 34, round: 0 },
+      carousel: { top: '#ffe08a', side: '#e5484d', top2: '#ffd04d', side2: '#ffffff', pattern: 'checker', cell: 60, sidePattern: 'bands', sideCell: 12, round: 0 },
+      carouselcore: { top: '#ffd23f', side: '#ff6f91', side2: '#ffd23f', sidePattern: 'ribs', sideCell: 22, round: 0 },
+      steps: { top: '#e5484d', side: '#b83a3e', top2: '#ffffff', pattern: 'chevrons', cell: 36, round: 0 },
+      helter: { top: '#ffd23f', side: '#ffffff', side2: '#e5484d', sidePattern: 'bands', sideCell: 40, round: 0 },
+      slide: { top: '#ffd23f', side: '#f2a531', top2: '#ffe27a', pattern: 'chevrons', cell: 40 },
+      aframe: { top: '#8f5d34', side: '#8f5d34' },
+      dodgemfloor: { top: '#3d4250', side: '#2b2f3a', top2: '#4b5161', pattern: 'grate', cell: 40, round: 0 },
+      rail: { top: '#ffd23f', side: '#2b2d33', side2: '#ffd23f', sidePattern: 'hazard', sideCell: 24, round: 3 },
+      bigtop: { top: '#e5484d', side: '#ffffff', top2: '#ffffff', pattern: 'hazard', cell: 120, round: 6, roof: true },
+      kingpole: { top: '#f2c14e', side: '#f2c14e' },
+      jetty: { top: '#c98c50', side: '#9c6334', top2: '#a8703e', pattern: 'planks', cell: 18 },
+      stall: { top: '#ffffff', side: '#3fa9f5', side2: '#ffffff', sidePattern: 'boards', sideCell: 30, round: 4 },
+      kerb: { top: '#ffffff', side: '#ffffff', top2: '#e5484d' },
+      rim: ['#ffffff', '#e5484d'], hazardRim: ['#ffffff', '#3fa9f5'],
+      water: { shallow: '#47c8e8', deep: '#1a78b0', line: '#e2fbff' },
+    };
+    return def;
+  }
+
   const xy = ([x, y]) => ({ x, y });
-  const ARENAS = [theHarbour(), theSkyGardens(), theMiniGolf(), theCinderBowl(), theKeep(), theGraveyard()]; // in the lobby's order
+  const ARENAS = [theHarbour(), theSkyGardens(), theMiniGolf(), theFunfair(), theCinderBowl(), theKeep(), theGraveyard()]; // in the lobby's order
 
   return {
     KART_R, KART_H, STEP, NAV, NAV_SLOPE, EDGE, ARENAS, makeLayeredArena, makeTerrain, groundBlocks, turn, symmetric, roadSolids, SEG,

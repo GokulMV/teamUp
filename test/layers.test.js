@@ -419,8 +419,8 @@ test('layers: CPU drivers on The Cinder Bowl collect boxes, drive the viaduct an
   assert.ok(burnt <= 3, `${burnt} karts drove into the lava by themselves`);
 }));
 
-test('layers: The Keep, The Graveyard, The Cinder Bowl, Harbour Havoc, Sky Gardens and Mini Golf Mayhem: every spawn and box stands on its floor, and each is reachable from every other', () => {
-  for (const id of ['keep', 'graveyard', 'cinder', 'harbour', 'skygardens', 'minigolf']) checkArena(K.getMap(id, 'arena'));
+test('layers: The Keep, The Graveyard, The Cinder Bowl, Harbour Havoc, Sky Gardens, Mini Golf Mayhem and Funfair Frenzy: every spawn and box stands on its floor, and each is reachable from every other', () => {
+  for (const id of ['keep', 'graveyard', 'cinder', 'harbour', 'skygardens', 'minigolf', 'funfair']) checkArena(K.getMap(id, 'arena'));
 });
 
 test('layers: CPU drivers on Mini Golf Mayhem collect boxes, get up onto the 18th green and keep out of the cups and the pond', () => seeded(1, () => {
@@ -482,6 +482,67 @@ test('layers: Mini Golf Mayhem: a cup is a hole you drive into (the kill goes to
   const posts = map.solids.filter((s) => s.kind === 'gantry');
   assert.strictEqual(posts.length, 2);
   for (const p of posts) assert.ok(Math.abs(p.y - putter.y) > reach + 40, 'the posts stand clear of its swing');
+});
+
+test('layers: CPU drivers on Funfair Frenzy collect boxes, mix it in the dodgems and keep out of the lagoon', () => seeded(1, () => {
+  const Bots = require('../server/games/kart-bots');
+  const events = [];
+  const room = {
+    settings: { kartMode: 'arena', kartMap: 'funfair', arenaTime: 600, kartItems: 'none', kartBots: 6, kartBotSkill: 'normal' },
+    players: new Map(), connectedPlayers: [], emit: (e, d) => events.push([e, d]), emitTo() {}, teamList: () => [], systemMessage() {},
+    buildResults: () => ({ players: [] }), finishGame() {},
+  };
+  const game = new KartBattle(room);
+  assert.strictEqual(game.map.id, 'funfair');
+  Bots.makeBots(6, { skill: 'normal' }).forEach((b, i) => game.addKart(b, i));
+  game.items = ['rocket'];
+  game.boxes = game.map.itemBoxes.map(() => 0);
+  game.rollItem = () => null;
+  game.phase = 'racing';
+  game.raceStart = 0;
+  let boxes = 0;
+  let dodgems = 0;
+  for (let i = 0; i < 60 * 30; i++) {
+    game.time += 1 / 30;
+    const before = game.boxes.filter((b) => b > 0).length;
+    game.simulate(1 / 30);
+    boxes += Math.max(0, game.boxes.filter((b) => b > 0).length - before);
+    for (const k of game.karts.values()) if (k.dead <= 0 && k.x > 2160 && k.x < 2760 && k.y > 1150 && k.y < 1850) dodgems += 1 / 30;
+  }
+  assert.strictEqual(game.botError, false);
+  const lost = events.filter(([e, d]) => e === 'game:kart:hit' && d.kill && d.by < 0).length;
+  assert.ok(boxes >= 20, `${boxes} boxes picked up`);
+  assert.ok(dodgems > 3, `${dodgems.toFixed(0)} kart-seconds in the dodgems`);
+  assert.ok(lost <= 2, `${lost} karts drove into the lagoon by themselves`);
+}));
+
+test('layers: Funfair Frenzy: the carousel deck carries a parked kart round with it, the horses ride round in step, and the pirate ship swings down to kart height', () => {
+  const map = K.getMap('funfair', 'arena');
+  const deck = map.solids.find((s) => s.kind === 'carousel');
+  assert.ok(deck && deck.src.spin > 0, 'the deck turns');
+  const horses = map.movers.find((m) => m.kind === 'horses');
+  assert.ok(horses.hubless && horses.speed === deck.src.spin, 'the horses turn with it');
+  // A kart parked on the deck goes round with it, and turns with it, keeping its distance from the middle.
+  const r0 = 200;
+  const kart = { x: deck.x + r0, y: deck.y, angle: Math.PI / 2, heading: Math.PI / 2, speed: 0, z: deck.z1 };
+  const steps = 60;
+  for (let i = 0; i < steps; i++) K.stepKart(kart, {}, 1 / 30, map, { t: i / 30 });
+  const turned = Math.atan2(kart.y - deck.y, kart.x - deck.x);
+  const expect = deck.src.spin * steps / 30;
+  assert.ok(Math.abs(turned - expect) < 0.05, `carried ${turned.toFixed(2)} rad (deck turned ${expect.toFixed(2)})`);
+  assert.ok(Math.abs(Math.hypot(kart.x - deck.x, kart.y - deck.y) - r0) < 3, 'same distance from the middle');
+  assert.ok(Math.abs(kart.angle - (Math.PI / 2 + expect)) < 0.05, 'facing turned with the deck');
+  assert.ok(Math.abs(kart.z - deck.z1) < 1, 'still on the deck');
+  // Off the deck, the boards don't move you.
+  const still = { x: 300, y: 300, angle: 0, heading: 0, speed: 0, z: 0 };
+  for (let i = 0; i < 30; i++) K.stepKart(still, {}, 1 / 30, map, { t: i / 30 });
+  assert.ok(Math.hypot(still.x - 300, still.y - 300) < 1);
+  // The ship: low enough at the bottom of its swing to hit a kart, and it sweeps well either way.
+  const ship = map.movers.find((m) => m.type === 'pendulum');
+  const low = Array.from({ length: 40 }, (_, i) => map.pendulumAt(ship, (i / 40) * ship.period)).sort((a, b) => a.z - b.z)[0];
+  assert.ok(low.z - ship.r < 30, `down to kart height (${Math.round(low.z - ship.r)})`);
+  const reach = Math.max(...Array.from({ length: 40 }, (_, i) => Math.abs(map.pendulumAt(ship, (i / 40) * ship.period).y - ship.y)));
+  assert.ok(reach > 200, `it sweeps ${Math.round(reach)} either way`);
 });
 
 test('layers: CPU drivers on Harbour Havoc work the yard, climb the pyramid, use the pads and mostly stay dry', () => seeded(1, () => {

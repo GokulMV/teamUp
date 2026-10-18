@@ -499,6 +499,14 @@ export const THEMES = {
     ground: () => tex.ground('#7ed36a', ['#74c95f', '#86d672']),
     clouds: 16,
   },
+  // Funfair Frenzy: a summer evening at the fair. A low sun in the west, the sky going from violet
+  // overhead to a warm orange glow at the horizon, haze softening the rides beyond the fence.
+  funfair: {
+    sky: [0x4b3fa8, 0xffb070], fog: [0xf6b48c, 2800, 12000], fogExp: 0.00007, hemi: [0xffe0c8, 0x6a5a8e, 1.3], sun: [0xffc890, 3.0],
+    sunOffset: [-1000, 440, 380],
+    ground: () => tex.ground('#c9a87a', ['#c09f70', '#d2b284']),
+    clouds: 14, cloudTint: 0xffc6b0,
+  },
   // The weekly arena's other looks (with keep and graveyard above).
   ruins: {
     sky: [0x3b8be0, 0xf6dcae], fog: [0xf4dfb8, 3200, 13000], hemi: [0xffe9c8, 0xa06a3a, 1.2], sun: [0xffe2b0, 2.9],
