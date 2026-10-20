@@ -19,6 +19,19 @@ Everything else in Ball & Chain (course pieces, stick figures, textures, the oth
 
 ## Kart Battle
 
+### Sounds
+
+| File (`public/audio/kart/`) | Used for | Licence | Source |
+|------|----------|---------|--------|
+| `engine.wav` (from `audio/engine.ogg`) | Your engine and the nearest rivals' engines, pitched with speed | CC0 1.0 | Kenney, [Starter Kit Racing](https://github.com/KenneyNL/Starter-Kit-Racing) |
+| `skid.wav` (from `audio/skid.ogg`, by [Landeplage](https://github.com/Landeplage)) | Tyre skid while drifting | CC0 1.0 | Kenney, [Starter Kit Racing](https://github.com/KenneyNL/Starter-Kit-Racing) |
+| `impact.mp3` (from `audio/impact.ogg`) | Bumps, hits, landings | CC0 1.0 | Kenney, [Starter Kit Racing](https://github.com/KenneyNL/Starter-Kit-Racing) |
+| `explode.mp3`, `hurt.mp3`, `blaster.mp3`, `repeater.mp3`, `swap.mp3`, `hop.mp3`, `land.mp3`, `whoosh.mp3` (from `enemy_destroy`, `enemy_hurt`, `blaster`, `blaster_repeater`, `weapon_change`, `jump_b`, `land`, `enemy_attack`) | Explosions, taking a hit, rockets, the minigun, swapping items, hops, landings, boosts and pads | CC0 1.0 | Kenney, [Starter Kit FPS](https://github.com/KenneyNL/Starter-Kit-FPS) |
+| `coin.mp3`, `break.mp3`, `fall.mp3` | Item box and roulette, ice shattering, falling off | CC0 1.0 | Kenney, [Starter Kit 3D Platformer](https://github.com/KenneyNL/Starter-Kit-3D-Platformer) |
+
+The two loops were cut to a few seconds, crossfaded end into start so they loop without a click, and saved as 22 kHz mono WAV (gapless in every browser); the rest are small mono MP3s. The countdown, mini-turbo and item jingles are still synthesized (`public/js/sfx.js`), layered over these where noted there.
+
+
 | What | Used for | Licence | Source |
 |------|----------|---------|--------|
 | [three.js](https://threejs.org) r169 and its addons (EffectComposer, UnrealBloomPass, OutputPass, RoomEnvironment, RoundedBoxGeometry, BufferGeometryUtils) | The 3D tracks, karts, drivers, items and effects | MIT | npm `three`, served from `/vendor/three` |

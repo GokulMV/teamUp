@@ -10,6 +10,7 @@ window.Games.kart = {
     const Icons = window.ItemIcons;
     const SNAP_MS = 1000 / 15; // the server sends a snapshot every other 30 Hz tick
     const touch = matchMedia('(pointer: coarse)').matches;
+    Sfx.kartPreload?.(); // the recorded engine, skid and impacts start loading now
     // Snapshot flag bits (see broadcast() in server/games/kart.js).
     const F = { spin: 1, boost: 2, shield: 4, finished: 8, invuln: 16, dead: 32, drift: 64, ghost: 1024, gun: 2048, star: 4096, shrunk: 8192, inked: 16384, frozen: 32768, spikes: 65536 };
     // Snapshot kart row: [idx, x, y, angle*1000, speed, lap, place, item, ammo, flags, kills, deaths, hp, air, fx, roulette,
@@ -828,6 +829,14 @@ window.Games.kart = {
       if (!local) return 0.5;
       return Math.max(0.08, 1 - Math.hypot(local.x - x, local.y - y) / 1400);
     }
+    // Where a sound is, left (-1) to right (1) of my kart.
+    function panAt(x, y) {
+      if (!local) return 0;
+      const dx = x - local.x;
+      const dy = y - local.y;
+      const d = Math.hypot(dx, dy);
+      return d < 40 ? 0 : (dx * -Math.sin(local.angle) + dy * Math.cos(local.angle)) / d;
+    }
 
     // Drawbridges ring a bell two seconds before they go up, and whoever is close by gets told.
     const bridgeRang = new Map(); // drawbridge -> when the rise it rang for starts
@@ -904,7 +913,7 @@ window.Games.kart = {
       const keep = Math.exp(-dt * 12);
       fix.x *= keep; fix.y *= keep; fix.a *= keep; fix.z *= keep;
       if (local && myRow && latest?.phase === 'racing' && !(myRow[9] & F.dead)) {
-        Sfx.engine(Math.abs(local.speed) / K.PHYS.maxSpeed, !!(myRow[9] & (F.boost | F.star)), !!(myRow[9] & F.drift), local.falling ? 0 : local.surface);
+        Sfx.engine(Math.abs(local.speed) / K.PHYS.maxSpeed, !!(myRow[9] & (F.boost | F.star)), !!(myRow[9] & F.drift), local.falling ? 0 : local.surface, !!input.up);
       } else {
         Sfx.engineStop();
       }
@@ -916,6 +925,19 @@ window.Games.kart = {
       const view = interpolated();
       const karts = view ? view.karts : [];
       const me = karts.find((k) => k.idx === myIdx);
+      // The nearest rivals' engines, panned to where they are around my kart.
+      if (local && latest?.phase === 'racing') {
+        const fx = Math.cos(local.angle);
+        const fy = Math.sin(local.angle);
+        Sfx.rivals?.(karts.filter((k) => k.idx !== myIdx && !(k.flags & F.dead))
+          .map((k) => {
+            const dx = k.x - local.x;
+            const dy = k.y - local.y;
+            const dist = Math.hypot(dx, dy) || 1;
+            return { id: k.idx, dist, pan: (dx * -fy + dy * fx) / dist, speed: Math.abs(k.speed || 0) / K.PHYS.maxSpeed };
+          })
+          .filter((r) => r.dist < 1100).sort((a, b) => a.dist - b.dist));
+      } else Sfx.rivals?.([]);
       if (local && ack && me && !(me.flags & F.dead) && !(me.fx & 1) && !local.dead && !local.falling) {
         // Carry the last step's motion on for the time since it (no added input lag).
         const pp = predPrev || local;
@@ -1043,7 +1065,7 @@ window.Games.kart = {
           if (data.idx !== myIdx && k) Sfx.boing?.(volumeAt(k[1], k[2]));
         } else if (event === 'game:kart:whack') {
           view3d?.bumpFx?.(data.x, data.y, 1, true, data.z);
-          if (data.idx !== myIdx) Sfx.bump(volumeAt(data.x, data.y));
+          if (data.idx !== myIdx) Sfx.bump(volumeAt(data.x, data.y), panAt(data.x, data.y));
         } else if (event === 'game:kart:use') {
           if (data.idx === myIdx && ITEM_SOUND[data.item]) Sfx[ITEM_SOUND[data.item]]?.();
           if (data.idx === myIdx && data.item === 'minigun') Sfx.minigun?.();
@@ -1053,7 +1075,7 @@ window.Games.kart = {
           view3d?.explode(data.x, data.y, data.kind, data.r, null, data.z);
           const v = volumeAt(data.x, data.y);
           if (data.kind === 'bouncer') Sfx.bump(v * 0.5);
-          else Sfx.explosion(v * (data.kind === 'rocket' ? 0.5 : 1));
+          else Sfx.explosion(v * (data.kind === 'rocket' ? 0.5 : 1), panAt(data.x, data.y));
           if (data.kind === 'comet') Sfx.thunder?.(v * 0.6);
         } else if (event === 'game:kart:shock') {
           view3d?.shock(data.x, data.y, data.r, data.z);
@@ -1089,7 +1111,7 @@ window.Games.kart = {
             view3d?.fallFx(data.x, data.y, data.kind, data.z);
             ({ acid: Sfx.sizzle, cup: Sfx.holeOut }[data.kind] || Sfx.splash)?.(data.target === myIdx ? 1 : volumeAt(data.x, data.y));
           } else if (!QUIET_HITS.includes(data.kind) || data.kill) view3d?.explode(data.x, data.y, kind, data.kill ? 90 : 50, colorOf(victim), data.z);
-          if (!['bullet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy'].includes(data.kind) || data.kill) Sfx.explosion(volumeAt(data.x, data.y) * (data.kill ? 1 : 0.4));
+          if (!['bullet', 'thunder', 'ram', 'snowball', 'spikes', 'sticky', 'decoy'].includes(data.kind) || data.kill) Sfx.explosion(volumeAt(data.x, data.y) * (data.kill ? 1 : 0.4), panAt(data.x, data.y));
           if (data.kind === 'snowball') Sfx.freeze?.(data.target === myIdx ? 1 : volumeAt(data.x, data.y));
           if (data.kind === 'spikes') view3d?.bumpFx?.(data.x, data.y, 1, true, data.z);
           if (data.shatter) {

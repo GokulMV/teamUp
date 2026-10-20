@@ -1,4 +1,5 @@
-// Sound effects synthesized with the Web Audio API (no audio files needed).
+// Sound effects: synthesized with the Web Audio API, plus recorded CC0 samples for Kart Battle and
+// Ball & Chain (public/audio, see CREDITS.md).
 (function () {
   let ctx = null;
   let master = null;
@@ -52,6 +53,31 @@
     g.connect(master);
     o.start(t);
     o.stop(t + dur + 0.05);
+  }
+
+  // A clean tone with a fast attack and a smooth decay: a sine, a quiet octave and a touch of
+  // the fifth, through a gentle low-pass so nothing buzzes.
+  function chime(freq, dur = 0.3, vol = 0.2, delay = 0) {
+    if (!ready()) return;
+    const t = ctx.currentTime + delay;
+    const out = ctx.createGain();
+    out.gain.setValueAtTime(0.0001, t);
+    out.gain.exponentialRampToValueAtTime(vol, t + 0.008);
+    out.gain.exponentialRampToValueAtTime(vol * 0.55, t + dur * 0.35);
+    out.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = Math.min(9000, freq * 5);
+    lp.connect(out); out.connect(master);
+    for (const [mult, g] of [[1, 1], [2, 0.28], [3, 0.08]]) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.setValueAtTime(freq * mult, t);
+      const og = ctx.createGain();
+      og.gain.value = g;
+      o.connect(og); og.connect(lp);
+      o.start(t);
+      o.stop(t + dur + 0.05);
+    }
   }
 
   function noise({ dur = 0.3, vol = 0.3, filter = 'lowpass', from = 4000, to = 200, q = 1, delay = 0 } = {}) {
@@ -118,9 +144,13 @@
 
   // Continuous engine sound for your own kart. surface: 0 road, 1 run-off, 2 grass (K.stepKart).
   let engine = null;
-  function engineUpdate(speedRatio, boosting, drifting, surface = 0) {
+  function engineUpdate(speedRatio, boosting, drifting, surface = 0, throttle = true) {
     if (!ready()) { engineStop(); return; }
     const t = ctx.currentTime;
+    // The recorded engine has arrived: swap the synthesized one out for it.
+    if (engine && engine.kind === 'synth' && buf('engine')) engineStop(true);
+    if (!engine && buf('engine')) { engine = sampleEngine(t); return; }
+    if (engine && engine.kind === 'sample') { sampleEngineUpdate(t, speedRatio, boosting, drifting, surface, throttle); return; }
     if (!engine) {
       engineBuf = engineBuf || makeEngineBuffer();
       const out = ctx.createGain();
@@ -168,7 +198,7 @@
       rg.gain.value = 0;
       rumble.connect(rf); rf.connect(rg); rg.connect(master);
       rumble.start(t, Math.random());
-      engine = { voices, lp, out, s, sg, rumble, rg, warm: t + 0.9 };
+      engine = { kind: 'synth', voices, lp, out, s, sg, rumble, rg, warm: t + 0.9 };
       return;
     }
     if (t < engine.warm) return; // let the start-up flare play out
@@ -181,10 +211,65 @@
     engine.sg.gain.setTargetAtTime(drifting ? 0.07 : 0, t, 0.05);
     engine.rg.gain.setTargetAtTime(surface === 2 ? 0.08 * Math.min(1, r) : surface === 1 ? 0.035 * Math.min(1, r) : 0, t, 0.08);
   }
-  function engineStop() {
+  // The recorded engine (Kenney's racing kit): pitched from half speed at idle to about three times
+  // flat out (as the kit's own car does), a little higher with the throttle down, the filter
+  // opening up as it revs. Drifting adds the recorded tyre skid; grass and gravel a low rumble.
+  function sampleEngine(t) {
+    const out = ctx.createGain();
+    out.gain.value = 0;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 1400; lp.Q.value = 0.7;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 40;
+    hp.connect(lp); lp.connect(out); out.connect(master);
+    const src = ctx.createBufferSource();
+    src.buffer = buf('engine'); src.loop = true;
+    src.playbackRate.setValueAtTime(0.3, t);
+    src.playbackRate.linearRampToValueAtTime(1.1, t + 0.35); // catches and flares...
+    src.playbackRate.setTargetAtTime(0.6, t + 0.4, 0.25); // ...and settles to idle
+    src.connect(hp);
+    src.start(t);
+    out.gain.linearRampToValueAtTime(0.2, t + 0.25);
+    const skidBuf = buf('skid');
+    const s = ctx.createBufferSource();
+    s.buffer = skidBuf || noiseBuf; s.loop = true;
+    const sf = ctx.createBiquadFilter();
+    sf.type = skidBuf ? 'highpass' : 'bandpass'; sf.frequency.value = skidBuf ? 300 : 2400; sf.Q.value = skidBuf ? 0.7 : 4;
+    const sg = ctx.createGain();
+    sg.gain.value = 0;
+    s.connect(sf); sf.connect(sg); sg.connect(master);
+    s.start(t, Math.random());
+    const rumble = ctx.createBufferSource();
+    rumble.buffer = noiseBuf; rumble.loop = true;
+    const rf = ctx.createBiquadFilter();
+    rf.type = 'lowpass'; rf.frequency.value = 260; rf.Q.value = 0.9;
+    const rg = ctx.createGain();
+    rg.gain.value = 0;
+    rumble.connect(rf); rf.connect(rg); rg.connect(master);
+    rumble.start(t, Math.random());
+    if (!skidBuf) loadSample(KART.skid);
+    return { kind: 'sample', voices: [{ src, mult: 1 }], lp, out, s, sg, skid: !!skidBuf, rumble, rg, warm: t + 0.7 };
+  }
+  function sampleEngineUpdate(t, speedRatio, boosting, drifting, surface, throttle) {
+    if (t < engine.warm) return;
+    const r = Math.max(0, Math.min(1.4, speedRatio));
+    const rate = 0.55 + r * 2.3 + (throttle ? 0.18 : 0) + (boosting ? 0.35 : 0);
+    engine.voices[0].src.playbackRate.setTargetAtTime(rate, t, throttle ? 0.12 : 0.25);
+    engine.lp.frequency.setTargetAtTime(1300 + r * 3600 + (boosting ? 1500 : 0), t, 0.1);
+    engine.out.gain.setTargetAtTime(0.16 + Math.min(1, r) * 0.14 + (throttle ? 0.03 : 0) + (boosting ? 0.05 : 0), t, 0.12);
+    engine.sg.gain.setTargetAtTime(drifting ? (engine.skid ? 0.2 : 0.07) * Math.min(1, 0.5 + r) : 0, t, 0.05);
+    if (engine.skid) engine.s.playbackRate.setTargetAtTime(0.85 + Math.min(1, r) * 0.35, t, 0.1);
+    engine.rg.gain.setTargetAtTime(surface === 2 ? 0.09 * Math.min(1, r) : surface === 1 ? 0.04 * Math.min(1, r) : 0, t, 0.08);
+  }
+  function engineStop(quick) {
     if (!engine) return;
     const e = engine;
     engine = null;
+    if (quick) {
+      try { e.out.gain.setTargetAtTime(0, ctx.currentTime, 0.03); e.sg.gain.setTargetAtTime(0, ctx.currentTime, 0.03); e.rg.gain.setTargetAtTime(0, ctx.currentTime, 0.03); } catch { /* gone */ }
+      setTimeout(() => { [...e.voices.map((v) => v.src), e.s, e.rumble].forEach((n) => { try { n.stop(); } catch { /* stopped */ } }); }, 200);
+      return;
+    }
     try {
       const t = ctx.currentTime;
       for (const v of e.voices) v.src.playbackRate.setTargetAtTime(0.3 * v.mult, t, 0.2); // winds down
@@ -217,6 +302,85 @@
     src.connect(g);
     g.connect(master);
     src.start();
+  }
+
+  // Kart Battle's recorded sounds (CC0: Kenney's racing, FPS and platformer starter kits; see
+  // CREDITS.md). Loaded when a kart game starts; until they arrive the synthesized versions play.
+  const KART = {
+    engine: '/audio/kart/engine.wav', skid: '/audio/kart/skid.wav', impact: '/audio/kart/impact.mp3',
+    explode: '/audio/kart/explode.mp3', hurt: '/audio/kart/hurt.mp3', blaster: '/audio/kart/blaster.mp3',
+    repeater: '/audio/kart/repeater.mp3', swap: '/audio/kart/swap.mp3', hop: '/audio/kart/hop.mp3',
+    land: '/audio/kart/land.mp3', coin: '/audio/kart/coin.mp3', break: '/audio/kart/break.mp3',
+    fall: '/audio/kart/fall.mp3', whoosh: '/audio/kart/whoosh.mp3',
+  };
+  const buf = (name) => samples[KART[name]]?.buf || null;
+  // Play a kart sample: vol, playback rate, start delay (s) and stereo pan (-1 left .. 1 right).
+  // Returns false when it isn't loaded yet, so the caller can fall back to a synthesized sound.
+  function ks(name, vol = 0.5, rate = 1, delay = 0, pan = 0) {
+    if (!ready()) return true;
+    const b = buf(name);
+    if (!b) { loadSample(KART[name]); return false; }
+    const t = ctx.currentTime + delay;
+    const src = ctx.createBufferSource();
+    src.buffer = b;
+    src.playbackRate.value = rate;
+    const g = ctx.createGain();
+    g.gain.value = vol;
+    src.connect(g);
+    if (pan && ctx.createStereoPanner) {
+      const p = ctx.createStereoPanner();
+      p.pan.value = Math.max(-1, Math.min(1, pan));
+      g.connect(p);
+      p.connect(master);
+    } else g.connect(master);
+    src.start(t);
+    return true;
+  }
+  const jitter = (r = 0.08) => 1 + (Math.random() * 2 - 1) * r;
+
+  // Rival karts' engines: the nearest few, panned to where they are and fading with distance.
+  const rivalVoices = new Map(); // id -> { src, g, p }
+  function rivalsUpdate(list) {
+    if (!ready() || !buf('engine')) { rivalsStop(); return; }
+    const t = ctx.currentTime;
+    const keep = new Set();
+    for (const r of list.slice(0, 3)) {
+      keep.add(r.id);
+      let v = rivalVoices.get(r.id);
+      if (!v) {
+        const src = ctx.createBufferSource();
+        src.buffer = buf('engine');
+        src.loop = true;
+        const lp = ctx.createBiquadFilter();
+        lp.type = 'lowpass'; lp.frequency.value = 1600;
+        const g = ctx.createGain();
+        g.gain.value = 0;
+        const p = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+        src.connect(lp); lp.connect(g);
+        if (p) { g.connect(p); p.connect(master); } else g.connect(master);
+        src.start(t, Math.random() * 3);
+        v = { src, g, p, lp, pitch: 0.94 + Math.random() * 0.12 };
+        rivalVoices.set(r.id, v);
+      }
+      const near = Math.max(0, 1 - r.dist / 1100);
+      const sp = Math.max(0, Math.min(1.3, r.speed));
+      v.src.playbackRate.setTargetAtTime((0.55 + sp * 2.1) * v.pitch, t, 0.1);
+      v.lp.frequency.setTargetAtTime(900 + sp * 2200, t, 0.1);
+      v.g.gain.setTargetAtTime(0.11 * near * near * (0.45 + 0.55 * Math.min(1, sp)), t, 0.12);
+      if (v.p) v.p.pan.setTargetAtTime(Math.max(-0.9, Math.min(0.9, r.pan)), t, 0.08);
+    }
+    for (const [id, v] of rivalVoices) {
+      if (keep.has(id)) continue;
+      rivalVoices.delete(id);
+      v.g.gain.setTargetAtTime(0, t, 0.1);
+      setTimeout(() => { try { v.src.stop(); } catch { /* stopped */ } }, 600);
+    }
+  }
+  function rivalsStop() {
+    for (const v of rivalVoices.values()) {
+      try { v.g.gain.setTargetAtTime(0, ctx.currentTime, 0.05); setTimeout(() => { try { v.src.stop(); } catch { /* stopped */ } }, 400); } catch { /* gone */ }
+    }
+    rivalVoices.clear();
   }
 
   // Star power: a bright looping arpeggio over a bass pulse while it lasts.
@@ -264,29 +428,36 @@
       try { localStorage.setItem('teamup-muted', m ? '1' : '0'); } catch { /* ignore */ }
       if (master) master.gain.value = m ? 0 : 0.55;
       if (direct) direct.gain.value = m ? 0 : 1;
-      if (m) { engineStop(); starStop(); }
+      if (m) { engineStop(); rivalsStop(); starStop(); }
     },
     engine: engineUpdate,
-    engineStop,
-    beep() { tone(660, { type: 'square', dur: 0.18, vol: 0.18 }); },
-    go() { tone(990, { type: 'square', dur: 0.45, vol: 0.2 }); tone(1320, { type: 'square', dur: 0.45, vol: 0.12, delay: 0.02 }); },
-    pickup() { [660, 880, 1100, 1320].forEach((f, i) => tone(f, { type: 'triangle', dur: 0.09, vol: 0.18, delay: i * 0.05 })); },
-    rocket() { noise({ dur: 0.45, vol: 0.35, filter: 'bandpass', from: 600, to: 3500, q: 1.5 }); tone(220, { type: 'sawtooth', dur: 0.3, vol: 0.08, slide: 3 }); },
+    engineStop() { engineStop(); rivalsStop(); },
+    rivals: rivalsUpdate,
+    kartPreload() { init(); if (ctx) Object.values(KART).forEach(loadSample); },
+    // Start lights: 3, 2, 1 are a clean, round tone (a sine with a soft octave over it, like a race
+    // start's timing beacon); GO is the same an octave up with a fifth on top and a whoosh.
+    beep() { chime(587, 0.32, 0.22); },
+    go() { chime(1175, 0.65, 0.24); chime(1760, 0.6, 0.1, 0.01); ks('whoosh', 0.35, 1.1); },
+    pickup() { if (!ks('coin', 0.5)) [660, 880, 1100, 1320].forEach((f, i) => tone(f, { type: 'triangle', dur: 0.09, vol: 0.18, delay: i * 0.05 })); },
+    rocket() { if (ks('blaster', 0.42, 0.72 * jitter(0.05))) { ks('whoosh', 0.35, 0.8); return; } noise({ dur: 0.45, vol: 0.35, filter: 'bandpass', from: 600, to: 3500, q: 1.5 }); tone(220, { type: 'sawtooth', dur: 0.3, vol: 0.08, slide: 3 }); },
     banana() { tone(300, { type: 'triangle', dur: 0.15, vol: 0.2, slide: 0.6 }); },
     shield() { tone(400, { type: 'sine', dur: 0.5, vol: 0.2, slide: 2.5 }); tone(600, { type: 'sine', dur: 0.5, vol: 0.1, slide: 2.5, delay: 0.05 }); },
-    boost() { noise({ dur: 0.7, vol: 0.4, filter: 'bandpass', from: 300, to: 2500, q: 0.8 }); },
-    miniTurbo(level) { noise({ dur: 0.35, vol: 0.3, filter: 'highpass', from: 1500, to: 5000 }); tone(level > 1 ? 880 : 660, { type: 'square', dur: 0.12, vol: 0.12 }); },
-    explosion(volume = 1) {
+    boost() { ks('whoosh', 0.45, 0.75); noise({ dur: 0.7, vol: 0.28, filter: 'bandpass', from: 300, to: 2500, q: 0.8 }); },
+    miniTurbo(level) { ks('whoosh', 0.4, level > 1 ? 1.15 : 1); noise({ dur: 0.35, vol: 0.2, filter: 'highpass', from: 1500, to: 5000 }); tone(level > 1 ? 880 : 660, { type: 'square', dur: 0.1, vol: 0.08 }); },
+    explosion(volume = 1, pan = 0) {
       const v = Math.max(0.05, Math.min(1, volume));
-      noise({ dur: 1.1, vol: 0.7 * v, filter: 'lowpass', from: 2500, to: 60 });
-      tone(90, { type: 'sine', dur: 0.6, vol: 0.5 * v, slide: 0.3 });
+      // The recorded blast, with a sub thump under it so it lands on small speakers too.
+      if (ks('explode', 0.85 * v, 0.78 * jitter(0.08), 0, pan)) ks('impact', 0.5 * v, 0.7, 0, pan);
+      else noise({ dur: 1.1, vol: 0.7 * v, filter: 'lowpass', from: 2500, to: 60 });
+      tone(80, { type: 'sine', dur: 0.55, vol: 0.45 * v, slide: 0.35 });
     },
     hit() {
+      if (ks('hurt', 0.6, 0.9)) { ks('impact', 0.7, 0.85); tone(120, { type: 'sine', dur: 0.3, vol: 0.35, slide: 0.4 }); return; }
       noise({ dur: 0.25, vol: 0.45, filter: 'lowpass', from: 1800, to: 120 });
       tone(140, { type: 'sine', dur: 0.3, vol: 0.4, slide: 0.4 });
       tone(520, { type: 'square', dur: 0.35, vol: 0.1, slide: 0.25 });
     },
-    bump(volume = 0.4) { noise({ dur: 0.12, vol: volume, filter: 'lowpass', from: 1200, to: 150 }); },
+    bump(volume = 0.4, pan = 0) { if (!ks('impact', Math.min(1, volume * 1.5), jitter(0.1), 0, pan)) noise({ dur: 0.12, vol: volume, filter: 'lowpass', from: 1200, to: 150 }); },
     shock(volume = 1) {
       const v = Math.max(0.1, Math.min(1, volume));
       noise({ dur: 0.6, vol: 0.5 * v, filter: 'highpass', from: 6000, to: 800 });
@@ -294,6 +465,8 @@
       tone(60, { type: 'sine', dur: 0.5, vol: 0.4 * v, slide: 0.5 });
     },
     minigun() {
+      if (buf('repeater')) { for (let i = 0; i < 5; i++) ks('repeater', 0.32, jitter(0.04), i * 0.38); return; }
+      ks('repeater', 0);
       for (let i = 0; i < 24; i++) noise({ dur: 0.05, vol: 0.18, filter: 'bandpass', from: 2200, to: 900, q: 2, delay: i * 0.08 });
     },
     kill() { tone(1046, { type: 'triangle', dur: 0.12, vol: 0.22 }); tone(1568, { type: 'triangle', dur: 0.25, vol: 0.22, delay: 0.08 }); },
@@ -313,6 +486,7 @@
     trick() { noise({ dur: 0.3, vol: 0.25, filter: 'bandpass', from: 900, to: 3200, q: 1.2 }); [784, 1175].forEach((f, i) => tone(f, { type: 'triangle', dur: 0.12, vol: 0.14, delay: i * 0.07 })); },
     land(volume = 0.6) {
       const v = Math.max(0.1, Math.min(1, volume));
+      if (ks('land', 0.9 * v, 0.9)) { ks('impact', 0.45 * v, 0.75); tone(80, { type: 'sine', dur: 0.18, vol: 0.25 * v, slide: 0.5 }); return; }
       noise({ dur: 0.18, vol: 0.45 * v, filter: 'lowpass', from: 900, to: 90 });
       tone(85, { type: 'sine', dur: 0.2, vol: 0.35 * v, slide: 0.5 });
     },
@@ -326,6 +500,7 @@
     // and the bell that rings before a drawbridge goes up.
     pad(volume = 1) {
       const v = Math.max(0.05, Math.min(1, volume));
+      ks('whoosh', 0.45 * v, 0.7);
       tone(150, { type: 'sine', dur: 0.3, vol: 0.4 * v, slide: 3.2 });
       noise({ dur: 0.55, vol: 0.3 * v, filter: 'bandpass', from: 500, to: 3800, q: 0.9 });
       tone(620, { type: 'triangle', dur: 0.22, vol: 0.1 * v, slide: 1.8, delay: 0.05 });
@@ -355,6 +530,7 @@
     },
     fall(volume = 1) {
       const v = Math.max(0.05, Math.min(1, volume));
+      ks('fall', 0.6 * v, 0.75);
       tone(700, { type: 'triangle', dur: 0.7, vol: 0.16 * v, slide: 0.25 });
       noise({ dur: 0.6, vol: 0.2 * v, filter: 'lowpass', from: 1500, to: 200, delay: 0.5 });
     },
@@ -372,6 +548,7 @@
     },
     shatter(volume = 1) {
       const v = Math.max(0.05, Math.min(1, volume));
+      if (ks('break', 0.75 * v, 1.15)) { noise({ dur: 0.25, vol: 0.2 * v, filter: 'highpass', from: 7000, to: 3000 }); return; }
       noise({ dur: 0.35, vol: 0.45 * v, filter: 'highpass', from: 7000, to: 3000 });
       for (let i = 0; i < 6; i++) tone(2000 + Math.random() * 2500, { type: 'triangle', dur: 0.08, vol: 0.06 * v, delay: 0.02 + i * 0.035 });
     },
@@ -386,17 +563,20 @@
     },
     // Hop: a springy little boing.
     hop() {
+      if (ks('hop', 0.4, 1.1 * jitter(0.05))) return;
       tone(260, { type: 'sine', dur: 0.13, vol: 0.13, slide: 2.1 });
       noise({ dur: 0.05, vol: 0.05, filter: 'highpass', from: 2500, to: 4000 });
     },
     // Swapping to the reserve item: a quick two-note flick.
     swap() {
+      if (ks('swap', 0.45)) return;
       tone(660, { type: 'triangle', dur: 0.07, vol: 0.14, slide: 1.5 });
       tone(990, { type: 'triangle', dur: 0.09, vol: 0.12, slide: 1.3, delay: 0.06 });
       noise({ dur: 0.08, vol: 0.06, filter: 'highpass', from: 3500, to: 6000 });
     },
     rouletteDing() {
-      tone(1568, { type: 'sine', dur: 0.7, vol: 0.18 });
+      ks('coin', 0.45, 1.2);
+      tone(1568, { type: 'sine', dur: 0.5, vol: 0.1 });
       tone(2093, { type: 'sine', dur: 0.55, vol: 0.09, delay: 0.015 });
       tone(3136, { type: 'triangle', dur: 0.3, vol: 0.04, delay: 0.03 });
     },
