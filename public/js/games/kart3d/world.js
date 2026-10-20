@@ -56,15 +56,43 @@ export const tex = {
     t.repeat.set(70, 70);
     return t;
   }),
-  asphalt: (base, line = '#f2f2f2', dash = 'rgba(255,255,255,0.85)') => once(`asphalt${base}${line}`, () => canvasTexture(256, 256, (c, w, h) => {
-    c.fillStyle = base; c.fillRect(0, 0, w, h);
+  // Road surface, u across the road and v along it: smooth asphalt with soft tonal patches (not
+  // grain), two darker racing lines worn in by tyres, a little shading towards the kerbs, crisp
+  // edge lines and rounded centre dashes.
+  asphalt: (base, line = '#f2f2f2', dash = 'rgba(255,255,255,0.85)') => once(`asphalt2${base}${line}${dash}`, () => canvasTexture(512, 512, (c, w, h) => {
     const col = new THREE.Color(base);
-    const shade = (k) => `#${col.clone().multiplyScalar(k).getHexString()}`;
-    noise(c, w, h, 5000, [shade(0.92), shade(1.08), shade(0.85), shade(1.15)], 2);
+    // (getHexString gives sRGB back; the linear r, g, b would come out far too dark.)
+    const shade = (k, a = 1) => { const hx = col.clone().multiplyScalar(k).getHexString(); return `rgba(${parseInt(hx.slice(0, 2), 16)},${parseInt(hx.slice(2, 4), 16)},${parseInt(hx.slice(4, 6), 16)},${a})`; };
+    c.fillStyle = base; c.fillRect(0, 0, w, h);
+    const r = rng(77);
+    // Soft patches: big, faint, blurred blobs of lighter and darker tarmac (tiling: drawn wrapped).
+    c.filter = 'blur(18px)';
+    for (let i = 0; i < 26; i++) {
+      const x = r() * w; const y = r() * h; const rad = 40 + r() * 90;
+      c.fillStyle = r() < 0.5 ? shade(0.9, 0.35) : shade(1.08, 0.3);
+      for (const dy of [-h, 0, h]) { c.beginPath(); c.ellipse(x, y + dy, rad * (0.6 + r() * 0.5), rad, 0, 0, Math.PI * 2); c.fill(); }
+    }
+    // Racing lines: two soft darker bands where the tyres run.
+    for (const u of [0.32, 0.68]) {
+      const g = c.createLinearGradient(w * (u - 0.1), 0, w * (u + 0.1), 0);
+      g.addColorStop(0, shade(1, 0)); g.addColorStop(0.5, shade(0.82, 0.45)); g.addColorStop(1, shade(1, 0));
+      c.fillStyle = g; c.fillRect(w * (u - 0.1), 0, w * 0.2, h);
+    }
+    // Towards the kerbs the surface darkens a touch (grime at the edges).
+    for (const [x0, x1] of [[0, 0.12], [1, 0.88]]) {
+      const g = c.createLinearGradient(w * x0, 0, w * x1, 0);
+      g.addColorStop(0, shade(0.75, 0.55)); g.addColorStop(1, shade(1, 0));
+      c.fillStyle = g; c.fillRect(Math.min(x0, x1) * w, 0, Math.abs(x1 - x0) * w, h);
+    }
+    c.filter = 'none';
+    // A fine, sparse aggregate so it isn't plastic up close.
+    noise(c, w, h, 2600, [shade(0.88, 0.5), shade(1.14, 0.45)], 1.6, 3);
+    // Edge lines and rounded centre dashes.
     c.fillStyle = line;
-    c.fillRect(6, 0, 6, h); c.fillRect(w - 12, 0, 6, h);
+    c.fillRect(14, 0, 10, h); c.fillRect(w - 24, 0, 10, h);
     c.fillStyle = dash;
-    c.fillRect(w / 2 - 4, 0, 8, h / 2);
+    c.beginPath(); c.roundRect(w / 2 - 6, h * 0.08, 12, h * 0.38, 6); c.fill();
+    c.beginPath(); c.roundRect(w / 2 - 6, h * 0.58, 12, h * 0.38, 6); c.fill();
   })),
   curb: (a, b) => once(`curb${a}${b}`, () => canvasTexture(32, 64, (c, w, h) => {
     c.fillStyle = a; c.fillRect(0, 0, w, h / 2);
