@@ -9,7 +9,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { MOBILE, THEMES, tex, part, buildArena, loadMoonlit } from './kart3d/world.js';
+import { MOBILE, THEMES, tex, part, buildArena, loadMoonlit, PAD_TIME } from './kart3d/world.js';
 import { buildRace } from './kart3d/track.js';
 import { buildLayered } from './kart3d/arena3d.js';
 import { SEE } from './kart3d/bright3d.js';
@@ -1222,7 +1222,7 @@ export class Kart3D {
     const c = this.ctx;
     c.uniforms.uTime.value = t;
     for (const s of c.spinners) { s.rotation.y = t * 0.8; s.rotation.x = t * 0.5; }
-    for (const p of c.pads) p.material.map.offset.y = (t * 1.5) % 1;
+    PAD_TIME.value = t; // the boost pads' chevrons (world.js boostPadMaterial)
     for (const l of c.lava) { l.offset.x = Math.sin(t * 0.2) * 0.1; l.offset.y = (t * 0.03) % 1; }
     for (const w of c.water) { w.offset.x = (t * 0.012) % 1; w.offset.y = (t * 0.007) % 1; }
     for (const b of c.beams) b.rotation.y = t * 0.9;

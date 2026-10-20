@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  MOBILE, tex, part, rng, canvasTexture, addMoonlitTrees, addSimpleTrees, addGrass, addClouds, addCacti, addBuildings, addStars,
+  MOBILE, tex, part, rng, canvasTexture, boostPadMaterial, addMoonlitTrees, addSimpleTrees, addGrass, addClouds, addCacti, addBuildings, addStars,
 } from './world.js';
 
 const K = window.KartCore;
@@ -636,15 +636,13 @@ function buildBarriers(scene, map, theme, ctx, R) {
 // ---------- boost pads (lying on the slope) ----------
 function buildPads(scene, map, theme, ctx) {
   for (const p of map.boostPads) {
-    const mat = new THREE.MeshBasicMaterial({ map: tex.chevron().clone(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -3 });
-    mat.map.needsUpdate = true;
-    mat.map.wrapT = THREE.RepeatWrapping;
+    const mat = boostPadMaterial();
     const ca = Math.cos(p.angle);
     const sa = Math.sin(p.angle);
     const pos = [];
     for (const [f, l] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) {
-      const x = p.x + ca * 34 * f - sa * 34 * l;
-      const z = p.y + sa * 34 * f + ca * 34 * l;
+      const x = p.x + ca * 48 * f - sa * 36 * l;
+      const z = p.y + sa * 48 * f + ca * 36 * l;
       pos.push(x, map.heightAt(x, z) + 2.2, z);
     }
     const g = new THREE.BufferGeometry();

@@ -835,13 +835,62 @@ function addVolcanoCone(scene, x, z) {
   return glow;
 }
 
+// Boost pads: a dark rounded panel set into the road with a glowing rim, and bright chevrons
+// streaming forward over it (all in one shader, so it stays crisp at any distance). Shared by the
+// race tracks (track.js lays it on the slope) and the arenas. uv: u across, v forward.
+let padMat = null;
+export const PAD_TIME = { value: 0 };
+export function boostPadMaterial() {
+  if (padMat) return padMat;
+  padMat = new THREE.ShaderMaterial({
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { uTime: PAD_TIME }]),
+    vertexShader: `
+      varying vec2 vUv;
+      #include <fog_pars_vertex>
+      void main() {
+        vUv = uv;
+        vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader: `
+      uniform float uTime;
+      varying vec2 vUv;
+      #include <fog_pars_fragment>
+      float box(vec2 p, vec2 b, float r) { vec2 q = abs(p) - b + r; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r; }
+      void main() {
+        vec2 p = vUv - 0.5;
+        float d = box(p, vec2(0.46, 0.48), 0.12);
+        float aa = fwidth(d) * 1.2;
+        float inside = 1.0 - smoothstep(-aa, aa, d);
+        if (inside < 0.01) discard;
+        vec3 base = mix(vec3(0.02, 0.05, 0.10), vec3(0.04, 0.10, 0.20), vUv.y);
+        // Rim: a bright line just inside the edge, with a soft glow inwards.
+        float rim = (1.0 - smoothstep(0.0, 0.022, abs(d + 0.03))) + 0.4 * (1.0 - smoothstep(0.0, 0.1, abs(d + 0.035)));
+        // Three bold chevrons pointing forward and streaming that way, hottest at their tips.
+        float f = fract(vUv.y * 3.0 + abs(p.x) * 1.3 - uTime * 1.8);
+        float chev = smoothstep(0.0, 0.05, f) * (1.0 - smoothstep(0.34, 0.42, f)) * (1.0 - smoothstep(0.34, 0.4, abs(p.x)));
+        float tip = smoothstep(0.18, 0.38, f);
+        vec3 cyan = vec3(0.10, 0.80, 1.0);
+        vec3 hot = vec3(0.75, 1.0, 1.0);
+        vec3 col = base + rim * cyan * 1.2 + chev * mix(cyan * 1.15, hot * 1.4, tip) * (0.9 + 0.1 * sin(uTime * 7.0));
+        gl_FragColor = vec4(col, inside);
+        #include <fog_fragment>
+      }`,
+    fog: true,
+    transparent: true,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    extensions: { derivatives: true },
+  });
+  return padMat;
+}
 export function boostPad(scene, p) {
-  const mat = new THREE.MeshBasicMaterial({ map: tex.chevron().clone(), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
-  mat.map.needsUpdate = true;
-  mat.map.wrapT = THREE.RepeatWrapping;
-  const pad = new THREE.Mesh(new THREE.PlaneGeometry(60, 60).rotateX(-Math.PI / 2), mat);
+  const pad = new THREE.Mesh(new THREE.PlaneGeometry(72, 96).rotateX(-Math.PI / 2), boostPadMaterial());
   pad.position.set(p.x, (p.z || 0) + 1.6, p.y); // p.z: the floor it is on (layered arenas)
   pad.rotation.y = -p.angle - Math.PI / 2;
+  pad.renderOrder = 1;
   scene.add(pad);
   return pad;
 }
