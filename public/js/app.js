@@ -37,7 +37,8 @@
   socket.on('disconnect', (reason) => { if (reason === 'io server disconnect') setTimeout(() => socket.connect(), 800); });
 
   const MODE_NAMES = { pictionary: 'Pictionary', kart: 'Kart Battle', telephone: 'Telephone', ballchain: 'Ball & Chain', controlroom: 'Control Room' };
-  const MODE_ICONS = { pictionary: '🎨', kart: '🏎️', telephone: '📞', ballchain: '⛓️', controlroom: '🎛️' };
+  // Line icons from the sprite in index.html.
+  const ico = (name) => `<svg class="ico" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
   // Settings shown in the lobby for each game, rendered by renderSettings().
   //   type: toggle | stepper | seg | slider | cards | maps | items | text
@@ -48,9 +49,9 @@
     pictionary: [
       {
         key: 'wordMode', type: 'cards', label: 'Word mode', block: true, options: [
-          ['normal', '🔤', 'Normal', 'Letter blanks with hints'],
-          ['hidden', '🙈', 'Hidden', 'No length, no hints'],
-          ['combo', '🔗', 'Combination', 'Two words at once'],
+          ['normal', 'type', 'Normal', 'Letter blanks with hints'],
+          ['hidden', 'eye-off', 'Hidden', 'No length, no hints'],
+          ['combo', 'link', 'Combination', 'Two words at once'],
         ],
       },
       { key: 'drawTime', type: 'slider', label: 'Draw time', min: 15, max: 240, step: 5, unit: 's', block: true },
@@ -65,11 +66,11 @@
     telephone: [
       {
         key: 'telMode', type: 'cards', label: 'Mode', block: true, options: [
-          ['normal', '✍️', 'Normal', 'Write, draw, describe, repeat'],
-          ['speedrun', '⚡', 'Speedrun', 'Same game, tiny timers'],
-          ['secret', '🙈', 'Secret', 'Draw blind: no ink on screen'],
-          ['knockoff', '🧠', 'Knock-off', 'Memorise a drawing, redraw it'],
-          ['complement', '🧩', 'Complement', 'Add to the last drawing'],
+          ['normal', 'pen', 'Normal', 'Write, draw, describe, repeat'],
+          ['speedrun', 'bolt', 'Speedrun', 'Same game, tiny timers'],
+          ['secret', 'eye-off', 'Secret', 'Draw blind: no ink on screen'],
+          ['knockoff', 'copy', 'Knock-off', 'Memorise a drawing, redraw it'],
+          ['complement', 'layers', 'Complement', 'Add to the last drawing'],
         ],
       },
       { key: 'telPace', type: 'seg', label: 'Pace', options: [['slow', 'Relaxed'], ['normal', 'Normal'], ['fast', 'Fast']] },
@@ -77,7 +78,7 @@
       { key: 'telephoneSteps', type: 'stepper', label: 'Chain length', hint: 'Steps per album, at most one per player (per team member in teams)', min: 0, max: 30, format: (v) => (v ? v : 'All') },
     ],
     kart: [
-      { key: 'kartMode', type: 'seg', label: 'Mode', block: true, options: [['race', '🏁 Race'], ['arena', '💥 Battle arena']] },
+      { key: 'kartMode', type: 'seg', label: 'Mode', block: true, options: [['race', 'Race'], ['arena', 'Battle arena']] },
       { key: 'kartMap', type: 'maps', label: 'Map', block: true },
       { key: 'kartLaps', type: 'stepper', label: 'Laps', min: 1, max: 10, show: (s) => s.kartMode === 'race' },
       { key: 'arenaTime', type: 'seg', label: 'Match length', options: [[60, '1m'], [120, '2m'], [180, '3m'], [300, '5m']], show: (s) => s.kartMode === 'arena' },
@@ -96,9 +97,9 @@
     ballchain: [
       {
         key: 'bcLength', type: 'cards', label: 'Course length', block: true, def: 'normal', options: [
-          ['short', '⚡', 'Short', '4 obstacles · about 1½ min'],
-          ['normal', '⛓️', 'Normal', '6 obstacles · about 2½ min'],
-          ['long', '🏔️', 'Long', '8 obstacles · about 3½ min'],
+          ['short', 'bolt', 'Short', '4 obstacles · about 1½ min'],
+          ['normal', 'chain', 'Normal', '6 obstacles · about 2½ min'],
+          ['long', 'mountain', 'Long', '8 obstacles · about 3½ min'],
         ],
       },
       { key: 'bcCourses', type: 'seg', label: 'Courses', hint: 'Per match', def: 3, options: [[1, '1'], [3, '3'], [5, '5']] },
@@ -108,13 +109,13 @@
     controlroom: [
       {
         key: 'crDifficulty', type: 'cards', label: 'Difficulty', block: true, def: 'pilot', options: [
-          ['cadet', '🛰️', 'Cadet', 'Long timers, gentle events'],
-          ['pilot', '🚀', 'Pilot', 'The classic shouting match'],
-          ['ace', '☄️', 'Ace', 'Short fuses, chaos from sector 1'],
+          ['cadet', 'feather', 'Cadet', 'Long timers, gentle events'],
+          ['pilot', 'rocket', 'Pilot', 'The classic shouting match'],
+          ['ace', 'flame', 'Ace', 'Short fuses, chaos from sector 1'],
         ],
       },
       { key: 'crSectors', type: 'seg', label: 'Sectors', block: true, hint: 'Endless: fly until your ship breaks', def: 5, options: [[5, '5'], [10, '10'], [0, 'Endless']] },
-      { key: 'crComms', type: 'seg', label: 'Comms', block: true, hint: 'Voice: shout across the room or call. Relay: tap your order to flash it on your crew’s screens.', def: 'voice', options: [['voice', '🗣️ Voice'], ['relay', '📡 Relay']] },
+      { key: 'crComms', type: 'seg', label: 'Comms', block: true, hint: 'Voice: shout across the room or call. Relay: tap your order to flash it on your crew’s screens.', def: 'voice', options: [['voice', `${ico('mic')} Voice`], ['relay', `${ico('signal')} Relay`]] },
     ],
   };
 
@@ -364,7 +365,7 @@
 
   $('btn-copy').onclick = async () => {
     const url = `${location.origin}/?room=${state.room.code}`;
-    try { await navigator.clipboard.writeText(url); toast('🔗 Invite link copied!'); } catch { toast(url); }
+    try { await navigator.clipboard.writeText(url); toast('Invite link copied'); } catch { toast(url); }
   };
 
   // ---------- Room state ----------
@@ -423,7 +424,7 @@
         ${avatarHtml(p.avatar, '', teamColor(p))}
         <span class="name">${escapeHtml(p.name)}</span>
         ${p.id === room.hostId ? '<span class="tag">HOST</span>' : ''}
-        ${i.drawing ? '✏️' : ''}${i.guessed ? '✅' : ''}
+        ${i.drawing ? ico('pen') : ''}${i.guessed ? ico('check') : ''}
         ${i.score !== undefined ? `<span class="score">${i.score}</span>` : ''}
         ${isHost() && p.id !== state.me.playerId && room.state !== 'playing' ? `<button class="kick" data-kick="${p.id}" title="Remove ${escapeHtml(p.name)}">✕</button>` : ''}
       </li>`;
@@ -448,7 +449,7 @@
       c.disabled = !host;
     });
     $('host-note').textContent = host ? 'You’re the host' : 'The host picks the game';
-    $('settings-title').textContent = `${MODE_ICONS[s.mode]} ${MODE_NAMES[s.mode]} settings`;
+    $('settings-title').innerHTML = `${ico(s.mode)} ${MODE_NAMES[s.mode]} settings`;
     renderSettings(room, host);
 
     $('set-teams').checked = s.teamMode;
@@ -572,31 +573,31 @@
         const c = map.centerline[(i + 1) % map.n];
         len += Math.hypot(c[0] - a[0], c[1] - a[1]);
       }
-      stats.push(`📏 ${Math.round(len / 20)} m lap`);
-      stats.push(`⏱️ ~${Math.round(len / (window.KartCore.PHYS.maxSpeed * 0.85))} s`);
-      if (map.climb > 100) stats.push(`⛰️ ${Math.round(map.climb / 20)} m climb`);
+      stats.push(`${Math.round(len / 20)} m lap`);
+      stats.push(`~${Math.round(len / (window.KartCore.PHYS.maxSpeed * 0.85))} s per lap`);
+      if (map.climb > 100) stats.push(`${Math.round(map.climb / 20)} m climb`);
       const jumps = (map.ramps || []).filter((r) => r.dir === 1).length;
-      if (jumps) stats.push(`🦘 ${jumps} jump${jumps > 1 ? 's' : ''}`);
-      if (map.water !== null && map.water !== undefined) stats.push('🌊 Water');
-      if ((map.liquids || []).some((l) => l.kind === 'lava')) stats.push('🔥 Lava');
-      if (map.grip && map.grip < 1) stats.push('🧊 Slippery');
+      if (jumps) stats.push(`${jumps} jump${jumps > 1 ? 's' : ''}`);
+      if (map.water !== null && map.water !== undefined) stats.push('Water');
+      if ((map.liquids || []).some((l) => l.kind === 'lava')) stats.push('Lava');
+      if (map.grip && map.grip < 1) stats.push('Slippery');
     } else if (map.layered) {
       // Layered arenas: how many floors, and what moves or launches you.
       const levels = new Set(map.solids.filter((sd) => sd.z1 >= -1 && sd.kind !== 'merlon').map((sd) => Math.round(sd.z1 / 20)));
-      stats.push(`📐 ${Math.round(map.size / 20)} m arena`);
-      stats.push(`🏯 ${levels.size} levels`);
-      if (map.pads.length) stats.push(`🚀 ${map.pads.length} jump pads`);
+      stats.push(`${Math.round(map.size / 20)} m arena`);
+      stats.push(`${levels.size} levels`);
+      if (map.pads.length) stats.push(`${map.pads.length} jump pads`);
       const bridges = map.movers.filter((mv) => mv.type === 'drawbridge').length;
-      if (bridges) stats.push(`🌉 ${bridges} drawbridges`);
-      if (map.liquid) stats.push(map.liquid.kind === 'lava' ? '🔥 Lava moat' : '🌊 Moat');
-      else if (map.edge === 'void') stats.push('🕳️ Open edges');
+      if (bridges) stats.push(`${bridges} drawbridges`);
+      if (map.liquid) stats.push(map.liquid.kind === 'lava' ? 'Lava moat' : 'Moat');
+      else if (map.edge === 'void') stats.push('Open edges');
     } else {
-      stats.push(`📐 ${Math.round(map.size / 20)} m arena`);
-      if (map.hazards.length) stats.push(`🌋 ${map.hazards.length} lava pools`);
-      stats.push(`🧱 ${map.obstacles.length} obstacles`);
+      stats.push(`${Math.round(map.size / 20)} m arena`);
+      if (map.hazards.length) stats.push(`${map.hazards.length} lava pools`);
+      stats.push(`${map.obstacles.length} obstacles`);
     }
-    if (map.boostPads.length) stats.push(`⚡ ${map.boostPads.length} boost pads`);
-    stats.push(`🎁 ${map.itemBoxes.length} item boxes`);
+    if (map.boostPads.length) stats.push(`${map.boostPads.length} boost pads`);
+    stats.push(`${map.itemBoxes.length} item boxes`);
     return stats;
   }
 
@@ -645,7 +646,7 @@
           <input type="range" class="slider" data-key="${def.key}" min="${def.min}" max="${def.max}" step="${def.step}" value="${v}" style="--pct:${pct}%" ${dis}>`;
       }
       case 'cards':
-        return `${label}<div class="option-cards">${def.options.map(([val, icon, name, desc]) => `<button class="option-card ${v === val ? 'on' : ''}" data-key="${def.key}" data-value="${val}" ${dis}><span class="oc-icon">${icon}</span><span class="oc-text"><b>${name}</b><small>${desc}</small></span></button>`).join('')}</div>`;
+        return `${label}<div class="option-cards">${def.options.map(([val, icon, name, desc]) => `<button class="option-card ${v === val ? 'on' : ''}" data-key="${def.key}" data-value="${val}" ${dis}><span class="oc-icon">${ico(icon)}</span><span class="oc-text"><b>${name}</b><small>${desc}</small></span></button>`).join('')}</div>`;
       case 'maps':
         return mapsHtml(def, v, host);
       case 'items': {
@@ -772,7 +773,7 @@
     card.innerHTML = `
       <span title="Change avatar" data-avatar>${avatarHtml(p.avatar)}</span>
       <div class="me-info"><small>${kart ? 'Your driver' : 'You'}</small><input maxlength="16" value="${escapeHtml(p.name)}" aria-label="Your name"></div>
-      <button class="icon-btn" data-avatar title="Change avatar" aria-label="Change avatar">🎭</button>`;
+      <button class="icon-btn" data-avatar title="Change avatar" aria-label="Change avatar">${ico('pen')}</button>`;
     card.querySelectorAll('[data-avatar]').forEach((el) => { el.onclick = () => { state.avatar = p.avatar; openAvatarModal(); }; });
     const input = card.querySelector('input');
     input.onchange = async () => {
@@ -809,7 +810,7 @@
     } else {
       $('people-title').textContent = 'Players';
       el.className = 'people solo';
-      el.innerHTML = room.players.map((p) => `<div class="person${p.id === state.me.playerId ? ' me' : ''}${enter(p)}${p.connected ? '' : ' offline'}">${avatarHtml(p.avatar)}<span>${escapeHtml(p.name)}</span>${p.id === room.hostId ? '<i class="crown" title="Host">👑</i>' : ''}</div>`).join('');
+      el.innerHTML = room.players.map((p) => `<div class="person${p.id === state.me.playerId ? ' me' : ''}${enter(p)}${p.connected ? '' : ' offline'}">${avatarHtml(p.avatar)}<span>${escapeHtml(p.name)}</span>${p.id === room.hostId ? `<i class="crown" title="Host">${ico('crown')}</i>` : ''}</div>`).join('');
     }
     room.players.forEach((p) => seenPeople.add(p.id));
   }
@@ -821,7 +822,7 @@
   // ---------- Results ----------
   function confetti() {
     const box = document.querySelector('#view-results .confetti');
-    const colors = ['#ff4fa3', '#7c5cff', '#ffb547', '#22d3ee', '#34d399'];
+    const colors = ['#ffb547', '#40d2be', '#ff7a59', '#f1fbf8', '#7ee0a8'];
     box.innerHTML = Array.from({ length: 70 }, (_, i) => `<i style="left:${Math.random() * 100}%;background:${colors[i % colors.length]};animation-delay:${Math.random() * 1.2}s;transform:rotate(${Math.random() * 360}deg)"></i>`).join('');
   }
 
@@ -848,7 +849,7 @@
     }
 
     if (r.mode === 'telephone') {
-      $('results-title').textContent = `📞 That's a wrap! ${r.albums} albums`;
+      $('results-title').textContent = `That's a wrap: ${r.albums} albums`;
       const loved = r.favorites || [];
       $('results-teams').innerHTML = loved.length ? '<div class="muted results-label">Most loved albums</div>' : '';
       // Podium order: second, first, third (like the other games).
@@ -867,10 +868,10 @@
       const icon = (arena ? window.KartHud?.ICONS.boom : window.KartHud?.ICONS.flag) || '';
       $('results-title').innerHTML = `${icon.replace('class="hud-ic"', 'class="res-ic"')}<span>${nobody ? 'Nobody got smashed!' : arena ? 'Battle results' : 'Race results'}</span>`;
     } else {
-      $('results-title').textContent = `${MODE_ICONS[r.mode]} ${MODE_NAMES[r.mode]} results`;
+      $('results-title').textContent = `${MODE_NAMES[r.mode]} results`;
     }
     $('results-teams').innerHTML = (r.teams || []).map((t, i) => `
-      <div class="team-score" style="--team:${t.color}">${i === 0 ? '🏆 ' : ''}${t.name}<b>${t.score}</b>${r.teamScore === 'average' ? '<small>per player</small>' : ''}</div>`).join('');
+      <div class="team-score" style="--team:${t.color}">${i === 0 ? ico('crown') + ' ' : ''}${t.name}<b>${t.score}</b>${r.teamScore === 'average' ? '<small>per player</small>' : ''}</div>`).join('');
 
     // Kart players who joined mid-round only watched: they have no race or battle details.
     const watched = (p) => r.mode === 'kart' && p.place === undefined;
@@ -917,7 +918,7 @@
 
   // ---------- Sound toggle ----------
   const muteBtn = $('btn-mute');
-  const syncMute = () => { muteBtn.textContent = window.Sfx.muted ? '🔇' : '🔊'; };
+  const syncMute = () => { muteBtn.innerHTML = ico(window.Sfx.muted ? 'volume-off' : 'volume'); };
   muteBtn.onclick = () => { window.Sfx.setMuted(!window.Sfx.muted); syncMute(); };
   syncMute();
 
@@ -1038,7 +1039,7 @@
   function showGameError(err) {
     console.error(err);
     beacon(`game mount failed: ${err?.stack || err} | ${navigator.userAgent}`);
-    $('view-game').innerHTML = `<div class="overlay" style="position:relative;height:100%"><h2>😵 This game couldn’t load</h2>
+    $('view-game').innerHTML = `<div class="overlay" style="position:relative;height:100%"><h2>This game couldn’t load</h2>
       <p class="muted">Try refreshing the page. If it keeps happening, the host can end the game and start again.</p>
       <button class="btn primary" onclick="location.reload()">Refresh</button></div>`;
   }
