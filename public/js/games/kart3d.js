@@ -1344,7 +1344,10 @@ export class Kart3D {
       const chase = pose(this.arena ? CAM.arena : CAM.race, CAM.portrait);
       const grid = pose(CAM.grid, CAM.portraitGrid);
       const mix = (key) => chase(key) + (grid(key) - chase(key)) * this.gridMix;
-      const back = mix('back');
+      // Speed shows on screen: the camera drops back a little and the view widens as you go faster.
+      const pace = Math.min(1.25, Math.max(0, Math.abs(focus.speed || 0) - 120) / 310);
+      this.pace = this.pace === undefined || focus.snap ? pace : this.pace + (pace - this.pace) * Math.min(1, dt * 3);
+      const back = mix('back') + 16 * this.pace * (1 - this.gridMix);
       const ch = Math.cos(this.camHeading);
       const sh = Math.sin(this.camHeading);
       // In the arena, pull the camera in when a wall or obstacle is behind the kart, and lift it
@@ -1427,7 +1430,7 @@ export class Kart3D {
       // fish-eye, so their vertical view tops out at 100 degrees (about 60 across on a phone).
       // Boosts and star power widen it.
       const base = Math.max(62, Math.min(88 + 12 * this.tall, (2 * Math.atan(Math.tan((37 * Math.PI) / 180) / this.camera.aspect) * 180) / Math.PI));
-      const fov = base + (focus.boost ? 10 - 4 * this.tall : focus.star ? 6 : 0);
+      const fov = base + 7 * this.pace * (1 - this.gridMix) + (focus.boost ? 7 - 3 * this.tall : focus.star ? 4 : 0);
       this.camera.fov = focus.snap ? fov : this.camera.fov + (fov - this.camera.fov) * Math.min(1, dt * (fov > this.camera.fov ? 7 : 3));
       this.camera.updateProjectionMatrix();
       this.camera.position.copy(this.camPos);

@@ -994,6 +994,7 @@ window.Games.kart = {
           focus: focusKart ? {
             idx: focusKart.idx, x: focusKart.x, y: focusKart.y, z: focusKart.z, angle: focusKart.angle, air: focusKart.air || 0, grid,
             spinning: !!(focusKart.flags & F.spin) || !!(focusKart.fx & 1), boost: !!(focusKart.flags & F.boost), star: !!(focusKart.flags & F.star), snap: snapCamera,
+            speed: focusKart.speed || 0,
           } : mode === 'orbit' ? { idx: -1, x: myRow[1], y: myRow[2], z: myRow[20], angle: orbitAngle, snap: snapCamera } : null,
         }, dt, now);
         if (mode) snapCamera = false;

@@ -1307,7 +1307,8 @@ test('hop: a tap of drift hops the kart; holding it does not hop again; it keeps
   const airtime = airs.filter((a) => a > 0).length / 30;
   assert.ok(apex > 22 && apex < 36, `apex ${apex.toFixed(1)}`);
   assert.ok(airtime > 0.3 && airtime < 0.5, `in the air ${airtime.toFixed(2)} s`);
-  assert.strictEqual(airs.filter((a, i) => a > 0 && !(airs[i - 1] > 0)).length, 1, 'holding drift does not hop again');
+  // (A take-off is a real hop, well off the ground: a kerb clipped later in the run isn't one.)
+  assert.strictEqual(airs.filter((a, i) => a > 5 && !(airs[i - 1] > 5)).length, 1, 'holding drift does not hop again');
   // Two taps a cooldown apart: two hops; taps closer than that: still one.
   const taps = (gap) => {
     const presses = new Set([3, 3 + gap]);

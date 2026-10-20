@@ -1397,6 +1397,12 @@
     const launched = flying && kart.launch > 0;
     const steerMul = flying ? (launched ? PHYS.padSteer : PHYS.airSteer) : 1;
     const steer = (input.left ? -1 : 0) + (input.right ? 1 : 0);
+    // Keys and touch buttons are all-or-nothing; the wheel isn't: it turns in over about a tenth of
+    // a second and comes back to centre a little faster.
+    const s0 = kart.steerS || 0;
+    const sRate = steer === 0 || (s0 && Math.sign(steer) !== Math.sign(s0)) ? 14 : 9;
+    kart.steerS = steer > s0 ? Math.min(steer, s0 + sRate * dt) : Math.max(steer, s0 - sRate * dt);
+    if (Math.abs(kart.steerS) < 1e-6) kart.steerS = 0;
     const v0 = kart.speed;
     if (spinning) {
       kart.angle += 9 * dt;
@@ -1405,7 +1411,8 @@
       kart.driftTime = 0;
     } else {
       if (launched) { /* on a pad's arc: neither drag nor throttle */ } else if (flying) kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), 15 * dt); // no grip, keep momentum
-      else if (input.up) kart.speed += accel * dt * (0.6 + 0.4 * grip);
+      // A strong launch that tapers off towards top speed (rather than one flat rate to a wall).
+      else if (input.up) kart.speed += accel * dt * (0.6 + 0.4 * grip) * clamp(1.4 - 0.8 * Math.max(0, kart.speed) / maxSpeed, 0.5, 1.4);
       else if (input.down) kart.speed -= (kart.speed > 0 ? PHYS.brake * grip : accel * 0.6) * dt;
       else kart.speed -= Math.sign(kart.speed) * Math.min(Math.abs(kart.speed), PHYS.drag * 100 * grip * dt * (frozen ? 0.25 : 1));
 
@@ -1430,7 +1437,9 @@
         }
       } else {
         const g = Math.min(1, Math.abs(kart.speed) / 140);
-        kart.angle += steer * PHYS.turnRate * g * (0.75 + 0.25 * grip) * dt * (kart.speed >= 0 ? 1 : -1) * steerMul;
+        // Tighter at low speed, steadier flat out.
+        const rate = PHYS.turnRate * (1.18 - 0.32 * Math.min(1, Math.abs(kart.speed) / PHYS.maxSpeed));
+        kart.angle += kart.steerS * rate * g * (0.75 + 0.25 * grip) * dt * (kart.speed >= 0 ? 1 : -1) * steerMul;
       }
     }
     if (!flat) {
@@ -1554,7 +1563,7 @@
   // A player's own kart as the server sends it back to them: everything stepKart carries from one
   // step to the next, plus the item timers that change how it drives. Their screen replays its
   // newer inputs from exactly there, so it ends up where the server's kart will be.
-  const NET_FIELDS = ['x', 'y', 'angle', 'heading', 'speed', 'kx', 'ky', 'z', 'vz', 'air', 'airTime', 'gz',
+  const NET_FIELDS = ['x', 'y', 'angle', 'heading', 'speed', 'steerS', 'kx', 'ky', 'z', 'vz', 'air', 'airTime', 'gz',
     'drift', 'driftTime', 'boost', 'spin', 'hopHeld', 'hopCd', 'hopping', 'padCd', 'launch',
     'trick', 'tricked', 'trickable', 'prevDrift', 'trackIndex', 'safeIndex', 'star', 'shrink', 'freeze'];
   // Item timers the server counts down after each step (see TIMERS in server/games/kart.js).
