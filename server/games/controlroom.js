@@ -11,13 +11,13 @@ const TICK_MS = 150;
 const DROP_GRACE_MS = 4000; // a player who drops out keeps their controls this long
 const FLUSH_MS = 25; // crew state updates are coalesced this long
 const FLEET_MS = 300; // fleet summary broadcast at most this often
-const BRIEFING_MS = 5000;
+const BRIEFING_MS = 60_000; // the how-to-play: until the whole fleet says ready, at most this long
+const LIFTOFF_MS = 3000; // once everyone is ready
 const WARP_MS = 3800;
 const FINAL_COUNTDOWN_MS = 60_000; // once one crew finishes, the others get this long
 const END_DELAY_MS = 2600; // let the last explosion / warp play before the results
 const ORDER_GAP_MS = [500, 1100]; // pause before your next order (random in range)
 const MISS_GAP_MS = 1400;
-const OTHER_BIAS = 0.75; // share of orders for a control on someone else's panel
 const RELAY_COOLDOWN_MS = 2500;
 const RELAY_SHOW_MS = 3000;
 const ACTIONS_PER_SEC = 25;
@@ -186,6 +186,7 @@ class ControlRoom {
     this.stats = new Map(); // playerId -> { done, mine, panic, relays, missed }
     this.phase = 'briefing'; // briefing | flying | over
     this.briefingEnds = 0;
+    this.ready = new Set(); // players who've read the how-to-play
     this.finalAt = 0;
     this.endAt = 0;
     this.nextId = 1;
@@ -381,15 +382,14 @@ class ControlRoom {
     return pick(values.filter((v) => v !== c.value), this.rand);
   }
 
-  // Give `holderId` a new order. ~75% of the time the control is on someone else's panel.
+  // Give `holderId` a new order. It's always for a control on a crewmate's panel: you read it out
+  // and they work it (a crew down to one player is the only exception, with nobody to read to).
   issueOrder(crew, holderId, now) {
     const busy = new Set([...crew.orders.values()].map((o) => o.controlId));
     const live = new Set(this.connectedMembers(crew).map((m) => m.id));
     const free = [...crew.controls.values()].filter((c) => !busy.has(c.id) && live.has(c.owner));
-    const others = free.filter((c) => c.owner !== holderId);
-    const mine = free.filter((c) => c.owner === holderId);
-    let pool = others.length && (this.rand() < OTHER_BIAS || !mine.length) ? others : mine;
-    if (!pool.length) pool = others;
+    const alone = live.size <= 1;
+    const pool = free.filter((c) => (alone ? c.owner === holderId : c.owner !== holderId));
     if (!pool.length) return null;
     const c = pick(pool, this.rand);
     const target = this.pickTarget(c);
@@ -436,13 +436,14 @@ class ControlRoom {
     this.hurt(crew, dmg, now);
   }
 
-  // Orders that point at controls which no longer exist (or have nobody to operate them) are
+  // Orders that point at controls which no longer exist, have nobody to operate them, or have
+  // ended up on the holder's own panel (controls move when someone drops out or comes back) are
   // dropped without penalty and replaced shortly.
   dropStaleOrders(crew, now) {
     const live = new Set(this.connectedMembers(crew).map((m) => m.id));
     for (const o of [...crew.orders.values()]) {
       const c = crew.controls.get(o.controlId);
-      if (!c || !live.has(c.owner) || !live.has(o.holder)) {
+      if (!c || !live.has(c.owner) || !live.has(o.holder) || (c.owner === o.holder && live.size > 1)) {
         crew.orders.delete(o.holder);
         if (live.has(o.holder)) crew.nextOrderAt.set(o.holder, now + 600);
       }
@@ -631,6 +632,7 @@ class ControlRoom {
       case 'act': res = this.act(player, data); break;
       case 'mash': res = this.mash(player); break;
       case 'relay': res = this.relay(player); break;
+      case 'ready': res = this.markReady(player); break;
       case 'finish':
         if (!this.room.isHost(player)) { res = { ok: false, error: 'Only the host can end the flight' }; break; }
         this.finish();
@@ -639,6 +641,19 @@ class ControlRoom {
       default: res = { ok: false, error: 'Unknown action' };
     }
     reply(res);
+  }
+
+  // Read the how-to-play. Once every connected crew member in the fleet is ready, lift-off follows
+  // in a few seconds instead of waiting out the briefing.
+  markReady(player) {
+    if (this.phase !== 'briefing') return { ok: true };
+    if (!this.crewOf(player.id)) return { ok: false, error: 'You are not on a crew' };
+    this.ready.add(player.id);
+    const now = this.clock();
+    const everyone = this.crews.flatMap((c) => this.connectedMembers(c));
+    if (everyone.every((m) => this.ready.has(m.id))) this.briefingEnds = Math.min(this.briefingEnds, now + LIFTOFF_MS);
+    for (const crew of this.crews) this.markCrew(crew);
+    return { ok: true };
   }
 
   allow(playerId, kind, limit) {
@@ -935,6 +950,7 @@ class ControlRoom {
       difficulty: this.difficulty,
       sectors: this.sectors,
       briefingIn: this.phase === 'briefing' ? Math.max(0, this.briefingEnds - now) : 0,
+      ready: this.phase === 'briefing' ? [...this.ready] : [],
       finalIn: this.finalAt ? Math.max(0, this.finalAt - now) : null,
       fleet: this.fleet(),
       orderTime: crew ? Math.round(this.orderTime(crew.sector) * 1000) : 0,
@@ -950,6 +966,8 @@ class ControlRoom {
       panel,
       order: order ? {
         id: order.id, pre: order.pre, name: order.name, post: order.post, text: order.text,
+        // Whose panel the control is on: the crewmate to read it out to.
+        owner: crew.controls.get(order.controlId)?.owner ?? null,
         expiresIn: Math.max(0, order.expires - now), duration: order.duration, relayed: !!order.relayed,
       } : null,
       spectating: !this.flying(crew) || !this.member(crew, player.id)?.connected,

@@ -555,7 +555,7 @@
   .cr-shipname small { display: none; }
   .cr-hull-bar { display: none; }
   .cr-card-text { font-size: clamp(1.05rem, 2.6vw, 1.4rem); }
-  .cr-card-foot { display: none; }
+  .cr-card-foot { font-size: 0.72rem; }
   .cr-name { font-size: clamp(0.62rem, 7cqw, 0.85rem); }
   .cr-engrave { display: none; }
 }
@@ -563,3 +563,33 @@ body:has(.cr-root) .topbar { padding-top: 8px; padding-bottom: 8px; }
 @media (max-width: 980px) {
   body:has(.cr-root) .room-body { padding: 0 8px 8px; gap: 10px; }
 }
+
+/* How to play: over the console during the briefing (with Ready), or from the help button. */
+.cr-how { align-items: stretch; text-align: left; gap: 12px; max-width: 600px; }
+.cr-how h2 { text-align: left; }
+.cr-how .cr-how-lead { color: var(--cr-text, #fff); font-weight: 500; opacity: 0.9; }
+.cr-how-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.cr-how-steps li { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.08); }
+.cr-how-n { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 0.85rem; background: #ffb547; color: #1d1404; }
+.cr-how-steps b { display: inline-flex; align-items: center; gap: 6px; font-size: 1rem; }
+.cr-how-steps b svg { width: 16px; height: 16px; }
+.cr-how-steps p { margin: 4px 0 0; font-weight: 500; line-height: 1.45; font-size: 0.92rem; }
+.cr-how-alerts { font-size: 0.88rem; line-height: 1.5; }
+.cr-how-alerts svg { width: 16px; height: 16px; vertical-align: -3px; margin-right: 4px; }
+.cr-how-ready { display: flex; flex-wrap: wrap; gap: 8px; }
+.cr-how-ready span { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px 5px 7px; border-radius: 999px; background: rgba(255, 255, 255, 0.07); font-weight: 600; font-size: 0.85rem; color: var(--cr-dim); }
+.cr-how-ready span i { width: 14px; height: 14px; border-radius: 50%; border: 2px dashed currentColor; }
+.cr-how-ready span.on { color: #7ee0a8; background: rgba(126, 224, 168, 0.12); }
+.cr-how-ready svg { width: 16px; height: 16px; }
+.cr-how .btn.big { align-self: stretch; justify-content: center; }
+.cr-help-btn { position: absolute; right: 10px; bottom: 10px; z-index: 9; display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px 6px 8px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(10, 8, 30, 0.7); color: #fff; font-weight: 600; font-size: 0.8rem; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.cr-help-btn svg { width: 16px; height: 16px; }
+.cr-help-btn:hover { background: rgba(30, 24, 70, 0.9); }
+.cr-root.briefing .cr-help-btn { display: none; }
+.cr-card-foot b { color: #ffd27a; }
+.cr-card-foot svg { width: 15px; height: 15px; vertical-align: -3px; }
+@media (max-width: 560px) { .cr-help-btn span { display: none; } .cr-help-btn { padding: 7px; } .cr-how-steps li { padding: 10px; } }
+@media (min-width: 900px) { .cr-how-steps { grid-template-columns: 1fr 1fr; } .cr-how-steps li { padding: 10px 12px; } .cr-how-steps p { font-size: 0.86rem; } }
+.cr-overlay:has(.cr-how) { place-items: start center; }
+.cr-root.overlaid .cr-help-btn { display: none; }
+.cr-foot-sep { opacity: 0.5; margin: 0 2px; }

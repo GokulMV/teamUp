@@ -79,6 +79,7 @@ window.Games = window.Games || {};
           <div class="cr-dark" aria-hidden="true"><span>${ico('power-off')} Power failure</span></div>
           <div class="cr-mash hidden" data-mash></div>
           <div class="cr-overlay hidden" data-overlay></div>
+          <button class="cr-help-btn" data-help title="How to play">${ico('circle-help')}<span>How to play</span></button>
         </section>
         <aside class="cr-side" data-side>
           <div class="cr-side-block"><h4>${ico('users')} Your crew</h4><div class="cr-crewlist" data-crewlist></div></div>
@@ -345,12 +346,14 @@ window.Games = window.Games || {};
         return;
       }
       if (s.phase === 'briefing') {
-        setCard('brief', {
-          tag: `${ico('users')} Briefing`,
-          text: 'Get to know your panel. <b>Orders incoming!</b>',
-          foot: s.comms === 'relay' ? `Read orders out, or tap your order to flash it on your crew’s screens.${crewNames ? ` Crew: ${crewNames}` : ''}`
-            : `Shout the orders you get. Whoever has that control does it!${crewNames ? ` Crew: ${crewNames}` : ''}`,
-          tone: 'idle', mode: 'briefing', ms: s.briefingIn, total: 5000,
+        const waiting = crew.members.filter((m) => m.connected && !s.ready.includes(m.id));
+        const all = !waiting.length;
+        setCard(`brief:${all}:${s.ready.includes(myId())}`, {
+          tag: `${ico('users')} ${all ? 'Lift-off' : 'Briefing'}`,
+          text: all ? 'Everyone’s ready. <b>Here we go!</b>'
+            : s.ready.includes(myId()) ? `Waiting for <b>${waiting.map((m) => esc(m.name)).join(', ')}</b>` : 'Read <b>how to play</b>, then tap Ready',
+          foot: all ? '' : 'The flight starts when the whole crew is ready.',
+          tone: 'idle', mode: 'briefing', ms: s.briefingIn, total: all ? 3000 : 60000,
         });
         return;
       }
@@ -363,14 +366,21 @@ window.Games = window.Games || {};
       const relay = s.comms === 'relay';
       const relayed = relayedOrder === o.id || !!o.relayed;
       setCard(`o:${o.id}:${relayed}`, {
-        tag: `${ico('megaphone')} ${relay ? 'Order' : 'Shout it!'}`,
+        tag: `${ico('megaphone')} ${relay ? 'Your order' : 'Your order · read it out'}`,
         text: `${esc(o.pre)} <b class="cr-target">${esc(o.name)}</b>${o.post ? ` ${esc(o.post)}` : ''}`,
-        foot: relay ? (relayed ? `${ico('circle-check')} Relayed to your crew` : `${ico('radio-tower')} Tap to relay to your crew`) : '',
+        foot: `${ownerLine(o)}${relay ? `<span class="cr-foot-sep">·</span>${relayed ? `${ico('circle-check')}<span>Relayed</span>` : `${ico('radio-tower')}<span>Tap to flash it on their screen</span>`}` : ''}`,
         tone: `order${relay ? ' relay' : ''}${relayed ? ' relayed' : ''}`,
         mode: 'order',
         ms: o.expiresIn,
         total: o.duration,
       });
+    }
+
+    // Who has the control an order is for (always a crewmate, unless you're flying alone).
+    function ownerLine(o) {
+      if (!o.owner) return '';
+      if (o.owner === myId()) return `${ico('hand-tap')}<span>It’s on <b>your</b> panel</span>`;
+      return `${ico('ear')}<span>On <b>${esc(playerName(o.owner))}</b>’s panel: tell them!</span>`;
     }
 
     card.addEventListener('pointerdown', async () => {
@@ -497,6 +507,33 @@ window.Games = window.Games || {};
     q('.cr-end').addEventListener('click', endFlight);
     q('[data-finish-hud]').addEventListener('click', endFlight);
 
+    // ---------- How to play ----------
+    let helpOpen = false;
+    q('[data-help]').addEventListener('click', () => { helpOpen = !helpOpen; if (S) renderOverlay(S); });
+    function howToPlay(s, briefing) {
+      const relay = s.comms === 'relay';
+      const crew = s.crew;
+      const mates = crew.members.filter((m) => m.id !== myId());
+      const step = (n, icon, title, body) => `<li><span class="cr-how-n">${n}</span><div><b>${ico(icon)} ${title}</b><p>${body}</p></div></li>`;
+      const readyList = briefing ? `<div class="cr-how-ready">${crew.members.map((m) => {
+        const r = s.ready.includes(m.id);
+        return `<span class="${r ? 'on' : ''}">${r ? ico('circle-check') : '<i></i>'}${esc(m.name)}${m.id === myId() ? ' (you)' : ''}</span>`;
+      }).join('')}</div>` : '';
+      return `<div class="cr-ov-card cr-how">
+        <h2>How to fly the ship</h2>
+        <p class="cr-how-lead">You${mates.length ? ` and ${mates.map((m) => esc(m.name)).join(', ')}` : ''} fly one ship together. Nobody can win it alone: ${relay ? 'talk it through or relay your orders' : 'you have to talk'}.</p>
+        <ol class="cr-how-steps">
+          ${step(1, 'gauge', 'Your panel is yours', 'The controls below are on your panel. Only you can press, flip, slide or turn them.')}
+          ${step(2, 'megaphone', 'Your order is for someone else', `The order at the top is for a control on a <b>crewmate’s</b> panel, and it says whose. ${relay ? 'Read it out, or tap it to flash it on their screen.' : '<b>Read it out loud</b> to them.'}`)}
+          ${step(3, 'ear', 'Listen for your controls', 'When someone calls out a control that’s on your panel, work it straight away. It flashes green when it’s done.')}
+          ${step(4, 'rocket', 'Warp before the hull breaks', `Every order done fills the warp bar; fill it to jump to the next sector. Orders that run out damage the hull, and at 0 the ship is lost. Clear ${s.sectors ? `all ${s.sectors} sectors` : 'as many sectors as you can'}.`)}
+        </ol>
+        <p class="cr-how-alerts">${ico('siren')} Alerts: <b>asteroids</b> (everyone mashes Deflect), <b>blackouts</b>, and panels that get <b>shuffled</b>, <b>mirrored</b> or scrambled. They don’t last long.</p>
+        ${readyList}
+        ${briefing ? `<button class="btn primary big" data-ready>I’m ready</button>` : '<button class="btn big" data-helpclose>Back to the panel</button>'}
+      </div>`;
+    }
+
     function renderOverlay(s) {
       const box = q('[data-overlay]');
       const crew = s.crew;
@@ -507,7 +544,11 @@ window.Games = window.Games || {};
       // The button is the host's: a new host gets it too.
       const hostKey = host ? ':host' : '';
       const others = s.fleet.filter((c) => c.status === 'flying' || c.status === 'warping').length;
-      if (!crew) {
+      const briefing = s.phase === 'briefing' && crew && !s.ready.includes(myId());
+      if (crew && (briefing || helpOpen) && crew.status !== 'destroyed' && crew.status !== 'done') {
+        key = `help:${briefing}:${s.comms}:${s.ready.join()}`;
+        html = howToPlay(s, briefing);
+      } else if (!crew) {
         key = 'spec';
         html = `<div class="cr-ov-card"><div class="cr-ov-ico">${ico('satellite')}</div><h2>Watching the fleet</h2>
           <p>This flight is already underway. You’ll get a seat on a ship next game.</p><div class="cr-board big" data-ovboard></div>${endBtn}</div>`;
@@ -527,8 +568,14 @@ window.Games = window.Games || {};
       if (fullKey !== overlayKey) {
         overlayKey = fullKey;
         box.innerHTML = html;
+        box.scrollTop = 0;
         box.classList.toggle('hidden', !key);
         box.querySelector('[data-finish]')?.addEventListener('click', endFlight);
+        box.querySelector('[data-ready]')?.addEventListener('click', async () => {
+          const res = await api.emit('game:ready');
+          if (!res.ok && res.error) api.toast(res.error);
+        });
+        box.querySelector('[data-helpclose]')?.addEventListener('click', () => { helpOpen = false; renderOverlay(S); });
       }
       renderBoard(box.querySelector('[data-ovboard]'), s.fleet);
       root.classList.toggle('overlaid', !!key);

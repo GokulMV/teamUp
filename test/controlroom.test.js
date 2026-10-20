@@ -74,6 +74,7 @@ async function startCR(n, settings = {}, teams = null) {
   clearInterval(game.interval);
   let now = Date.now();
   game.clock = () => now;
+  game.briefingEnds = now + 5000; // (the tests skip the how-to-play: a short briefing)
   Object.assign(ctx, {
     game,
     now: () => now,
@@ -192,7 +193,7 @@ test('panels: unique technobabble per crew, varied control types, valid values, 
   room.destroy();
 });
 
-test('orders: about 75% for a crewmate\'s control, never already true, never two on the same control', async () => {
+test('orders: always for a crewmate\'s control (never your own), never already true, never two on the same control', async () => {
   const { game, room } = await startCR(4, {}, null);
   game.rand = seeded(42);
   const crew = game.crews[0];
@@ -203,7 +204,8 @@ test('orders: about 75% for a crewmate\'s control, never already true, never two
     crew.orders.clear();
     const o = game.issueOrder(crew, holder, game.clock());
     const c = crew.controls.get(o.controlId);
-    if (c.owner !== holder) others++;
+    assert.notStrictEqual(c.owner, holder, `order "${o.text}" is for a control on the holder's own panel`);
+    others++;
     if (c.type === 'toggle' || c.type === 'slider' || c.type === 'dial' || c.type === 'multi') {
       assert.notStrictEqual(o.target, c.value, `order "${o.text}" is already true`);
     }
@@ -211,8 +213,7 @@ test('orders: about 75% for a crewmate\'s control, never already true, never two
     if (c.type === 'slider' || c.type === 'dial') c.value = c.min + Math.floor(game.rand() * (c.max - c.min + 1));
     if (c.type === 'toggle') c.value = game.rand() < 0.5;
   }
-  const share = others / N;
-  assert.ok(share > 0.71 && share < 0.79, `share of orders for crewmates' controls: ${share}`);
+  assert.strictEqual(others, N);
   // Everyone at once: never two orders on one control.
   for (let i = 0; i < 300; i++) {
     crew.orders.clear();
@@ -223,6 +224,15 @@ test('orders: about 75% for a crewmate\'s control, never already true, never two
   // Order text names the control and the target.
   const o = [...crew.orders.values()][0];
   assert.ok(o.text.includes(o.name));
+  // A control that moves onto the holder's own panel takes its order with it (replaced soon).
+  crew.orders.clear();
+  const mover = game.issueOrder(crew, holder, game.clock());
+  const mc = crew.controls.get(mover.controlId);
+  crew.panels.set(mc.owner, crew.panels.get(mc.owner).filter((x) => x !== mc.id));
+  mc.owner = holder;
+  crew.panels.get(holder).push(mc.id);
+  game.dropStaleOrders(crew, game.clock());
+  assert.ok(!crew.orders.has(holder), 'the order for a control now on your own panel is dropped');
   room.destroy();
 });
 
