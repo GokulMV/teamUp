@@ -7,7 +7,7 @@ window.Games.pictionary = {
     const RING = 2 * Math.PI * 22;
     el.innerHTML = `
       <svg width="0" height="0" style="position:absolute"><defs><linearGradient id="timer-grad" x1="0" x2="1">
-        <stop offset="0" stop-color="#7c5cff"/><stop offset="0.5" stop-color="#ff4fa3"/><stop offset="1" stop-color="#ffb547"/></linearGradient></defs></svg>
+        <stop offset="0" stop-color="#40d2be"/><stop offset="0.5" stop-color="#ffd27a"/><stop offset="1" stop-color="#ffb547"/></linearGradient></defs></svg>
       <div class="game-wrap">
         <div class="game-bar glass pict-bar">
           <div class="timer-ring" data-ring><svg viewBox="0 0 52 52"><circle class="bg" cx="26" cy="26" r="22"/><circle class="fg" cx="26" cy="26" r="22" stroke-dasharray="${RING}" stroke-dashoffset="0"/></svg><b data-timer>–</b></div>

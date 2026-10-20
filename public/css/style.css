@@ -142,11 +142,11 @@ textarea { resize: vertical; min-height: 70px; }
 .hero h1 em { font-family: var(--font-serif); font-style: italic; font-weight: 400; letter-spacing: -0.02em; color: var(--accent); }
 .lede { color: var(--muted); font-size: 1.1rem; line-height: 1.65; max-width: 540px; margin: 20px 0 0; }
 .game-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-top: 32px; max-width: 660px; }
-.game-tile { grid-column: span 2; position: relative; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start; gap: 2px; min-height: 112px; padding: 14px 16px; border-radius: 16px; border: 1px solid var(--line); text-align: left; overflow: hidden; color: var(--text); transition: border-color 0.2s, transform 0.2s, background 0.2s; animation: rise 0.5s both; }
+.game-tile { grid-column: span 2; position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 12px 16px 14px; border-radius: 16px; border: 1px solid var(--line); text-align: left; overflow: hidden; color: var(--text); transition: border-color 0.2s, transform 0.2s, background 0.2s; animation: rise 0.5s both; }
 .game-tile:nth-child(4), .game-tile:nth-child(5) { grid-column: span 3; }
 .game-tile:hover { border-color: var(--line-2); transform: translateY(-2px); }
-.game-tile .tile-art { position: absolute; top: 10px; right: 14px; }
-.game-tile .tile-art .game-art { font-size: 2.4rem; }
+.game-tile .tile-art { display: block; margin-bottom: 6px; }
+.game-tile .tile-art .game-art { font-size: 2.2rem; }
 .game-tile b { font-size: 1rem; font-weight: 600; letter-spacing: -0.015em; }
 .game-tile small { color: var(--muted); font-size: 0.85rem; }
 .game-tile:nth-child(2) { animation-delay: 0.05s; } .game-tile:nth-child(3) { animation-delay: 0.1s; } .game-tile:nth-child(4) { animation-delay: 0.15s; } .game-tile:nth-child(5) { animation-delay: 0.2s; }
@@ -499,7 +499,7 @@ textarea { resize: vertical; min-height: 70px; }
 .rate button.on { background: rgba(255, 181, 71, 0.25); border-color: var(--accent); }
 .rate button:active { transform: scale(0.9); }
 .stage { flex: 1; position: relative; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
-.overlay { position: absolute; inset: 0; background: rgba(8, 5, 25, 0.7); backdrop-filter: blur(6px); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 20px; z-index: 5; border-radius: var(--radius); animation: fade 0.25s; }
+.overlay { position: absolute; inset: 0; background: rgba(10, 36, 38, 0.92); backdrop-filter: blur(6px); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 20px; z-index: 5; border-radius: var(--radius); animation: fade 0.25s; }
 .overlay h2 { font-size: clamp(1.4rem, 3vw, 2rem); }
 .overlay .av { width: 84px; height: 84px; }
 .overlay .choices { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
@@ -517,7 +517,23 @@ textarea { resize: vertical; min-height: 70px; }
 .board.editable .board-live { cursor: crosshair; }
 .board-paper.blind canvas:first-child { visibility: hidden; }
 .board-paper.blind::after { content: "🙈 Drawing blind: your picture appears in the album"; position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); font-size: 0.8rem; font-weight: 600; color: #6b7280; background: #f3f4f6; padding: 4px 10px; border-radius: 999px; pointer-events: none; white-space: nowrap; max-width: calc(100% - 24px); overflow: hidden; text-overflow: ellipsis; }
-.board-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: center; padding: 10px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); }
+.board-tools { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); }
+.tool-row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; justify-content: space-between; }
+.tool-group.tools { display: inline-flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--field); border: 1px solid var(--line); flex-wrap: nowrap; }
+.tool-seg { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-weight: 600; font-size: 0.86rem; transition: background 0.15s, color 0.15s; }
+.tool-seg svg, .tool-icon svg, .tool-done svg { width: 17px; height: 17px; flex: none; }
+.tool-seg:hover { color: var(--text); }
+.tool-seg.active { background: var(--text); color: var(--bg); }
+.tool-group.edits { display: inline-flex; gap: 6px; }
+.tool-icon { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 38px; height: 38px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text); font-weight: 600; font-size: 0.82rem; transition: background 0.15s, border-color 0.15s, color 0.15s; }
+.tool-icon:hover { background: var(--surface-3); }
+.tool-icon span:empty { display: none; }
+.tool-icon.danger:hover { color: #ffd1d9; border-color: rgba(251, 113, 133, 0.45); }
+.tool-icon.danger.armed { background: rgba(251, 113, 133, 0.22); border-color: rgba(251, 113, 133, 0.6); color: #ffe4e8; animation: tool-arm 0.4s; }
+@keyframes tool-arm { 30% { transform: translateX(-3px); } 60% { transform: translateX(3px); } }
+.tool-group.extra { margin-left: auto; }
+.tool-group.extra:empty { display: none; }
+.tool-done { display: inline-flex; align-items: center; gap: 8px; padding: 10px 22px; font-size: 0.95rem; border-radius: 11px; }
 .tool-group { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 .tool-group.colors { max-width: 460px; }
 .swatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.25); padding: 0; background: var(--c); transition: transform 0.15s; position: relative; }
@@ -529,9 +545,6 @@ textarea { resize: vertical; min-height: 70px; }
 .size-btn i { display: block; width: var(--d); height: var(--d); border-radius: 50%; background: var(--text); }
 .size-btn.active { background: var(--text); }
 .size-btn.active i { background: var(--bg); }
-.tool-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface-2); border-radius: 10px; padding: 7px 10px; font-weight: 600; font-size: 0.85rem; }
-.tool-btn.active { background: var(--text); color: var(--bg); }
-.tool-btn.done { background: var(--grad); border: 0; color: var(--on-accent); }
 
 /* Telephone */
 .tel-stage { padding: 12px; }
@@ -961,7 +974,6 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
   .game-tile, .game-tile:nth-child(4) { grid-column: span 1; }
   .game-tile:nth-child(5) { grid-column: 1 / -1; }
   .game-tile .tile-art .game-art { font-size: 2.1rem; }
-  .game-tile { min-height: 100px; }
   .home:has(.entry.invited) .entry { order: 0; margin: 0 0 28px; }
   .home:has(.entry.invited) .hero h1 { font-size: 2.2rem; }
   .steps { grid-template-columns: 1fr; }
@@ -1046,17 +1058,16 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
   .tel-stage:has(.board.editable) .tel-board, .tel-board .board.editable { height: auto; }
   .tel-board .board.editable .board-canvas-wrap { flex: none; width: 100%; aspect-ratio: 4 / 3; }
   .board-tools { gap: 8px; padding: 8px; border-radius: 16px; }
-  .tool-group.colors, .tool-group.extra { flex: 1 1 100%; }
-  .tool-group.colors { max-width: none; flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; padding: 5px 4px 7px; scrollbar-width: none; }
+  .tool-group.colors { max-width: none; flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; padding: 5px 4px 7px; scrollbar-width: none; }
   .tool-group.colors::-webkit-scrollbar { display: none; }
   .tool-group.colors .swatch { flex: 0 0 30px; width: 30px; height: 30px; }
-  .tool-group.sizes, .tool-group.tools { gap: 4px; flex-wrap: nowrap; }
+  .tool-group.sizes { gap: 4px; flex-wrap: nowrap; }
   .size-btn { width: 28px; height: 32px; }
-  .tool-btn { padding: 6px 7px; min-width: 32px; justify-content: center; }
-  .tool-btn span { display: none; }
-  .tool-group.extra { justify-content: center; }
-  .tool-group.extra:empty { display: none; }
-  .tool-group.extra .tool-btn.done { flex: 1; padding: 11px; font-size: 1rem; }
+  .tool-row { gap: 8px; }
+  .tool-seg { padding: 8px 10px; }
+  .tool-seg span { display: none; }
+  .tool-group.extra { flex: 1 1 100%; margin: 0; }
+  .tool-done { width: 100%; justify-content: center; padding: 12px; font-size: 1rem; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -1072,9 +1083,9 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
 :is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .game-art .em { will-change: transform; }
 
 /* Pictionary: the brush paints a stroke beside the palette. */
-.ga-pictionary .fx-stroke { left: -1.8em; top: 0.1em; width: 1.6em; height: 0.8em; overflow: visible; }
+.ga-pictionary .fx-stroke { left: 1.35em; top: 0.1em; width: 1.6em; height: 0.8em; overflow: visible; }
 .ga-pictionary .fx-stroke path { fill: none; stroke: #ff6b6b; stroke-width: 5; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 100; }
-.ga-pictionary .fx-brush { font-size: 0.6em; left: -3em; top: -0.3em; }
+.ga-pictionary .fx-brush { font-size: 0.6em; left: 2.2em; top: -0.3em; }
 :is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-pictionary .em { animation: ga-wobble 0.6s ease-in-out; }
 :is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-pictionary .fx-stroke { opacity: 1; }
 :is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-pictionary .fx-stroke path { animation: ga-draw 1.1s 0.15s ease-in-out forwards; }
@@ -1089,8 +1100,8 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
 
 /* Telephone: it rings, it's picked up, and it answers. */
 .ga-telephone .fx-ring { font-size: 0.6em; font-weight: 700; color: #ffd27a; top: 0.55em; }
-.ga-telephone .fx-ring-l { left: -0.5em; } .ga-telephone .fx-ring-r { right: -0.5em; }
-.ga-telephone .fx-bubble { right: 1.9em; top: -0.3em; display: flex; gap: 0.08em; padding: 0.13em 0.17em; border-radius: 0.25em 0.25em 0.05em 0.25em; background: #fff; transform-origin: 100% 100%; box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25); }
+.ga-telephone .fx-ring-l { left: -0.45em; } .ga-telephone .fx-ring-r { right: -0.5em; }
+.ga-telephone .fx-bubble { left: 1.35em; top: -0.2em; display: flex; gap: 0.08em; padding: 0.13em 0.17em; border-radius: 0.25em 0.25em 0.25em 0.05em; background: #fff; transform-origin: 0% 100%; box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25); }
 .ga-telephone .fx-bubble i { width: 0.12em; height: 0.12em; border-radius: 50%; background: #0e2a2c; }
 :is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-telephone .em { animation: ga-answer 1.5s ease-out forwards; }
 :is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-telephone .fx-ring { animation: ga-ring 0.22s 3 alternate; }
@@ -1124,7 +1135,7 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
 
 /* Ball & Chain: yanked one way, then the other. */
 .ga-ballchain .fx-pull { font-size: 0.6em; font-weight: 800; letter-spacing: -0.1em; top: 0.6em; }
-.ga-ballchain .fx-pull-l { left: -1.2em; } .ga-ballchain .fx-pull-r { right: -1.1em; }
+.ga-ballchain .fx-pull-l { left: -0.55em; } .ga-ballchain .fx-pull-r { right: -1.2em; }
 .ga-ballchain .fx-pull-l { color: #ffb547; } .ga-ballchain .fx-pull-r { color: #40d2be; }
 :is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-ballchain .em { animation: ga-tug 1.6s ease-in-out; }
 :is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-ballchain .fx-pull-l { animation: ga-pull-l 1.6s ease-in-out; }
@@ -1135,7 +1146,7 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
 
 /* Control Room: knobs twiddled faster and faster until the panel blows. */
 .ga-controlroom .fx-blast { font-size: 0.9em; left: 0.55em; top: -0.15em; }
-.ga-controlroom .fx-spark { font-size: 0.5em; left: -0.6em; top: -0.3em; }
+.ga-controlroom .fx-spark { font-size: 0.5em; left: 2.4em; top: -0.3em; }
 :is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-controlroom .em { animation: ga-twiddle 1.6s ease-in forwards; }
 :is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-controlroom .fx-blast { animation: ga-blast 0.7s 1.05s ease-out forwards; }
 :is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-controlroom .fx-spark { animation: ga-spark 0.6s 1.15s ease-out forwards; }

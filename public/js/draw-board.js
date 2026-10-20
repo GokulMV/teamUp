@@ -71,16 +71,29 @@
       const t = this.tools;
       const swatches = COLORS.map((c) => `<button class="swatch${this.tool !== 'eraser' && c === this.color ? ' active' : ''}" data-color="${c}" style="--c:${c}" title="${c}"></button>`).join('');
       const sizes = SIZES.map((s) => `<button class="size-btn${s === this.size ? ' active' : ''}" data-size="${s}" title="Brush ${s}"><i style="--d:${Math.max(4, Math.min(26, s * 0.6))}px"></i></button>`).join('');
-      const tool = (id, icon, label) => `<button class="tool-btn${this.tool === id ? ' active' : ''}" data-tool="${id}" title="${label}">${icon}<span>${label}</span></button>`;
+      const svg = (d) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+      const ICON = {
+        pen: svg('<path d="M16 4l4 4L9 19H5v-4z"/><path d="M13.5 6.5l4 4"/>'),
+        fill: svg('<path d="m19 11-8-8-8.6 8.6a2 2 0 0 0 0 2.8l5.2 5.2c.8.8 2 .8 2.8 0L19 11Z"/><path d="m5 2 5 5"/><path d="M2 13h15"/><path d="M22 20a2 2 0 1 1-4 0c0-1.6 1.7-2.4 2-4 .3 1.6 2 2.4 2 4Z"/>'),
+        eraser: svg('<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>'),
+        undo: svg('<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>'),
+        clear: svg('<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'),
+      };
+      const tool = (id, label) => `<button class="tool-seg${this.tool === id ? ' active' : ''}" data-tool="${id}" title="${label}" aria-pressed="${this.tool === id}">${ICON[id]}<span>${label}</span></button>`;
+      const arming = this.clearArmed && Date.now() < this.clearArmed;
       t.innerHTML = `
-        <div class="tool-group colors">${swatches}<label class="swatch custom" title="Pick any colour" style="--c:${this.color}"><input type="color" value="${this.color}"></label></div>
-        <div class="tool-group sizes">${sizes}</div>
-        <div class="tool-group tools">
-          ${tool('pen', '✏️', 'Pen')}${tool('fill', '🪣', 'Fill')}${tool('eraser', '🧽', 'Eraser')}
-          <button class="tool-btn" data-act="undo" title="Undo (Ctrl+Z)">↩️<span>Undo</span></button>
-          <button class="tool-btn" data-act="clear" title="Clear">🗑️<span>Clear</span></button>
+        <div class="tool-row">
+          <div class="tool-group colors">${swatches}<label class="swatch custom" title="Pick any colour" style="--c:${this.color}"><input type="color" value="${this.color}"></label></div>
+          <div class="tool-group sizes">${sizes}</div>
         </div>
-        <div class="tool-group extra"></div>`;
+        <div class="tool-row">
+          <div class="tool-group tools" role="group" aria-label="Tool">${tool('pen', 'Pen')}${tool('fill', 'Fill')}${tool('eraser', 'Eraser')}</div>
+          <div class="tool-group edits">
+            <button class="tool-icon" data-act="undo" title="Undo (Ctrl+Z)" aria-label="Undo">${ICON.undo}</button>
+            <button class="tool-icon danger${arming ? ' armed' : ''}" data-act="clear" title="Clear the drawing" aria-label="Clear the drawing">${ICON.clear}<span>${arming ? 'Tap again to clear' : ''}</span></button>
+          </div>
+          <div class="tool-group extra"></div>
+        </div>`;
       t.onclick = (e) => {
         const b = e.target.closest('button');
         if (!b) return;
@@ -88,7 +101,14 @@
         if (b.dataset.size) this.size = Number(b.dataset.size);
         if (b.dataset.tool) this.tool = b.dataset.tool;
         if (b.dataset.act === 'undo') this.undo();
-        if (b.dataset.act === 'clear') this.clear();
+        // Clearing wipes the whole drawing, so it takes a second tap within a few seconds.
+        if (b.dataset.act === 'clear') {
+          if (this.clearArmed && Date.now() < this.clearArmed) { this.clearArmed = 0; this.clear(); } else {
+            this.clearArmed = Date.now() + 2500;
+            clearTimeout(this.clearTimer);
+            this.clearTimer = setTimeout(() => { this.clearArmed = 0; if (this.editable) this.renderTools(); }, 2500);
+          }
+        }
         this.renderTools();
       };
       t.querySelector('input[type=color]').oninput = (e) => { this.color = e.target.value; if (this.tool === 'eraser') this.tool = 'pen'; this.renderTools(); };

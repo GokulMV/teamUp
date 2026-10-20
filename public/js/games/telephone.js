@@ -9,7 +9,7 @@ window.Games.telephone = {
     const REACTIONS = ['❤️', '😂', '😮', '🔥', '👏'];
     el.innerHTML = `
       <svg width="0" height="0" style="position:absolute"><defs><linearGradient id="timer-grad" x1="0" x2="1">
-        <stop offset="0" stop-color="#7c5cff"/><stop offset="0.5" stop-color="#ff4fa3"/><stop offset="1" stop-color="#ffb547"/></linearGradient></defs></svg>
+        <stop offset="0" stop-color="#40d2be"/><stop offset="0.5" stop-color="#ffd27a"/><stop offset="1" stop-color="#ffb547"/></linearGradient></defs></svg>
       <div class="game-wrap tel-wrap">
         <div class="game-bar glass">
           <div class="timer-ring" data-ring><svg viewBox="0 0 52 52"><circle class="bg" cx="26" cy="26" r="22"/><circle class="fg" cx="26" cy="26" r="22" stroke-dasharray="${RING}" stroke-dashoffset="0"/></svg><b data-timer>–</b></div>
@@ -124,7 +124,7 @@ window.Games.telephone = {
         editable: true,
         blind: t.blind,
         onTools: (extra) => {
-          extra.innerHTML = '<button class="tool-btn done" data-done>✅ Done</button>';
+          extra.innerHTML = '<button class="btn primary tool-done" data-done><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Done</button>';
           extra.querySelector('[data-done]').onclick = submit;
         },
       });
