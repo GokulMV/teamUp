@@ -40,6 +40,65 @@
   // Line icons from the sprite in index.html.
   const ico = (name) => `<svg class="ico" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 
+  // How each game is played, shown in the lobby under its settings: four steps, then the controls.
+  const touchScreen = matchMedia('(pointer: coarse)').matches;
+  const HOW_TO = {
+    pictionary: {
+      steps: [
+        ['One player draws', 'The drawer picks one of a few words and sketches it. No letters or numbers allowed.'],
+        ['Everyone else guesses', 'Type guesses in the chat. The sooner you get it right, the more points you score.'],
+        ['Hints help', 'Letters of the word show up as the clock runs down (not in Hidden mode).'],
+        ['Take turns', 'The drawer scores for every correct guess. The pen goes round until the rounds are up.'],
+      ],
+    },
+    telephone: {
+      steps: [
+        ['Write something', 'Everyone starts by writing a funny line, like “a dragon at the dentist”.'],
+        ['Draw it', 'You get someone else’s line and draw it as best you can.'],
+        ['Describe the drawing', 'The next player only sees the drawing and writes what they think it shows.'],
+        ['Watch it drift', 'Write, draw, describe, repeat. At the end every album is revealed, step by step.'],
+      ],
+    },
+    kart: {
+      steps: [
+        ['Pick a mode', 'Race: first over the line after the laps wins. Battle arena: score the most knock-outs before time runs out.'],
+        ['Grab items', 'Drive through the item boxes for rockets, bananas, shields and more.'],
+        ['Drift for boosts', 'Drift through corners and let go for a mini-turbo. A quick tap hops over hazards.'],
+        ['Use the course', 'Jump pads, boost strips and ramps help you; water, lava and the edge don’t.'],
+      ],
+      controls: touchScreen ? 'On-screen arrows steer · Drift button · big button fires · small button swaps items'
+        : 'WASD or arrows to drive · Shift or X to drift and hop · Space fires · Q swaps items',
+    },
+    ballchain: {
+      steps: [
+        ['Teams on a rope', 'Each team is roped to a giant ball at the start of an obstacle course.'],
+        ['Everyone pulls', 'Move to drag the ball along. It digs in unless everyone on your team is pulling.'],
+        ['Heave and brace', 'Heave together for a big pull; brace to anchor the ball on slopes and gaps.'],
+        ['Race to the finish', 'First to a checkpoint drops a trap on the teams behind. First over the line wins the course.'],
+      ],
+      controls: touchScreen ? 'Left thumb stick moves · HEAVE and BRACE buttons on the right' : 'WASD or arrows to move · Space to heave · hold Shift to brace',
+    },
+    controlroom: {
+      steps: [
+        ['Everyone gets a panel', 'Your crew shares one ship. Each of you has a panel of silly-named controls.'],
+        ['Read your order out', 'Your order is for a control on a crewmate’s panel, and it says whose. Tell them!'],
+        ['Listen for yours', 'When someone calls out a control on your panel, work it fast.'],
+        ['Warp before the hull breaks', 'Done orders fill the warp bar; missed ones damage the hull. Clear every sector.'],
+      ],
+      controls: 'Play in the same room or on a voice call: talking is the game',
+    },
+  };
+  function renderHowTo(mode) {
+    const h = HOW_TO[mode];
+    const el = $('how-to');
+    if (!h) { el.innerHTML = ''; return; }
+    if (el.dataset.mode === mode) return;
+    el.dataset.mode = mode;
+    el.innerHTML = `<h3 id="how-to-title">How to play ${escapeHtml(MODE_NAMES[mode])}</h3>
+      <ol class="how-steps">${h.steps.map(([t, d], i) => `<li><span class="how-n">${i + 1}</span><div><b>${t}</b><p>${d}</p></div></li>`).join('')}</ol>
+      ${h.controls ? `<p class="how-controls"><b>Controls</b> ${h.controls}</p>` : ''}`;
+  }
+
   // Settings shown in the lobby for each game, rendered by renderSettings().
   //   type: toggle | stepper | seg | slider | cards | maps | items | text
   //   block: full-width control under its label (otherwise a compact row: label left, control right)
@@ -476,6 +535,7 @@
     });
     $('host-note').textContent = host ? 'You’re the host' : 'The host picks the game';
     $('settings-title').innerHTML = `${ico(s.mode)} ${MODE_NAMES[s.mode]} settings`;
+    renderHowTo(s.mode);
     renderSettings(room, host);
 
     $('set-teams').checked = s.teamMode;
