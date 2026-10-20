@@ -442,12 +442,12 @@ export const THEMES = {
     bridge: 'steel', rail: 'wood',
   },
   snow: {
-    sky: [0x6f9fdc, 0xe3edf8], fog: [0xdfe9f4, 2600, 10500], hemi: [0xeaf3ff, 0x8ea6c0, 1.1], sun: [0xfff8ee, 2.5],
-    ground: () => tex.ground('#e3ebf3', ['#d5e0eb', '#f1f6fb', '#cbd8e5', '#eef4fa']),
+    sky: [0x6f9fdc, 0xe3edf8], fog: [0xdfe9f4, 2600, 10500], hemi: [0xeaf3ff, 0x7f97b8, 0.95], sun: [0xfff4e6, 2.3],
+    ground: () => tex.ground('#d8e3ef', ['#c9d7e6', '#e9f0f7', '#bccbdd', '#e3ebf4']),
     asphalt: () => tex.asphalt('#7d8aa0', '#e0f2fe', 'rgba(224,242,254,0.9)'), curb: ['#2563eb', '#f8fafc'], runoff: 0xdfe8f1,
     barrier: 'tires', barrierColors: [0x2563eb, 0xf1f5f9],
     trees: ['casuarina'], frost: true, pines: true, snowfall: true, clouds: 30, cloudTint: 0xdde5ee, hills: 0xf2f6fb,
-    terrain: { low: '#d3dfeb', high: '#eef4fa', rock: '#566170', bed: '#cfe3f3' }, detail: 'snow',
+    terrain: { low: '#b3c6dc', high: '#e4ecf6', rock: '#4f5a6b', bed: '#bcd6ec' }, detail: 'snow',
     bridge: 'ice', rail: 'ice', ice: true,
   },
   neon: {
@@ -693,6 +693,66 @@ export function addSimpleTrees(scene, all, { snowy = false, seed = 3 } = {}) {
     });
     crowns.count = n;
     for (const im of [trunks, crowns]) { im.castShadow = true; im.receiveShadow = true; im.computeBoundingSphere(); scene.add(im); }
+  }
+}
+
+// Stylised broadleaf trees (and bushes): a tapered trunk under a puffy canopy of a few faceted
+// blobs in two greens, lit from above, the bright arenas' look rather than a photographic one.
+// A handful of variants, instanced; spots: [x, z, scale, y?].
+export function addToonTrees(scene, all, { seed = 5, bush = false, greens = ['#4fae4a', '#3f9a45', '#62b84c', '#7cc35a'] } = {}) {
+  const r = rng(seed);
+  const variants = [];
+  for (let v = 0; v < 4; v++) {
+    const blobs = [];
+    const n = bush ? 3 : 4 + (v % 2);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + r();
+      const rad = bush ? 0.55 + r() * 0.25 : 0.55 + r() * 0.3;
+      const off = i === 0 ? 0 : bush ? 0.5 : 0.55;
+      const g = new THREE.IcosahedronGeometry(rad, 1).translate(Math.cos(a) * off, (bush ? 0.45 : 1.15) + (i === 0 ? 0.35 : r() * 0.3), Math.sin(a) * off);
+      // Lighter on top, darker below: vertex colours so one material serves every tree.
+      const pos = g.attributes.position;
+      const cols = [];
+      const top = new THREE.Color(greens[(v + i) % greens.length]);
+      const under = top.clone().multiplyScalar(0.62);
+      for (let k = 0; k < pos.count; k++) {
+        const t = THREE.MathUtils.clamp((pos.getY(k) - 0.3) / 1.6, 0, 1);
+        const c = under.clone().lerp(top, t);
+        cols.push(c.r, c.g, c.b);
+      }
+      g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+      blobs.push(g.toNonIndexed());
+    }
+    if (!bush) {
+      const trunk = new THREE.CylinderGeometry(0.09, 0.15, 1.2, 6).translate(0, 0.6, 0).toNonIndexed();
+      const bark = new THREE.Color('#7a5236');
+      trunk.setAttribute('color', new THREE.Float32BufferAttribute(Array.from({ length: trunk.attributes.position.count }, () => [bark.r, bark.g, bark.b]).flat(), 3));
+      blobs.push(trunk);
+    }
+    for (const b of blobs) { b.deleteAttribute('uv'); }
+    variants.push(mergeGeometries(blobs));
+  }
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.9 });
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const size = bush ? 34 : 70;
+  for (const positions of cells(all, 3200)) {
+    const groups = variants.map(() => []);
+    positions.forEach((p, i) => groups[i % variants.length].push(p));
+    groups.forEach((list, v) => {
+      if (!list.length) return;
+      const im = new THREE.InstancedMesh(variants[v], mat, list.length);
+      list.forEach(([x, z, s0, y = 0], i) => {
+        const s = size * (s0 || 1) * (0.8 + r() * 0.45);
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), r() * Math.PI * 2);
+        m.compose(new THREE.Vector3(x, y - 2, z), q, new THREE.Vector3(s, s * (0.9 + r() * 0.25), s));
+        im.setMatrixAt(i, m);
+      });
+      im.castShadow = !bush;
+      im.receiveShadow = true;
+      im.computeBoundingSphere();
+      scene.add(im);
+    });
   }
 }
 

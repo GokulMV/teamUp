@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import {
-  MOBILE, tex, part, rng, canvasTexture, boostPadMaterial, addMoonlitTrees, addSimpleTrees, addGrass, addClouds, addCacti, addBuildings, addStars,
+  MOBILE, tex, part, rng, canvasTexture, boostPadMaterial, addMoonlitTrees, addSimpleTrees, addToonTrees, addGrass, addClouds, addCacti, addBuildings, addStars,
 } from './world.js';
 
 const K = window.KartCore;
@@ -901,10 +901,10 @@ function buildScenery(scene, map, theme, ctx, R) {
       addSimpleTrees(scene, spots.filter((_, i) => i % 3 !== 0), { snowy: true });
       addMoonlitTrees(scene, spots.filter((_, i) => i % 3 === 0), theme.trees, { tint: theme.frost ? 0xe9f1f8 : null, seed: 2 }).then((ok) => ok || fallback());
     } else {
-      addMoonlitTrees(scene, spots, theme.trees, { seed: 1 }).then((ok) => ok || fallback());
+      addToonTrees(scene, spots, { seed: 1 });
     }
   }
-  if (theme.bushes) addMoonlitTrees(scene, besideRoad(map, R, MOBILE ? 80 : 220, half + 90, half + 1000, 777, plantable(0.6)), theme.bushes, { seed: 3, variants: 2 });
+  if (theme.bushes) addToonTrees(scene, besideRoad(map, R, MOBILE ? 80 : 220, half + 90, half + 1000, 777, plantable(0.6)), { seed: 3, bush: true });
   if (theme.deadTrees) {
     const spots = [...besideRoad(map, R, MOBILE ? 50 : 120, wall + 40, wall + 900, 4242, plantable(0.7)), ...farFromRoad(map, box, MOBILE ? 40 : 90, wall + 300, 99, plantable(0.7))];
     addMoonlitTrees(scene, spots, theme.deadTrees, { barkOnly: true, barkTint: 0x2e2522, seed: 4, variants: 2 });
