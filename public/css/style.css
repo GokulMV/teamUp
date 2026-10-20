@@ -145,8 +145,8 @@ textarea { resize: vertical; min-height: 70px; }
 .game-tile { grid-column: span 2; position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 12px 14px 14px; border-radius: 16px; border: 1px solid var(--line); text-align: left; overflow: hidden; color: var(--text); transition: border-color 0.2s, transform 0.2s, background 0.2s; animation: rise 0.5s both; }
 .game-tile:nth-child(4), .game-tile:nth-child(5) { grid-column: span 3; }
 .game-tile:hover { border-color: var(--line-2); transform: translateY(-2px); }
-.game-tile .tile-art { display: block; width: 100%; max-width: 132px; margin: 0 0 8px; }
-.game-tile:nth-child(4) .tile-art, .game-tile:nth-child(5) .tile-art { max-width: 140px; }
+.game-tile .tile-art { display: block; margin: 4px 0 10px; }
+.game-tile .tile-art .game-art { font-size: 2.4rem; }
 .game-tile b { font-size: 1rem; font-weight: 600; letter-spacing: -0.015em; }
 .game-tile small { color: var(--muted); font-size: 0.85rem; }
 .game-tile:nth-child(2) { animation-delay: 0.05s; } .game-tile:nth-child(3) { animation-delay: 0.1s; } .game-tile:nth-child(4) { animation-delay: 0.15s; } .game-tile:nth-child(5) { animation-delay: 0.2s; }
@@ -262,8 +262,8 @@ textarea { resize: vertical; min-height: 70px; }
   border: 1px solid var(--line); background: var(--surface); transition: transform 0.2s, border 0.2s, background 0.2s; overflow: hidden;
 }
 .game-card:hover:not(:disabled) { transform: translateY(-3px); }
-.game-card .gc-art { width: 72px; flex-shrink: 0; display: block; }
-.game-card .gc-art svg { width: 100%; height: auto; }
+.game-card .gc-art { flex-shrink: 0; display: block; }
+.game-card .gc-art .game-art { font-size: 1.9rem; width: 1.5em; justify-content: center; }
 .game-card b { font-family: var(--font-display); font-size: 1.12rem; }
 .game-card small { color: var(--muted); font-size: 0.82rem; line-height: 1.35; display: block; margin-top: 2px; }
 .game-card.selected { border-color: transparent; background: linear-gradient(var(--bg-2), var(--bg-2)) padding-box, var(--grad) border-box; border: 2px solid transparent; }
@@ -945,8 +945,7 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
   .game-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 24px; }
   .game-tile, .game-tile:nth-child(4) { grid-column: span 1; }
   .game-tile:nth-child(5) { grid-column: 1 / -1; }
-  .game-tile .tile-art, .game-tile:nth-child(4) .tile-art { max-width: 112px; }
-  .game-tile:nth-child(5) .tile-art { max-width: 112px; }
+  .game-tile .tile-art .game-art { font-size: 2.2rem; }
   .home:has(.entry.invited) .entry { order: 0; margin: 0 0 28px; }
   .home:has(.entry.invited) .hero h1 { font-size: 2.2rem; }
   .steps { grid-template-columns: 1fr; }
@@ -1008,7 +1007,7 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
 @media (max-width: 560px) {
   .game-cards { gap: 8px; }
   .game-card { flex-direction: column; align-items: flex-start; gap: 4px; padding: 11px 12px; }
-  .game-card .gc-art { width: 60px; }
+  .game-card .gc-art .game-art { font-size: 1.7rem; }
   .game-card b { font-size: 1rem; }
   .game-card small { font-size: 0.76rem; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .game-card:last-child:nth-child(odd) { flex-direction: row; align-items: center; gap: 12px; }
@@ -1048,76 +1047,85 @@ body.kart-playing.chat-open .chat-head { display: flex; align-items: center; gap
 }
 
 /* ---------- Game art (public/js/game-art.js) ----------
-   Each picture plays its little scene when its card is hovered, focused or given .play (tapped on a
-   phone, or the home page's idle loop): the brush draws, the phone rings and is answered, the kart
-   revs and drives off, the control room's knobs turn until it blows, and the teams tug the ball. */
-.game-art { display: block; width: 100%; height: auto; overflow: visible; }
-.game-art g, .game-art path, .game-art circle { transform-box: fill-box; }
-.ga-ink { stroke-dasharray: 100; stroke-dashoffset: 0; }
-.ga-brush { transform-origin: 0% 100%; }
-.ga-ring { opacity: 0.35; }
-.ga-bubble { transform-origin: 20% 100%; transform: scale(0); opacity: 0; }
-.ga-handset { transform-origin: 50% 100%; }
-.ga-speed { opacity: 0; }
-.ga-puff { opacity: 0; transform-origin: center; }
-.ga-wheel { transform-origin: center; }
-.ga-needle { transform-origin: 50% 100%; transform: rotate(-50deg); }
-.ga-knob { transform-origin: center; }
-.ga-blast { transform-origin: 50% 60%; transform: scale(0); opacity: 0; }
-.ga-p1 { transform-origin: 50% 100%; }
-.ga-p2 { transform-origin: 50% 100%; }
+   Each game's emoji acts out its game when its card is hovered, focused or given .play (tapped on
+   a phone, or the home page's idle loop). Sizes come from the font size of .game-art. */
+.game-art { position: relative; display: inline-flex; align-items: center; justify-content: flex-start; width: 3.6em; height: 1.5em; font-size: 2.6rem; line-height: 1; }
+.game-art .em { display: inline-block; filter: drop-shadow(0 8px 12px rgba(0, 0, 0, 0.35)); transition: transform 0.25s cubic-bezier(.3, 1.4, .6, 1); }
+.game-art .fx { position: absolute; pointer-events: none; opacity: 0; }
+.ga-host:hover .game-art .em { transform: scale(1.06); }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .game-art .em { will-change: transform; }
 
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-pictionary .ga-ink { animation: ga-draw 1.1s ease-in-out both; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-pictionary .ga-ink2 { animation: ga-draw 0.7s 1.1s ease-in-out both; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-pictionary .ga-brush { animation: ga-brush 2s ease-in-out both; }
-@keyframes ga-draw { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+/* Pictionary: the brush paints a stroke beside the palette. */
+.ga-pictionary .fx-stroke { left: 1.55em; top: 0.12em; width: 1.6em; height: 0.8em; opacity: 1; overflow: visible; }
+.ga-pictionary .fx-stroke path { fill: none; stroke: #ff6b6b; stroke-width: 5; stroke-linecap: round; stroke-dasharray: 100; stroke-dashoffset: 100; }
+.ga-pictionary .fx-brush { font-size: 0.6em; left: 2.5em; top: -0.3em; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-pictionary .em { animation: ga-wobble 0.6s ease-in-out; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-pictionary .fx-stroke path { animation: ga-draw 1.1s 0.15s ease-in-out forwards; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-pictionary .fx-brush { animation: ga-brush 1.25s ease-in-out forwards; }
+@keyframes ga-draw { to { stroke-dashoffset: 0; } }
+@keyframes ga-wobble { 25% { transform: rotate(-8deg); } 75% { transform: rotate(6deg); } }
 @keyframes ga-brush {
-  0% { transform: translate(-52px, 4px); } 11% { transform: translate(-44px, -10px); } 22% { transform: translate(-34px, -2px); }
-  33% { transform: translate(-22px, -6px); } 44% { transform: translate(-10px, -14px); } 55% { transform: translate(0, 0); }
-  62% { transform: translate(-50px, 14px); } 76% { transform: translate(-30px, 9px); } 90% { transform: translate(-10px, 14px); } 100% { transform: translate(0, 0); }
+  0% { opacity: 0; transform: translate(-1.7em, 0.9em); } 12% { opacity: 1; transform: translate(-1.7em, 0.9em); }
+  30% { transform: translate(-1.35em, 0.15em); } 50% { transform: translate(-0.95em, 0.75em); } 70% { transform: translate(-0.55em, 0.3em); }
+  88% { opacity: 1; transform: translate(-0.1em, 0.55em); } 100% { opacity: 1; transform: translate(-0.1em, 0.55em) rotate(-10deg); }
 }
 
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-telephone .ga-handset { animation: ga-answer 1.8s ease-out both; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-telephone .ga-ring { animation: ga-ringing 0.7s steps(2) 1 both; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-telephone .ga-bubble { animation: ga-pop 0.45s 0.95s cubic-bezier(.3, 1.6, .5, 1) both; }
+/* Telephone: it rings, it's picked up, and it answers. */
+.ga-telephone .fx-ring { position: static; font-size: 0.6em; font-weight: 700; color: #ffd27a; margin: 0 0.15em; }
+.ga-telephone .fx-bubble { left: 1.55em; top: -0.3em; display: flex; gap: 0.08em; padding: 0.13em 0.17em; border-radius: 0.25em 0.25em 0.25em 0.05em; background: #fff; transform-origin: 0% 100%; box-shadow: 0 6px 14px rgba(0, 0, 0, 0.25); }
+.ga-telephone .fx-bubble i { width: 0.12em; height: 0.12em; border-radius: 50%; background: #0e2a2c; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-telephone .em { animation: ga-answer 1.5s ease-out forwards; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-telephone .fx-ring { animation: ga-ring 0.22s 3 alternate; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-telephone .fx-bubble { animation: ga-pop 0.4s 0.85s cubic-bezier(.3, 1.6, .5, 1) forwards; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-telephone .fx-bubble i { animation: ga-dots 0.9s 1.2s infinite; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-telephone .fx-bubble i:nth-child(2) { animation-delay: 1.35s; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-telephone .fx-bubble i:nth-child(3) { animation-delay: 1.5s; }
 @keyframes ga-answer {
-  0%, 36% { transform: none; } 4%, 12%, 20%, 28% { transform: rotate(-5deg); } 8%, 16%, 24%, 32% { transform: rotate(5deg); }
-  55%, 100% { transform: translate(-6px, -15px) rotate(-16deg); }
+  0% { transform: none; } 5%, 15%, 25%, 35% { transform: rotate(-14deg); } 10%, 20%, 30%, 40% { transform: rotate(14deg); }
+  45% { transform: none; } 70%, 100% { transform: translate(-0.12em, -0.22em) rotate(-22deg); }
 }
-@keyframes ga-ringing { 0% { opacity: 1; } 50% { opacity: 0.2; } 100% { opacity: 0; } }
-@keyframes ga-pop { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes ga-ring { from { opacity: 0; transform: scale(0.8); } to { opacity: 1; transform: scale(1.15); } }
+@keyframes ga-pop { from { opacity: 0; transform: scale(0); } to { opacity: 1; transform: scale(1); } }
+@keyframes ga-dots { 0%, 100% { transform: none; } 30% { transform: translateY(-0.05em); } }
 
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-kart .ga-kart { animation: ga-drive 1.9s cubic-bezier(.5, 0, .3, 1) both; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-kart .ga-wheel { animation: ga-spin 0.35s linear 6; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-kart .ga-puff { animation: ga-puff 0.5s ease-out 3; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-kart .ga-puff2 { animation-delay: 0.18s; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-kart .ga-speed { animation: ga-speed 1.9s both; }
+/* Kart Battle: it revs, puffs smoke and races off, then rolls back in from the other side. */
+.ga-kart { overflow: hidden; }
+.ga-kart .fx-puff { font-size: 0.5em; left: 2.2em; top: 1.2em; }
+.ga-kart .fx-lines { left: 1.25em; top: 0.45em; display: grid; gap: 0.12em; }
+.ga-kart .fx-lines i { display: block; width: 0.5em; height: 0.06em; border-radius: 1em; background: #ffd27a; }
+.ga-kart .fx-lines i:nth-child(2) { margin-left: 0.18em; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-kart .em { animation: ga-drive 1.7s cubic-bezier(.55, 0, .3, 1) forwards; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-kart .fx-puff { animation: ga-puff 0.45s 0.05s ease-out 2; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-kart .fx-puff2 { animation-delay: 0.25s; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-kart .fx-lines { animation: ga-lines 1.7s forwards; }
 @keyframes ga-drive {
-  0% { transform: none; } 6%, 14%, 22% { transform: translate(-1px, 1px); } 10%, 18%, 26% { transform: translate(1px, -1px); }
-  32% { transform: translateX(-7px); } 58% { transform: translateX(160px); } 58.01% { transform: translateX(-170px); } 100% { transform: none; }
+  0% { transform: none; } 5%, 13%, 21% { transform: translate(0.02em, 0.02em); } 9%, 17%, 25% { transform: translate(-0.02em, -0.02em); }
+  32% { transform: translateX(0.12em); } 58% { transform: translateX(-2.6em); } 58.01% { transform: translateX(2.6em); } 100% { transform: none; }
 }
-@keyframes ga-spin { to { transform: rotate(360deg); } }
-@keyframes ga-puff { 0% { opacity: 0.9; transform: translate(0, 0) scale(0.6); } 100% { opacity: 0; transform: translate(-12px, -8px) scale(1.6); } }
-@keyframes ga-speed { 0%, 30% { opacity: 0; transform: none; } 40% { opacity: 1; } 58% { opacity: 0; transform: translateX(20px); } 100% { opacity: 0; } }
+@keyframes ga-puff { 0% { opacity: 0.95; transform: translate(0, 0) scale(0.5); } 100% { opacity: 0; transform: translate(0.5em, -0.2em) scale(1.3); } }
+@keyframes ga-lines { 0%, 30% { opacity: 0; transform: none; } 40% { opacity: 1; } 58% { opacity: 0; transform: translateX(-0.6em); } 100% { opacity: 0; } }
 
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-controlroom .ga-knob1 { animation: ga-knob 1.4s ease-in-out both; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-controlroom .ga-knob2 { animation: ga-knob-back 1.4s ease-in-out both; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-controlroom .ga-needle { animation: ga-needle 1.4s ease-in-out both; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-controlroom .ga-blast { animation: ga-blast 0.7s 1.25s ease-out both; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-controlroom .ga-lamp { animation: ga-blink 0.25s 6 alternate; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-controlroom .ga-lamp2 { animation-delay: 0.12s; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .game-art.ga-controlroom { animation: ga-jolt 0.4s 1.25s both; }
-@keyframes ga-knob { 0% { transform: none; } 40% { transform: rotate(140deg); } 60% { transform: rotate(80deg); } 100% { transform: rotate(270deg); } }
-@keyframes ga-knob-back { 0% { transform: none; } 50% { transform: rotate(-160deg); } 100% { transform: rotate(-220deg); } }
-@keyframes ga-needle { 0% { transform: rotate(-50deg); } 40% { transform: rotate(10deg); } 55% { transform: rotate(-10deg); } 85% { transform: rotate(62deg); } 90% { transform: rotate(52deg); } 100% { transform: rotate(60deg); } }
-@keyframes ga-blast { 0% { transform: scale(0); opacity: 1; } 55% { transform: scale(1.25); opacity: 1; } 100% { transform: scale(1.45); opacity: 0; } }
-@keyframes ga-blink { to { opacity: 0.15; } }
-@keyframes ga-jolt { 0%, 100% { transform: none; } 20% { transform: translate(-2px, 1px); } 40% { transform: translate(2px, -1px); } 60% { transform: translate(-1px, -1px); } 80% { transform: translate(1px, 1px); } }
+/* Ball & Chain: yanked one way, then the other. */
+.ga-ballchain .fx-pull { position: static; font-size: 0.6em; font-weight: 800; letter-spacing: -0.1em; margin: 0 0.2em; }
+.ga-ballchain .fx-pull-l { color: #ffb547; } .ga-ballchain .fx-pull-r { color: #40d2be; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-ballchain .em { animation: ga-tug 1.6s ease-in-out; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-ballchain .fx-pull-l { animation: ga-pull-l 1.6s ease-in-out; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-ballchain .fx-pull-r { animation: ga-pull-r 1.6s ease-in-out; }
+@keyframes ga-tug { 0%, 100% { transform: none; } 20%, 55% { transform: translateX(-0.3em) rotate(-14deg) scaleX(1.08); } 37%, 75% { transform: translateX(0.3em) rotate(14deg) scaleX(1.08); } }
+@keyframes ga-pull-l { 0%, 100% { opacity: 0; transform: none; } 20%, 55% { opacity: 1; transform: translateX(-0.25em); } 37%, 75% { opacity: 0.2; transform: none; } }
+@keyframes ga-pull-r { 0%, 100% { opacity: 0; transform: none; } 20%, 55% { opacity: 0.2; transform: none; } 37%, 75% { opacity: 1; transform: translateX(0.25em); } }
 
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-ballchain .ga-ball { animation: ga-tug 1.8s ease-in-out both; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-ballchain .ga-p1 { animation: ga-lean-l 1.8s ease-in-out both; }
-:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-ballchain .ga-p2 { animation: ga-lean-r 1.8s ease-in-out both; }
-@keyframes ga-tug { 0%, 100% { transform: none; } 20% { transform: translateX(-7px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-9px) rotate(-8deg); } 80% { transform: translateX(8px) rotate(8deg); } }
-@keyframes ga-lean-l { 0%, 100% { transform: none; } 20%, 60% { transform: translateX(-4px) rotate(-14deg); } 40%, 80% { transform: rotate(4deg); } }
-@keyframes ga-lean-r { 0%, 100% { transform: none; } 20%, 60% { transform: rotate(-4deg); } 40%, 80% { transform: translateX(4px) rotate(14deg); } }
+/* Control Room: knobs twiddled faster and faster until the panel blows. */
+.ga-controlroom .fx-blast { font-size: 0.9em; left: 0.55em; top: -0.15em; }
+.ga-controlroom .fx-spark { font-size: 0.5em; left: 2.6em; top: -0.3em; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-controlroom .em { animation: ga-twiddle 1.6s ease-in forwards; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-controlroom .fx-blast { animation: ga-blast 0.7s 1.05s ease-out forwards; }
+:is(.ga-host:hover, .ga-host:focus-visible, .ga-host.play) .ga-controlroom .fx-spark { animation: ga-spark 0.6s 1.15s ease-out forwards; }
+@keyframes ga-twiddle {
+  0% { transform: none; } 10% { transform: rotate(-6deg); } 20% { transform: rotate(6deg); } 30% { transform: rotate(-8deg); } 38% { transform: rotate(8deg); }
+  46% { transform: rotate(-10deg) scale(1.04); } 52% { transform: rotate(10deg) scale(1.06); } 58% { transform: rotate(-12deg) scale(1.08); } 63% { transform: rotate(12deg) scale(1.1); }
+  68% { transform: translate(-0.05em, 0.03em) scale(1.12); } 74% { transform: translate(0.06em, -0.04em) scale(0.92); } 82% { transform: translate(-0.03em, 0) rotate(-4deg); } 100% { transform: rotate(-4deg); }
+}
+@keyframes ga-blast { 0% { opacity: 0; transform: scale(0.2); } 30% { opacity: 1; transform: scale(1.3); } 100% { opacity: 0; transform: scale(1.7); } }
+@keyframes ga-spark { 0% { opacity: 0; transform: scale(0.4) rotate(0); } 40% { opacity: 1; } 100% { opacity: 0; transform: translate(0.3em, -0.3em) scale(1.2) rotate(40deg); } }
 @media (prefers-reduced-motion: reduce) { .game-art *, .game-art { animation: none !important; } }

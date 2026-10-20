@@ -233,15 +233,15 @@
   setAvatar(state.avatar);
 
   // ---------- Home ----------
-  // The game tiles' pictures play their scene on hover; a tap plays it on a phone, and with no mouse
+  // The game tiles' emoji act out their game on hover; a tap plays it on a phone, and with no mouse
   // they take turns on their own.
   const tiles = [...document.querySelectorAll('.game-tile[data-art]')];
   document.querySelectorAll('.game-card[data-mode]').forEach((c) => {
     c.classList.add('ga-host');
-    c.querySelector('.gc-art').innerHTML = window.GameArt.svg(c.dataset.mode);
+    c.querySelector('.gc-art').innerHTML = window.GameArt.html(c.dataset.mode);
   });
   tiles.forEach((t) => {
-    t.querySelector('.tile-art').innerHTML = window.GameArt.svg(t.dataset.art);
+    t.querySelector('.tile-art').innerHTML = window.GameArt.html(t.dataset.art);
     t.addEventListener('click', () => playArt(t));
   });
   function playArt(el) {
