@@ -21,6 +21,16 @@ window.Games.kart = {
     el.innerHTML = `
       <div class="game-wrap">
         <div class="stage kart-stage" data-stage>
+          <div class="kart-loader" data-loader>
+            <div class="kl-art" data-loader-art></div>
+            <div class="kl-body">
+              <span class="kl-kicker" data-loader-mode></span>
+              <h2 class="kl-name" data-loader-name></h2>
+              <div class="kl-bar"><i data-loader-bar></i></div>
+              <span class="kl-step" data-loader-step></span>
+              <p class="kl-tip" data-loader-tip></p>
+            </div>
+          </div>
           <div class="kart-ink" data-ink></div>
           <div class="kart-flash" data-flash></div>
           <div class="kart-card kart-panel" data-card>
@@ -129,8 +139,69 @@ window.Games.kart = {
     const bulletDmg = new Map(); // target idx -> minigun damage not shown yet
     const deathMarks = []; // arena minimap: where karts were just smashed
 
+    // ---------- Loading screen ----------
+    // Shown from the start of a round until the 3D world has drawn its first frame: the map's
+    // picture and name, what's happening (the 3D engine loading, then the world being built) and
+    // a tip or two.
+    const loader = q('[data-loader]');
+    const TIPS = touch ? [
+      'Hold Drift through a corner, then let go for a mini-turbo.',
+      'Tap Drift to hop: it clears banana peels and lava edges.',
+      'The big button fires your item; the small one swaps in your spare.',
+      'Hold fire with a bomb to aim how far it flies.',
+      'Ram karts from behind at full speed to knock them flying.',
+    ] : [
+      'Hold Shift or X through a corner, then let go for a mini-turbo.',
+      'Tap Shift to hop: it clears banana peels and lava edges.',
+      'Space fires your item, Q swaps in the one in reserve.',
+      'Hold Space with a bomb to aim how far it flies.',
+      'Ram karts from behind at full speed to knock them flying.',
+    ];
+    let loaderTip = 0;
+    let loaderTimer = 0;
+    let loaderShown = false;
+    function loaderStep(text, pct) {
+      q('[data-loader-step]').textContent = text;
+      q('[data-loader-bar]').style.width = `${pct}%`;
+    }
+    function showLoader(data) {
+      const entry = (api.room()?.kartMaps || []).find((m) => m.id === data.mapId);
+      const name = entry?.name || K.mapInfo?.(data.mapId)?.name || 'Kart Battle';
+      const arena = data.map === 'arena';
+      q('[data-loader-mode]').textContent = arena ? 'Battle arena' : `Race${data.laps ? ` · ${data.laps} laps` : ''}${data.reverse ? ' · reversed' : ''}`;
+      q('[data-loader-name]').textContent = name;
+      q('[data-loader-art]').style.setProperty('--art', `url("/img/maps/${encodeURIComponent(data.mapId)}.jpg")`);
+      loaderTip = Math.floor(Math.random() * TIPS.length);
+      q('[data-loader-tip]').textContent = TIPS[loaderTip];
+      clearInterval(loaderTimer);
+      loaderTimer = setInterval(() => { q('[data-loader-tip]').textContent = TIPS[(loaderTip = (loaderTip + 1) % TIPS.length)]; }, 3500);
+      loader.classList.remove('done');
+      loaderShown = true;
+      loaderStep(window.Kart3D ? `Building ${name}` : 'Loading the 3D engine', window.Kart3D ? 55 : 20);
+    }
+    function hideLoader() {
+      if (!loaderShown) return;
+      loaderShown = false;
+      loaderStep('Ready', 100);
+      clearInterval(loaderTimer);
+      setTimeout(() => loader.classList.add('done'), 150);
+    }
+
     // ---------- 3D renderer (ES module, may finish loading after mount) ----------
+    let building = false;
     function createRenderer() {
+      if (!info || view3d || !window.Kart3D || building) return;
+      // Building the world holds up the page for a moment: say so on the loading screen first,
+      // and give it two frames to show before starting.
+      if (loaderShown) {
+        building = true;
+        loaderStep(`Building ${q('[data-loader-name]').textContent}`, 60);
+        requestAnimationFrame(() => requestAnimationFrame(() => { building = false; buildRenderer(); }));
+        return;
+      }
+      buildRenderer();
+    }
+    function buildRenderer() {
       if (!info || view3d || !window.Kart3D) return;
       try {
         view3d = new window.Kart3D(stage, { mapId: info.mapId, type: info.map, reverse: !!info.reverse, items: info.items !== false });
@@ -147,6 +218,7 @@ window.Games.kart = {
             Try Chrome, Edge, Firefox or Safari with hardware acceleration switched on, then rejoin the room.</p>`;
           stage.appendChild(box);
         }
+        hideLoader();
       }
     }
     const onReady = () => createRenderer();
@@ -310,6 +382,7 @@ window.Games.kart = {
       spec.idx = -1;
       if (!sameRound) { finishTime = null; deathMarks.length = 0; }
       if (view3d && !sameRound) { view3d.dispose(); view3d = null; }
+      if (!view3d) showLoader(data);
       minimap = null;
       createRenderer();
       q('[data-timer]').classList.toggle('hidden', map.type !== 'arena');
@@ -911,6 +984,7 @@ window.Games.kart = {
       if (mode !== camMode) { camMode = mode; snapCamera = true; }
       if (view3d && view) {
         const grid = latest?.phase === 'countdown';
+        if (loaderShown) requestAnimationFrame(hideLoader); // the frame below is the world's first
         view3d.update({
           ...view,
           karts,
@@ -1071,6 +1145,7 @@ window.Games.kart = {
         cancelAnimationFrame(raf);
         mmResize.disconnect();
         clearTimeout(rotateTip);
+        clearInterval(loaderTimer);
         Sfx.engineStop();
         Sfx.starStop?.();
         clearInterval(resend);
