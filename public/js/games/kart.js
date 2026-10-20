@@ -925,6 +925,23 @@ window.Games.kart = {
       const view = interpolated();
       const karts = view ? view.karts : [];
       const me = karts.find((k) => k.idx === myIdx);
+      // Lock-on: what my minigun (firing or held) or rocket would lock on to (the server's rules,
+      // K.aimPick), bracketed on screen.
+      if (view3d) {
+        let lockKind = null;
+        let locks = [];
+        if (local && me && !(me.flags & F.dead) && latest?.phase === 'racing') {
+          const held = slotState.mode === 'ready' ? itemId(slotState.code) : null;
+          lockKind = me.flags & F.gun || held === 'minigun' ? 'gun' : held === 'rocket' || held === 'triple' ? 'rocket' : null;
+          if (lockKind) {
+            const mine = kartsByIdx.get(myIdx);
+            const list = karts.filter((k) => k.idx !== myIdx && !(k.flags & (F.dead | F.ghost | F.finished))
+              && !(teamMode() && kartsByIdx.get(k.idx)?.team === mine?.team));
+            locks = K.aimPick({ x: local.x, y: local.y, angle: local.angle }, list, lockKind).slice(0, K.AIM[lockKind].targets).map((c) => c.k.idx);
+          }
+        }
+        view3d.setLocks(locks, lockKind);
+      }
       // The nearest rivals' engines, panned to where they are around my kart.
       if (local && latest?.phase === 'racing') {
         const fx = Math.cos(local.angle);

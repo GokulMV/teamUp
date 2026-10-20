@@ -59,6 +59,32 @@
     bumperHop: 170, // a pinball bumper pops you up this fast as it shoves you away
   };
 
+  // Aim assist (server/games/kart.js; the lock-on reticles on screen use the same numbers): the
+  // minigun shares its shots over up to `targets` karts within `cone` radians of where you point
+  // and `range` units; a rocket locks on to the kart most nearly ahead.
+  const AIM = {
+    gun: { cone: 1.2, range: 800, targets: 3 },
+    rocket: { cone: 1.05, range: 1400, targets: 1 },
+    retarget: { cone: Math.PI / 3, range: 900, targets: 1 }, // a rocket whose target is gone, looking ahead of itself
+  };
+  // Candidates for aim assist from `shooter` {x, y, angle}: `list` of {x, y, ...} (only karts that
+  // can be hit), nearest to straight ahead first.
+  function aimPick(shooter, list, kind) {
+    const a = AIM[kind];
+    const out = [];
+    for (const k of list) {
+      const dx = k.x - shooter.x;
+      const dy = k.y - shooter.y;
+      const d = Math.hypot(dx, dy);
+      if (d > a.range || d < 1) continue;
+      let da = Math.atan2(dy, dx) - shooter.angle;
+      da = Math.atan2(Math.sin(da), Math.cos(da));
+      if (Math.abs(da) > a.cone) continue;
+      out.push({ k, d, da, score: d * (1 + 1.5 * Math.abs(da)) });
+    }
+    return out.sort((x, y) => x.score - y.score);
+  }
+
   // Item codes on the wire are index + 1. New items are only ever appended.
   const ITEMS = ['boost', 'rocket', 'banana', 'shield', 'triple', 'mine', 'minigun', 'bomb', 'shock', 'ghost',
     'bouncer', 'comet', 'star', 'ink', 'thunder', 'snowball', 'sticky', 'spikes', 'decoy'];
@@ -1592,7 +1618,7 @@
   }
 
   return {
-    KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, CHARACTERS, PHYS, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP, Layers, Weekly,
+    KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, CHARACTERS, PHYS, AIM, aimPick, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP, Layers, Weekly,
     getMap, mapList, mapInfo, mapsBuilt, weeklyMap, setWeeklyCheck, weeklyTries, stepKart, stepNet, NET_FIELDS, packKart, unpackKart, driftLevel, itemSpeed, bombLead, respawnOnTrack, makeRaceMap, timeToLand,
     noise: { vnoise, fbm, smoothstep, polyDist },
   };

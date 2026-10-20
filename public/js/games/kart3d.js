@@ -657,6 +657,61 @@ export class Kart3D {
   // Aiming a bomb: show where it will land (null hides it).
   setAim(aim) { this.items?.setAim?.(aim); }
 
+  // Lock-on reticles: brackets round the karts your minigun (amber, turning) or rocket (red,
+  // pulsing) would lock on to. Drawn over everything, so a lock behind a wall still shows.
+  setLocks(idxs, kind) { this.locks = idxs || []; this.lockKind = kind; }
+  updateLocks(t) {
+    if (!this.lockPool) {
+      const tex = (colour) => {
+        const c = document.createElement('canvas');
+        c.width = c.height = 128;
+        const g = c.getContext('2d');
+        g.lineCap = 'round';
+        g.lineJoin = 'round';
+        // A dark outline under the colour, so it reads on sky, sea and sand alike.
+        for (const [stroke, w, blur] of [['rgba(10, 20, 24, 0.75)', 17, 0], [colour, 10, 10]]) {
+          g.strokeStyle = stroke;
+          g.shadowColor = colour;
+          g.shadowBlur = blur;
+          g.lineWidth = w;
+          for (const [sx, sy] of [[1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+            g.beginPath();
+            g.moveTo(64 + sx * 50, 64 + sy * 24);
+            g.lineTo(64 + sx * 50, 64 + sy * 50);
+            g.lineTo(64 + sx * 24, 64 + sy * 50);
+            g.stroke();
+          }
+          g.lineWidth = w * 0.6;
+          g.beginPath(); g.arc(64, 64, 10, 0, Math.PI * 2); g.stroke();
+        }
+        const tx = new THREE.CanvasTexture(c);
+        tx.colorSpace = THREE.SRGBColorSpace;
+        return tx;
+      };
+      this.lockTex = { gun: tex('#ffb547'), rocket: tex('#ff4d5e') };
+      this.lockPool = [0, 1, 2].map(() => {
+        const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.lockTex.gun, depthTest: false, depthWrite: false, transparent: true }));
+        sp.renderOrder = 999;
+        sp.visible = false;
+        this.scene.add(sp);
+        return sp;
+      });
+    }
+    this.lockPool.forEach((sp, i) => {
+      const kart = this.karts.get(this.locks?.[i]);
+      if (!kart || !kart.group.visible) { sp.visible = false; return; }
+      const rocket = this.lockKind === 'rocket';
+      if (sp.material.map !== this.lockTex[rocket ? 'rocket' : 'gun']) { sp.material.map = this.lockTex[rocket ? 'rocket' : 'gun']; sp.material.needsUpdate = true; }
+      sp.visible = true;
+      sp.position.copy(kart.group.position);
+      sp.position.y += 16;
+      const s = 58 * (rocket ? 1 + 0.12 * Math.sin(t * 9) : 1);
+      sp.scale.set(s, s, 1);
+      sp.material.rotation = rocket ? 0 : t * 1.6;
+      sp.material.opacity = 0.95;
+    });
+  }
+
   // Two karts bumped: a burst of hot sparks where they touched (bigger and brighter for a ram).
   bumpFx(x, z, power, ram, y) {
     const gy = this.items.ground(x, z, y);
@@ -1215,6 +1270,7 @@ export class Kart3D {
       }
     }
     for (const [idx, kart] of this.karts) if (!seen.has(idx)) kart.group.visible = false;
+    this.updateLocks(t);
 
     this.items.update(view, dt, t, now);
 
