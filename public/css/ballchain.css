@@ -1,7 +1,6 @@
 /* ============================================================
    Ball & Chain: HUD, touch controls, overlays and results
    ============================================================ */
-.t-ball { background: linear-gradient(160deg, rgba(94, 227, 140, 0.42), rgba(76, 195, 255, 0.3)); }
 
 .bc-stage {
   --hud-bg: rgba(28, 16, 62, 0.58);

@@ -58,14 +58,16 @@
 
     <main class="home">
       <div class="hero">
-        <p class="kicker"><span class="live-dot" aria-hidden="true"></span>Multiplayer party games in your browser</p>
-        <h1>Game night,<br><em>no downloads.</em></h1>
-        <p class="lede">Five games for 2 to 30 people. One person hosts a room, everyone else joins with a link or a 4-letter code, and you all play from your own phone or laptop.</p>
-        <dl class="facts">
-          <div><dt>Players per room</dt><dd>30</dd></div>
-          <div><dt>Games</dt><dd>5</dd></div>
-          <div><dt>Sign-ups</dt><dd>0</dd></div>
-        </dl>
+        <a class="news-pill" href="#games"><b>New</b>Kart arena: Funfair Frenzy</a>
+        <h1>Party games for your <em>whole crew.</em></h1>
+        <p class="lede">Draw, guess, race and laugh together. Make a room, share the link, and up to 30 friends jump straight in from any phone or laptop.</p>
+        <div class="game-tiles" id="games">
+          <button type="button" class="game-tile ga-host gt-pict" data-art="pictionary"><span class="tile-art"></span><b>Pictionary</b><small>Draw it. Guess it. Fast.</small></button>
+          <button type="button" class="game-tile ga-host gt-tel" data-art="telephone"><span class="tile-art"></span><b>Telephone</b><small>Watch the message mutate.</small></button>
+          <button type="button" class="game-tile ga-host gt-kart" data-art="kart"><span class="tile-art"></span><b>Kart Battle</b><small>Race or fight in 3D.</small></button>
+          <button type="button" class="game-tile ga-host gt-ball" data-art="ballchain"><span class="tile-art"></span><b>Ball &amp; Chain</b><small>Drag the ball. Together.</small></button>
+          <button type="button" class="game-tile ga-host gt-cr" data-art="controlroom"><span class="tile-art"></span><b>Control Room</b><small>Shout orders. Save the ship.</small></button>
+        </div>
       </div>
 
       <div class="entry" id="entry">
@@ -106,17 +108,6 @@
         <button class="link-btn hidden" id="invite-switch" type="button">Host your own room instead</button>
       </div>
     </main>
-
-    <section class="home-section" id="games" aria-labelledby="games-title">
-      <div class="section-head"><p class="kicker">The games</p><h2 id="games-title">Something for every kind of crew.</h2></div>
-      <div class="game-list">
-        <article class="game-item"><svg class="gi-icon"><use href="#i-pictionary"/></svg><h3>Pictionary</h3><p>One player draws, everyone else races to guess. Rounds, hints and your own word lists.</p><span class="gi-meta">2–30 players · Teams</span></article>
-        <article class="game-item"><svg class="gi-icon"><use href="#i-telephone"/></svg><h3>Telephone</h3><p>Write a line, draw it, describe the drawing. See how far the message drifts.</p><span class="gi-meta">2–30 players</span></article>
-        <article class="game-item"><svg class="gi-icon"><use href="#i-kart"/></svg><h3>Kart Battle</h3><p>3D racing and arena battles on 14 maps, with 19 power-ups and CPU drivers.</p><span class="gi-meta">1–30 players · CPU drivers</span></article>
-        <article class="game-item"><svg class="gi-icon"><use href="#i-ballchain"/></svg><h3>Ball &amp; Chain</h3><p>Each team is roped to a giant ball. Pull together to get it over a 3D obstacle course.</p><span class="gi-meta">2–30 players · Teams</span></article>
-        <article class="game-item"><svg class="gi-icon"><use href="#i-controlroom"/></svg><h3>Control Room</h3><p>Everyone has the controls for someone else's orders. Shout fast to keep the ship flying.</p><span class="gi-meta">2–6 per crew</span></article>
-      </div>
-    </section>
 
     <section class="home-section" id="how" aria-labelledby="how-title">
       <div class="section-head"><p class="kicker">How it works</p><h2 id="how-title">Playing in under a minute.</h2></div>
@@ -261,6 +252,7 @@
   <script src="/js/shared/kart-weekly.js"></script>
   <script src="/js/shared/kart-core.js"></script>
   <script src="/js/avatars.js"></script>
+  <script src="/js/game-art.js"></script>
   <script src="/js/item-icons.js"></script>
   <script src="/js/sfx.js"></script>
   <script src="/js/draw-board.js"></script>

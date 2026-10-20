@@ -496,7 +496,6 @@
 }
 
 /* home tile */
-.t-cr { background: linear-gradient(160deg, rgba(52, 211, 153, 0.4), rgba(34, 211, 238, 0.22) 55%, rgba(124, 92, 255, 0.25)); }
 
 /* The host's End flight button in the HUD, for layouts without the side column. */
 .cr-end-hud { display: none; position: absolute; right: 12px; bottom: 44px; z-index: 3; }

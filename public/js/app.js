@@ -233,6 +233,32 @@
   setAvatar(state.avatar);
 
   // ---------- Home ----------
+  // The game tiles' pictures play their scene on hover; a tap plays it on a phone, and with no mouse
+  // they take turns on their own.
+  const tiles = [...document.querySelectorAll('.game-tile[data-art]')];
+  document.querySelectorAll('.game-card[data-mode]').forEach((c) => {
+    c.classList.add('ga-host');
+    c.querySelector('.gc-art').innerHTML = window.GameArt.svg(c.dataset.mode);
+  });
+  tiles.forEach((t) => {
+    t.querySelector('.tile-art').innerHTML = window.GameArt.svg(t.dataset.art);
+    t.addEventListener('click', () => playArt(t));
+  });
+  function playArt(el) {
+    el.classList.remove('play');
+    void el.offsetWidth; // restart the animation
+    el.classList.add('play');
+    clearTimeout(el.playTimer);
+    el.playTimer = setTimeout(() => el.classList.remove('play'), 2400);
+  }
+  if (!matchMedia('(hover: hover)').matches && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    let turn = 0;
+    setInterval(() => {
+      if (!$('screen-home').classList.contains('active') || document.hidden) return;
+      playArt(tiles[turn++ % tiles.length]);
+    }, 3200);
+  }
+
   const params = new URLSearchParams(location.search);
   $('name-input').value = store.get('teamup-name') || '';
   const codeInputs = [...document.querySelectorAll('#code-boxes input')];
