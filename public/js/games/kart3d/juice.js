@@ -15,6 +15,7 @@ import * as THREE from 'three';
 // ---------- easing ----------
 export const ease = {
   outCubic: (t) => 1 - (1 - t) ** 3,
+  inCubic: (t) => t ** 3,
   outBack: (t, s = 2.2) => 1 + (s + 1) * (t - 1) ** 3 + s * (t - 1) ** 2,
   outElastic: (t) => (t <= 0 ? 0 : t >= 1 ? 1 : 2 ** (-10 * t) * Math.sin((t * 10 - 0.75) * ((2 * Math.PI) / 3)) + 1),
 };
@@ -279,6 +280,85 @@ function starburstTexture() {
   return starTex;
 }
 
+// ---------- fireballs: the solid body of an explosion ----------
+// Chunky, opaque, faceted balls in layers (a white-yellow heart, orange, red-orange at the edges)
+// that swell out fast, roll upward and shrink away into the smoke: a cartoon fireball that holds
+// its colour in daylight, where additive glows wash out to pale.
+class Fireballs {
+  constructor(scene, max) {
+    this.max = max;
+    this.n = 0;
+    this.p = new Float32Array(max * 3);
+    this.v = new Float32Array(max * 3);
+    this.size = new Float32Array(max);
+    this.age = new Float32Array(max);
+    this.life = new Float32Array(max);
+    this.delay = new Float32Array(max);
+    this.cols = Array.from({ length: max }, () => new THREE.Color());
+    this.mesh = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshBasicMaterial({ fog: false }), max);
+    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.mesh.setColorAt(0, new THREE.Color());
+    this.mesh.count = 0;
+    this.mesh.frustumCulled = false;
+    scene.add(this.mesh);
+    this.m4 = new THREE.Matrix4();
+    this.q = new THREE.Quaternion();
+    this.v3 = new THREE.Vector3();
+    this.sc = new THREE.Vector3();
+  }
+
+  emit(x, y, z, vx, vy, vz, size, life, color, delay = 0) {
+    if (this.n >= this.max) return;
+    const i = this.n++;
+    this.p.set([x, y, z], i * 3);
+    this.v.set([vx, vy, vz], i * 3);
+    this.size[i] = size;
+    this.age[i] = 0;
+    this.life[i] = life;
+    this.delay[i] = delay;
+    this.cols[i].set(color);
+  }
+
+  update(dt) {
+    let i = 0;
+    while (i < this.n) {
+      this.age[i] += dt;
+      const a = this.age[i] - this.delay[i];
+      if (a >= this.life[i]) {
+        const last = --this.n;
+        if (i !== last) {
+          this.p.copyWithin(i * 3, last * 3, last * 3 + 3);
+          this.v.copyWithin(i * 3, last * 3, last * 3 + 3);
+          for (const arr of [this.size, this.age, this.life, this.delay]) arr[i] = arr[last];
+          this.cols[i].copy(this.cols[last]);
+        }
+        continue;
+      }
+      const o = i * 3;
+      let s = 0;
+      if (a > 0) {
+        const drag = Math.exp(-4 * dt);
+        this.v[o] *= drag; this.v[o + 2] *= drag;
+        this.v[o + 1] = this.v[o + 1] * drag + 60 * dt; // hot air rises
+        this.p[o] += this.v[o] * dt; this.p[o + 1] += this.v[o + 1] * dt; this.p[o + 2] += this.v[o + 2] * dt;
+        const u = a / this.life[i];
+        s = this.size[i] * (u < 0.18 ? ease.outBack(u / 0.18) : 1 - ease.inCubic((u - 0.18) / 0.82));
+      }
+      this.v3.set(this.p[o], this.p[o + 1], this.p[o + 2]);
+      this.sc.setScalar(Math.max(0.0001, s));
+      this.m4.compose(this.v3, this.q, this.sc);
+      this.mesh.setMatrixAt(i, this.m4);
+      this.mesh.setColorAt(i, this.cols[i]);
+      i++;
+    }
+    this.mesh.count = this.n;
+    this.mesh.instanceMatrix.needsUpdate = true;
+    if (this.mesh.instanceColor) this.mesh.instanceColor.needsUpdate = true;
+  }
+
+  dispose() { this.mesh.geometry.dispose(); this.mesh.material.dispose(); this.mesh.dispose(); }
+}
+
 export class Juice {
   // r: the Kart3D renderer (scene, camera, particles, ground lookups, items.debris).
   constructor(r, mobile) {
@@ -289,6 +369,7 @@ export class Juice {
     this.fire = new Puffs(scene, mobile ? 140 : 300, false);
     this.cores = new Flashes(scene, new THREE.IcosahedronGeometry(1, 3), 24, 4);
     this.rings = new Flashes(scene, new THREE.RingGeometry(0.84, 1, 64).rotateX(-Math.PI / 2), 24, 3);
+    this.balls = new Fireballs(scene, mobile ? 90 : 180);
     this.trauma = 0;
     this.shakeT = 0;
     this.numbers = [];
@@ -311,8 +392,20 @@ export class Juice {
     const s = Math.max(0.55, Math.min(2.4, radius / 70));
     const m = this.mobile ? 0.6 : 1;
     // Core and shockwave.
-    this.cores.emit(x, y + 14 * s, z, (big ? 26 : 14) * s, this.col.core, 0.1, 0.1);
+    this.cores.emit(x, y + 14 * s, z, (big ? 18 : 10) * s, this.col.core, 0.07, 0.08);
     this.rings.emit(x, y + 2, z, radius * (big ? 1.45 : 0.9), big ? this.col.ringBig : this.col.ring, 0.3, 0);
+    // The fireball's body: solid balls, the hottest in the middle, swelling out and rolling up.
+    const nBall = Math.round((big ? 15 : 5) * m);
+    for (let i = 0; i < nBall; i++) {
+      const a = rand(0, TAU);
+      const out = i === 0 ? 0 : rand(0.4, 1);
+      const sp = (big ? 150 : 80) * s * out;
+      const layer = i === 0 ? 0 : i < 5 ? 1 : 2;
+      this.balls.emit(x + Math.cos(a) * 8 * s * out, y + (10 + layer * 3) * s, z + Math.sin(a) * 8 * s * out,
+        Math.cos(a) * sp, rand(40, 110) * s, Math.sin(a) * sp,
+        (big ? [34, 27, 21][layer] : [14, 11, 8][layer]) * s * rand(0.85, 1.15), (big ? rand(0.6, 0.78) : rand(0.4, 0.52)) + layer * 0.08,
+        ['#fff4b0', '#ffa62b', '#ff5a24'][layer], layer * 0.035);
+    }
     // Fireball: glowing puffs bursting out and up.
     const nFire = Math.round((big ? 11 : 5) * m);
     for (let i = 0; i < nFire; i++) {
@@ -417,6 +510,7 @@ export class Juice {
     this.smoke.update(dt, cam);
     this.fire.update(dt, cam);
     this.cores.update(dt, false, this.cap);
+    this.balls.update(dt);
     this.rings.update(dt, true, null);
     for (let i = this.flashes.length - 1; i >= 0; i--) {
       const f = this.flashes[i];
@@ -447,6 +541,7 @@ export class Juice {
     this.fire.dispose();
     this.cores.dispose();
     this.rings.dispose();
+    this.balls.dispose();
     for (const f of this.flashes) f.sp.material.dispose();
     for (const n of this.numbers) n.sp.material.dispose();
   }

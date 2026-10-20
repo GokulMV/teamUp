@@ -123,12 +123,13 @@ class Particles {
 const SHARED = {};
 function sharedKartParts() {
   if (SHARED.ready) return SHARED;
-  SHARED.flame = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.2, 0.85, 0.25), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
-  SHARED.flameCore = new THREE.MeshBasicMaterial({ color: new THREE.Color(2.6, 2.3, 1.6), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  // Boost flames: a solid orange jet (additive washes out to white on light floors) round a glowing blue-white core.
+  SHARED.flame = new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, opacity: 0.88, depthWrite: false, fog: false });
+  SHARED.flameCore = new THREE.MeshBasicMaterial({ color: new THREE.Color(1.6, 2.2, 2.8), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
   SHARED.shield = shieldMaterial();
   SHARED.ghost = ghostMaterial();
-  SHARED.flameGeo = new THREE.ConeGeometry(2.4, 12, 12, 1, true).rotateZ(Math.PI / 2);
-  SHARED.flameCoreGeo = new THREE.ConeGeometry(1.2, 7, 10, 1, true).rotateZ(Math.PI / 2).translate(2.2, 0, 0);
+  SHARED.flameGeo = new THREE.ConeGeometry(3.4, 24, 14, 1, true).rotateZ(Math.PI / 2).translate(-6, 0, 0);
+  SHARED.flameCoreGeo = new THREE.ConeGeometry(1.8, 13, 12, 1, true).rotateZ(Math.PI / 2).translate(-1.5, 0, 0);
   SHARED.shieldGeo = shieldGeometry();
   SHARED.ready = true;
   return SHARED;
@@ -1236,10 +1237,13 @@ export class Kart3D {
           const wx = k.x - cos * 13 - sin * 15 * side;
           const wz = k.y - sin * 13 + cos * 15 * side;
           this.addSkid(wx, wz, kart.group.quaternion, ground);
-          const n = driftLevel ? 3 : 1;
+          // A plume of sparks off each rear wheel in the mini-turbo's colour, with white-hot
+          // ones in the middle; more and bigger as the charge builds.
+          const n = driftLevel === 2 ? 5 : driftLevel ? 4 : 2;
           for (let i = 0; i < n; i++) {
-            this.fire.emit(wx, y + 3, wz, -cos * 60 + (Math.random() - 0.5) * 120, 40 + Math.random() * 90, -sin * 60 + (Math.random() - 0.5) * 120,
-              sparkCol, driftLevel ? 7 : 5, 0.25, { drag: 2, rise: -400 });
+            const hot = i === 0 && driftLevel;
+            this.fire.emit(wx, y + 3, wz, -cos * 80 + (Math.random() - 0.5) * 160, 60 + Math.random() * 130, -sin * 80 + (Math.random() - 0.5) * 160,
+              hot ? this.colWhite : sparkCol, hot ? 6 : driftLevel ? 10 : 6, driftLevel ? 0.34 : 0.24, { drag: 2, rise: -420 });
           }
         }
       } else if (!spinning && !airborne && Math.abs(kart.steer) > 0.6 && Math.abs(k.speed) > 320) {
