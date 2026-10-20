@@ -1566,7 +1566,7 @@ test('gap jumps are cleared at speed in every class; slopes slow climbs and spee
           assert.ok(!log.some((l) => l.fall > 0), `${id}${reverse ? ' rev' : ''}: cleared the gap at class ${speed}`);
         }
         // Crawling up to it: you drop in.
-        const slow = driveTo(K, { ...map, boostPads: [] }, r.i, { steps: 60, speed: 150, from: 1 });
+        const slow = driveTo(K, { ...map, boostPads: [] }, r.i, { steps: 60, speed: 100, from: 1 });
         assert.ok(slow.log.some((l) => l.fall > 0), `${id}: too slow to clear the gap`);
       }
     }
@@ -2262,8 +2262,10 @@ test('star: invincible and faster; ramming spins rivals out (race) or damages th
   // Faster: top speed rises by ITEM_FX.starSpeed (the browser's prediction uses the same factor).
   ar.place(0, 1300, 300); ar.place(1, 2300, 2300); ar.place(2, 300, 2300);
   Object.assign(s, { star: 6, input: { up: true } });
-  step(ar.game, 45);
-  assert.ok(s.speed > KC.PHYS.maxSpeed * 1.15, `star top speed (${Math.round(s.speed)})`);
+  // (Its peak: flat out it may reach the far side of the arena and bounce off before the end.)
+  let peak = 0;
+  for (let i = 0; i < 45; i++) { step(ar.game, 1); peak = Math.max(peak, s.speed); }
+  assert.ok(peak > KC.PHYS.maxSpeed * 1.15, `star top speed (${Math.round(peak)})`);
   ar.room.destroy();
 });
 

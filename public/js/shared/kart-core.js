@@ -29,21 +29,21 @@
   ];
 
   const PHYS = {
-    accel: 500,
-    brake: 820,
-    reverseMax: -170,
-    maxSpeed: 430,
-    boostSpeed: 680,
-    offTrackMax: 250, // grass
-    runoffMax: 370,
-    offTrackDecel: 420, // how fast you bleed speed down to the surface cap
+    accel: 640,
+    brake: 950,
+    reverseMax: -190,
+    maxSpeed: 540,
+    boostSpeed: 820,
+    offTrackMax: 310, // grass
+    runoffMax: 460,
+    offTrackDecel: 520, // how fast you bleed speed down to the surface cap
     drag: 1.3,
     turnRate: 2.9,
-    driftMinSpeed: 220,
+    driftMinSpeed: 260,
     driftLevels: [0.7, 1.5], // seconds of drifting for blue / orange sparks
     miniTurbo: [0.55, 1.0], // boost seconds for each level
     padBoost: 0.8,
-    gravity: 1500,
+    gravity: 1750,
     rampLift: 520, // vertical launch speed off a ramp at full speed
     airSteer: 0.4, // steering left in the air
     slopePull: 620, // gravity along the road: uphill slows you, downhill speeds you up
@@ -52,7 +52,7 @@
     trickWindow: 0.2, // seconds after take-off that a held drift still counts as a trick
     trickBoost: 0.7, // boost seconds for landing a trick
     fallTime: 1.5, // seconds in the water/lava before you are fished back out
-    hopVz: 290, // a tap of the drift button on the ground: ~0.39 s in the air, ~28 units up
+    hopVz: 320, // a tap of the drift button on the ground: ~0.37 s in the air, ~29 units up
     hopCooldown: 0.4,
     knockDecay: 5.5, // 1/s: how fast a shove from another kart dies away
     padSteer: 0.12, // steering left on a jump pad's flight (it flies you to its landing spot)

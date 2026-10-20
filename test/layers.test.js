@@ -55,7 +55,7 @@ test('layers: drive up a ramp onto a deck, along it, and off the end onto the gr
   const map = bed();
   const k = kartAt(150, 700, 0);
   let top = 0;
-  drive(map, k, UP, 2.4, 0, (kk) => { if (kk.x > 300 && kk.x < 600) assert.ok(Math.abs(kk.z - map.floorAt(kk.x, kk.y, 1000)) < 2, `on the ramp at x ${kk.x.toFixed(0)}`); top = Math.max(top, kk.z); });
+  drive(map, k, UP, 2.0, 0, (kk) => { if (kk.x > 300 && kk.x < 600) assert.ok(Math.abs(kk.z - map.floorAt(kk.x, kk.y, 1000)) < 2, `on the ramp at x ${kk.x.toFixed(0)}`); top = Math.max(top, kk.z); });
   assert.ok(k.x > 650 && k.x < 1000, `on the deck (x ${k.x.toFixed(0)})`);
   assert.strictEqual(k.z, 90);
   assert.ok(top < 95, 'no catapult off the top of the ramp');
