@@ -3,70 +3,117 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-  <meta name="theme-color" content="#0b0820">
-  <title>TeamUp · Party games for your whole crew</title>
-  <meta name="description" content="Pictionary, Telephone and 3D Kart Battle for up to 30 players. No downloads.">
+  <meta name="theme-color" content="#0b0b0e">
+  <title>TeamUp · Party games in your browser</title>
+  <meta name="description" content="Pictionary, Telephone, 3D Kart Battle, Ball &amp; Chain and Control Room for up to 30 players. Host a room, share the link, play in the browser.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎮</text></svg>">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600..800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@500;600&family=Instrument+Serif:ital@1&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css">
   <link rel="stylesheet" href="/css/ballchain.css">
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/controlroom.css">
 </head>
 <body>
-  <div class="backdrop" aria-hidden="true"><i></i><i></i><i></i></div>
+  <div class="backdrop" aria-hidden="true"></div>
+
+  <!-- Line icons, shared by the home page and the lobby -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-pictionary" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 5.5l5 5L12 25l-6 1 1-6z"/><path d="M18.5 8.5l5 5"/><path d="M4 29c3-2 5 1 8-1"/></symbol>
+    <symbol id="i-telephone" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h14v9H10l-4 3v-3H4z"/><path d="M22 12h6v9h-2v3l-4-3h-8v-2"/></symbol>
+    <symbol id="i-kart" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="16" cy="16" r="11"/><circle cx="16" cy="16" r="3"/><path d="M5.5 13.5c4 1 7 1 7.5 2.5M26.5 13.5c-4 1-7 1-7.5 2.5M16 19v8"/></symbol>
+    <symbol id="i-ballchain" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="20" cy="20" r="8"/><path d="M15 12.5l-2.5-2.5"/><rect x="5" y="4" width="7" height="5" rx="2.5" transform="rotate(45 8.5 6.5)"/><path d="M17 17.5c1-1 3-1.5 4.5-.5"/></symbol>
+    <symbol id="i-controlroom" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22a11 11 0 1 1 22 0"/><path d="M16 22l5-7"/><circle cx="16" cy="22" r="1.6"/><path d="M8.5 15.5l1.5 1M23.5 15.5l-1.5 1M16 11v2"/><path d="M4 27h24"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 2.5l3 3L6 13H3v-3z"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></symbol>
+  </svg>
 
   <!-- Home -->
   <section id="screen-home" class="screen active">
     <header class="site-head">
-      <div class="brand">Team<span>Up</span></div>
-      <div class="head-meta">Up to 30 players · No downloads · Free</div>
+      <a class="brand" href="/" aria-label="TeamUp home"><i class="brand-mark" aria-hidden="true"></i>TeamUp</a>
+      <nav class="head-nav"><a href="#games">Games</a><a href="#how">How it works</a></nav>
     </header>
+
     <main class="home">
       <div class="hero">
-        <span class="eyebrow">✨ New: giant 3D kart tracks with jumps and bridges</span>
-        <h1>Party games for your <em>whole crew</em>.</h1>
-        <p class="lede">Draw, guess, race and laugh together. Make a room, share the link, and up to 30 friends jump straight in from any phone or laptop.</p>
-        <div class="game-tiles">
-          <div class="game-tile t-pict"><span class="tile-art">🎨</span><b>Pictionary</b><small>Draw it. Guess it. Fast.</small></div>
-          <div class="game-tile t-tel"><span class="tile-art">📞</span><b>Telephone</b><small>Watch the message mutate.</small></div>
-          <div class="game-tile t-kart"><span class="tile-art">🏎️</span><b>Kart Battle</b><small>Race or fight in 3D.</small></div>
-          <div class="game-tile t-ball"><span class="tile-art">⛓️</span><b>Ball &amp; Chain</b><small>Drag the ball. Together.</small></div>
-          <div class="game-tile t-cr"><span class="tile-art">🎛️</span><b>Control Room</b><small>Shout orders. Save the ship.</small></div>
-        </div>
+        <p class="kicker"><span class="live-dot" aria-hidden="true"></span>Multiplayer party games in your browser</p>
+        <h1>Game night,<br><em>no downloads.</em></h1>
+        <p class="lede">Five games for 2 to 30 people. One person hosts a room, everyone else joins with a link or a 4-letter code, and you all play from your own phone or laptop.</p>
+        <dl class="facts">
+          <div><dt>Players per room</dt><dd>30</dd></div>
+          <div><dt>Games</dt><dd>5</dd></div>
+          <div><dt>Sign-ups</dt><dd>0</dd></div>
+        </dl>
       </div>
 
-      <div class="join-card glass">
-        <div class="avatar-picker">
-          <button class="icon-btn" id="av-prev" aria-label="Previous avatar">‹</button>
-          <button class="avatar-big" id="av-current" title="Choose an avatar"></button>
-          <button class="icon-btn" id="av-next" aria-label="Next avatar">›</button>
+      <div class="entry" id="entry">
+        <div class="entry-tabs" role="tablist" aria-label="Host or join">
+          <button role="tab" id="tab-host" aria-controls="pane-host" aria-selected="true">Host a game</button>
+          <button role="tab" id="tab-join" aria-controls="pane-join" aria-selected="false">Join a game</button>
         </div>
-        <button class="link-btn" id="av-all">See all avatars</button>
-        <label class="field">
-          <span>Your name</span>
-          <input id="name-input" maxlength="16" placeholder="e.g. Speedy" autocomplete="nickname">
-        </label>
-        <button id="btn-create" class="btn primary big">Create a room <span aria-hidden="true">→</span></button>
-        <div class="divider"><span>or join with a code</span></div>
-        <div class="code-boxes" id="code-boxes">
-          <input maxlength="1" autocomplete="off" aria-label="Code letter 1">
-          <input maxlength="1" autocomplete="off" aria-label="Code letter 2">
-          <input maxlength="1" autocomplete="off" aria-label="Code letter 3">
-          <input maxlength="1" autocomplete="off" aria-label="Code letter 4">
+        <div class="invite-head hidden" id="invite-head">
+          <span class="kicker">You're invited to room</span>
+          <b class="invite-code" id="invite-code"></b>
         </div>
-        <button id="btn-join" class="btn big">Join room</button>
+
+        <div class="you">
+          <button class="avatar-btn" id="av-current" type="button" aria-label="Change avatar"></button>
+          <label class="field">
+            <span>Your name</span>
+            <input id="name-input" maxlength="16" placeholder="What should we call you?" autocomplete="nickname">
+          </label>
+        </div>
+
+        <div class="pane" id="pane-host" role="tabpanel" aria-labelledby="tab-host">
+          <p class="pane-note">You'll get a room code and a link to share. Choose the game once everyone's in.</p>
+          <button id="btn-create" class="btn primary big">Create room <svg class="ic"><use href="#i-arrow"/></svg></button>
+        </div>
+        <div class="pane hidden" id="pane-join" role="tabpanel" aria-labelledby="tab-join">
+          <div class="field" id="code-field">
+            <span>Room code</span>
+            <div class="code-boxes" id="code-boxes">
+              <input maxlength="1" autocomplete="off" autocapitalize="characters" aria-label="Code letter 1">
+              <input maxlength="1" autocomplete="off" autocapitalize="characters" aria-label="Code letter 2">
+              <input maxlength="1" autocomplete="off" autocapitalize="characters" aria-label="Code letter 3">
+              <input maxlength="1" autocomplete="off" autocapitalize="characters" aria-label="Code letter 4">
+            </div>
+          </div>
+          <button id="btn-join" class="btn primary big">Join game <svg class="ic"><use href="#i-arrow"/></svg></button>
+        </div>
         <p id="home-error" class="error" role="alert"></p>
+        <button class="link-btn hidden" id="invite-switch" type="button">Host your own room instead</button>
       </div>
     </main>
+
+    <section class="home-section" id="games" aria-labelledby="games-title">
+      <div class="section-head"><p class="kicker">The games</p><h2 id="games-title">Something for every kind of crew.</h2></div>
+      <div class="game-list">
+        <article class="game-item"><svg class="gi-icon"><use href="#i-pictionary"/></svg><h3>Pictionary</h3><p>One player draws, everyone else races to guess. Rounds, hints and your own word lists.</p><span class="gi-meta">2–30 players · Teams</span></article>
+        <article class="game-item"><svg class="gi-icon"><use href="#i-telephone"/></svg><h3>Telephone</h3><p>Write a line, draw it, describe the drawing. See how far the message drifts.</p><span class="gi-meta">2–30 players</span></article>
+        <article class="game-item"><svg class="gi-icon"><use href="#i-kart"/></svg><h3>Kart Battle</h3><p>3D racing and arena battles on 14 maps, with 19 power-ups and CPU drivers.</p><span class="gi-meta">1–30 players · CPU drivers</span></article>
+        <article class="game-item"><svg class="gi-icon"><use href="#i-ballchain"/></svg><h3>Ball &amp; Chain</h3><p>Each team is roped to a giant ball. Pull together to get it over a 3D obstacle course.</p><span class="gi-meta">2–30 players · Teams</span></article>
+        <article class="game-item"><svg class="gi-icon"><use href="#i-controlroom"/></svg><h3>Control Room</h3><p>Everyone has the controls for someone else's orders. Shout fast to keep the ship flying.</p><span class="gi-meta">2–6 per crew</span></article>
+      </div>
+    </section>
+
+    <section class="home-section" id="how" aria-labelledby="how-title">
+      <div class="section-head"><p class="kicker">How it works</p><h2 id="how-title">Playing in under a minute.</h2></div>
+      <ol class="steps">
+        <li><span class="step-n">01</span><h3>Host a room</h3><p>Pick a name and create a room. No account, nothing to install.</p></li>
+        <li><span class="step-n">02</span><h3>Share the link</h3><p>Send the invite link, or read out the 4-letter code. Friends join from any device.</p></li>
+        <li><span class="step-n">03</span><h3>Play</h3><p>Choose a game, set it up how you like, and start. Switch games without leaving the room.</p></li>
+      </ol>
+    </section>
+
+    <footer class="site-foot"><span class="brand small-brand"><i class="brand-mark" aria-hidden="true"></i>TeamUp</span><span>Free. No accounts. Works on phones, tablets and laptops.</span></footer>
   </section>
 
   <!-- Room (lobby + game + results share the side panel) -->
   <section id="screen-room" class="screen">
     <header class="topbar">
-      <div class="brand">Team<span>Up</span></div>
+      <div class="brand"><i class="brand-mark" aria-hidden="true"></i>TeamUp</div>
       <button id="btn-copy" class="room-code" title="Copy invite link">
         <small>Room</small><b id="room-code">----</b><span class="copy-hint">Copy invite</span>
       </button>
@@ -88,23 +135,23 @@
               <div class="panel-head"><h2>Choose a game</h2><span id="host-note" class="muted small"></span></div>
               <div id="game-cards" class="game-cards">
                 <button class="game-card" data-mode="pictionary">
-                  <span class="gc-art">🎨</span>
+                  <span class="gc-art"><svg><use href="#i-pictionary"/></svg></span>
                   <span class="gc-text"><b>Pictionary</b><small>One draws, everyone guesses. Rounds, hints and custom words.</small></span>
                 </button>
                 <button class="game-card" data-mode="telephone">
-                  <span class="gc-art">📞</span>
+                  <span class="gc-art"><svg><use href="#i-telephone"/></svg></span>
                   <span class="gc-text"><b>Telephone</b><small>Write, draw, describe. Five modes, from Speedrun to Secret.</small></span>
                 </button>
                 <button class="game-card" data-mode="kart">
-                  <span class="gc-art">🏎️</span>
+                  <span class="gc-art"><svg><use href="#i-kart"/></svg></span>
                   <span class="gc-text"><b>Kart Battle</b><small>3D racing and arena battles on 14 maps, 19 power-ups, CPU drivers.</small></span>
                 </button>
                 <button class="game-card" data-mode="ballchain">
-                  <span class="gc-art">⛓️</span>
+                  <span class="gc-art"><svg><use href="#i-ballchain"/></svg></span>
                   <span class="gc-text"><b>Ball &amp; Chain</b><small>Teams roped to a giant ball race a 3D obstacle course.</small></span>
                 </button>
                 <button class="game-card" data-mode="controlroom">
-                  <span class="gc-art">🎛️</span>
+                  <span class="gc-art"><svg><use href="#i-controlroom"/></svg></span>
                   <span class="gc-text"><b>Control Room</b><small>Crews of 2-6 shout technobabble orders to keep their ship flying.</small></span>
                 </button>
               </div>

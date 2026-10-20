@@ -216,8 +216,6 @@
     $('av-current').innerHTML = Avatars.svg(state.avatar);
     if (state.me) emit('lobby:profile', { avatar: state.avatar });
   }
-  $('av-prev').onclick = () => setAvatar(state.avatar - 1);
-  $('av-next').onclick = () => setAvatar(state.avatar + 1);
 
   function openAvatarModal() {
     const grid = $('avatar-grid');
@@ -225,7 +223,6 @@
     $('avatar-modal').classList.remove('hidden');
   }
   $('av-current').onclick = openAvatarModal;
-  $('av-all').onclick = openAvatarModal;
   $('avatar-modal').addEventListener('click', (e) => {
     const b = e.target.closest('[data-av]');
     if (b) setAvatar(Number(b.dataset.av));
@@ -240,7 +237,9 @@
   const codeInputs = [...document.querySelectorAll('#code-boxes input')];
   const getCode = () => codeInputs.map((i) => i.value).join('').toUpperCase();
   function setCode(code) {
-    const c = String(code || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+    // A whole invite link pasted in works too.
+    const raw = String(code || '');
+    const c = (raw.match(/[?&]room=([a-z]{4})/i)?.[1] || raw).toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
     codeInputs.forEach((inp, i) => { inp.value = c[i] || ''; });
   }
   codeInputs.forEach((inp, i) => {
@@ -259,7 +258,34 @@
       codeInputs[Math.min(3, getCode().length)].focus();
     });
   });
-  if (params.get('room')) setCode(params.get('room'));
+  // Host or join: one tab at a time. An invite link (?room=CODE) gets its own view: the code is
+  // already known, so it's just a name and one button.
+  function setTab(tab) {
+    const join = tab === 'join';
+    $('tab-host').setAttribute('aria-selected', String(!join));
+    $('tab-join').setAttribute('aria-selected', String(join));
+    $('pane-host').classList.toggle('hidden', join);
+    $('pane-join').classList.toggle('hidden', !join);
+    $('home-error').textContent = '';
+    store.set('teamup-tab', tab);
+  }
+  function setInvite(code) {
+    const on = !!code;
+    $('entry').classList.toggle('invited', on);
+    $('invite-head').classList.toggle('hidden', !on);
+    document.querySelector('.entry-tabs').classList.toggle('hidden', on);
+    $('code-field').classList.toggle('hidden', on);
+    $('invite-switch').classList.toggle('hidden', !on);
+    $('invite-code').textContent = code || '';
+    $('btn-join').firstChild.textContent = on ? `Join room ${code} ` : 'Join game ';
+    if (on) { setCode(code); setTab('join'); }
+  }
+  $('tab-host').onclick = () => setTab('host');
+  $('tab-join').onclick = () => { setTab('join'); codeInputs[Math.min(3, getCode().length)].focus(); };
+  $('invite-switch').onclick = () => { setInvite(null); setCode(''); setTab('host'); history.replaceState(null, '', location.pathname); };
+  const inviteCode = (params.get('room') || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
+  if (inviteCode.length === 4) setInvite(inviteCode);
+  else setTab(store.get('teamup-tab') === 'join' ? 'join' : 'host');
 
   function getName() {
     const name = $('name-input').value.trim();
@@ -299,7 +325,7 @@
   }
   $('btn-join').onclick = join;
   $('name-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') (getCode().length === 4 ? join() : $('btn-create').click());
+    if (e.key === 'Enter') ($('pane-join').classList.contains('hidden') ? $('btn-create').click() : join());
   });
 
   // Auto-rejoin after a refresh / reconnect.
