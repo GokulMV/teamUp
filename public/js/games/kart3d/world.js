@@ -327,17 +327,6 @@ export const tex = {
     }
     c.fillStyle = 'rgba(0,0,0,0.25)'; c.fillRect(0, 0, 6, h); c.fillRect(w - 6, 0, 6, h);
   })),
-  palmLeaf: () => once('palmLeaf', () => canvasTexture(64, 256, (c, w, h) => {
-    c.clearRect(0, 0, w, h);
-    c.strokeStyle = '#6b8f3a'; c.lineWidth = 3;
-    c.beginPath(); c.moveTo(w / 2, h); c.lineTo(w / 2, 4); c.stroke();
-    for (let y = 10; y < h - 6; y += 7) {
-      const len = (w / 2 - 2) * Math.sin((y / h) * Math.PI) ** 0.6;
-      const g = 0.75 + (y % 3) * 0.08;
-      c.strokeStyle = `rgb(${Math.round(70 * g)},${Math.round(150 * g)},${Math.round(55 * g)})`; c.lineWidth = 4;
-      for (const sd of [-1, 1]) { c.beginPath(); c.moveTo(w / 2, y + 4); c.quadraticCurveTo(w / 2 + sd * len * 0.6, y - 2, w / 2 + sd * len, y + 8); c.stroke(); }
-    }
-  }, false)),
   stripes: (a, b, n = 6) => once(`stripes${a}${b}${n}`, () => canvasTexture(64, 256, (c, w, h) => {
     for (let i = 0; i < n; i++) { c.fillStyle = i % 2 ? b : a; c.fillRect(0, (i * h) / n, w, h / n + 1); }
     noise(c, w, h, 600, ['rgba(0,0,0,0.06)', 'rgba(255,255,255,0.08)'], 2, 9);
@@ -468,11 +457,13 @@ export const THEMES = {
     water: 0x1aa7b8, bridge: 'concrete', rail: 'concrete',
   },
   lava: {
-    sky: [0x2a0d12, 0xd2552c], fog: [0x5a2418, 2200, 9500], hemi: [0xffc29a, 0x3a1c14, 1.25], sun: [0xffc28a, 2.5],
-    ground: () => tex.ground('#2f2826', ['#29221f', '#382f2b', '#221c1a', '#433834']),
-    asphalt: () => tex.asphalt('#3a3533', '#ffb347', 'rgba(255,120,40,0.9)'), curb: ['#ef4444', '#1f1a18'], runoff: 0x4a3f3a,
-    barrier: 'rocks', rockColor: 0x3b302c, deadTrees: ['almond', 'casuarina'], embers: true, ash: true,
-    terrain: { low: '#3a312d', high: '#4b413c', rock: '#231d1b', bed: '#2a211e', glow: '#ff5a1a' }, detail: 'rock',
+    // Dusk on a live volcano: a plum sky burning orange at the horizon, warm light on purple-grey
+    // basalt so the road, karts and lava all read clearly (not a murky brown).
+    sky: [0x2e1446, 0xff7a45], fog: [0x8a4566, 3400, 14000], hemi: [0xffd6c4, 0x5a3d62, 1.7], sun: [0xffcf9a, 3.1],
+    ground: () => tex.ground('#55465f', ['#4c3f57', '#615069', '#463a50', '#6c5a74']),
+    asphalt: () => tex.asphalt('#47434f', '#ffc061', 'rgba(255,138,52,0.95)'), curb: ['#ff5a36', '#f4ece6'], runoff: 0x6e5c66,
+    barrier: 'rocks', rockColor: 0x54445e, obsidian: true, embers: true, ash: true,
+    terrain: { low: '#5d4b66', high: '#7a6684', rock: '#3d3047', bed: '#47394f', glow: '#ff6a1f' }, detail: 'rock',
     bridge: 'basalt', rail: 'basalt', crater: true,
   },
   arena: {

@@ -313,7 +313,7 @@ const BRIDGE_STYLES = {
   ice: { deck: '#a9d4f0', rail: '#cfeaff', pier: '#b9def5', top: '#ffffff', glass: true },
   neon: { deck: '#221c3c', rail: '#2a2350', pier: '#1c1832', top: '#7df9ff', glow: true },
   concrete: { deck: '#d7d8dc', rail: '#eceef1', pier: '#c9cbd0', top: '#38bdf8' },
-  basalt: { deck: '#2b2321', rail: '#3a302c', pier: '#2b2321', top: '#ff7a2a', glow: true },
+  basalt: { deck: '#4a3d47', rail: '#5c4b58', pier: '#3f333d', top: '#ff7a2a', glow: true },
 };
 
 function buildBridges(scene, map, theme, ctx, R) {
@@ -909,6 +909,10 @@ function buildScenery(scene, map, theme, ctx, R) {
     const spots = [...besideRoad(map, R, MOBILE ? 50 : 120, wall + 40, wall + 900, 4242, plantable(0.7)), ...farFromRoad(map, box, MOBILE ? 40 : 90, wall + 300, 99, plantable(0.7))];
     addMoonlitTrees(scene, spots, theme.deadTrees, { barkOnly: true, barkTint: 0x2e2522, seed: 4, variants: 2 });
   }
+  if (theme.obsidian) {
+    const spots = [...besideRoad(map, R, MOBILE ? 50 : 120, wall + 40, wall + 900, 4242, plantable(0.7)), ...farFromRoad(map, box, MOBILE ? 40 : 90, wall + 300, 99, plantable(0.7))];
+    addObsidian(scene, spots);
+  }
   if (theme.grass) addGrass(scene, besideRoad(map, R, MOBILE ? 3000 : 11000, half + 70, half + 800, 99, plantable(0.7)), ctx.uniforms);
   if (theme.cacti) addCacti(scene, besideRoad(map, R, MOBILE ? 90 : 200, wall + 30, wall + 1200, 55, plantable(0.4)));
   if (theme.hoodoos) addHoodoos(scene, besideRoad(map, R, MOBILE ? 30 : 60, wall + 80, wall + 1100, 66, plantable(0.35)));
@@ -971,57 +975,175 @@ function addHoodoos(scene, spots) {
   scene.add(im);
 }
 
-// Palm trees: a curved, ringed trunk, a crown of drooping fronds and coconuts. Instanced.
-function addPalms(scene, spots) {
-  if (!spots.length) return;
-  const trunkParts = [];
-  const segs = 8;
+// Palm trees in the toon look: a leaning trunk of chunky, flat-shaded rings, a crown of solid
+// folded fronds (lit on top, darker underneath) and a cluster of coconuts. One vertex-coloured,
+// flat-shaded material; a few variants, instanced.
+function tint(g, fn) {
+  g = g.index ? g.toNonIndexed() : g;
+  g.deleteAttribute('uv');
+  g.deleteAttribute('normal'); // flat shading works the normals out per face
+  const pos = g.attributes.position;
+  const cols = new Float32Array(pos.count * 3);
+  const c = new THREE.Color();
+  for (let k = 0; k < pos.count; k++) {
+    fn(c, pos.getX(k), pos.getY(k), pos.getZ(k), k);
+    cols.set([c.r, c.g, c.b], k * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+  return g;
+}
+
+// A frond along +x: a leaf folded along its midrib (a shallow V), arching up then drooping, with
+// its width swelling and tapering to a point. (ridge: the midrib's lift; droop: how far it falls.)
+function frondGeometry(len, width, droop, light, dark) {
+  const segs = 7;
+  const pos = [];
+  const cols = [];
+  const ca = new THREE.Color(light);
+  const cb = new THREE.Color(dark);
+  const at = (t, side) => {
+    const w = width * Math.sin(Math.PI * Math.min(1, t * 1.15 + 0.08)) ** 0.8 * (1 - t * 0.35);
+    const y = t * 0.55 * len * (1 - t) * 1.4 - droop * t * t * len;
+    return [t * len, y + (side === 0 ? 0.09 * width : -0.06 * width * Math.abs(side)), side * w];
+  };
+  for (let s = 0; s < segs; s++) {
+    const t0 = s / segs;
+    const t1 = (s + 1) / segs;
+    for (const side of [-1, 1]) {
+      const a = at(t0, 0), b = at(t1, 0), c = at(t0, side), d = at(t1, side);
+      const tri = side < 0 ? [a, c, b, b, c, d] : [a, b, c, b, d, c];
+      for (const v of tri) {
+        pos.push(...v);
+        const edge = v === c || v === d ? 0.55 : 0;
+        const col = ca.clone().lerp(cb, Math.min(1, edge + v[0] / len * 0.35));
+        cols.push(col.r, col.g, col.b);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
+  return g;
+}
+
+function palmVariant(r, lean) {
+  const parts = [];
+  const segs = 7;
+  const height = 3.3;
+  const bend = (t) => lean * t * t; // sideways along +x
+  const barkA = new THREE.Color('#b0814f');
+  const barkB = new THREE.Color('#8a5f3a');
   for (let s = 0; s < segs; s++) {
     const t = s / segs;
-    const bend = (tt) => [tt * tt * 0.9, tt];
-    const [x0] = bend(t);
-    const r0 = 0.11 - t * 0.04;
-    trunkParts.push(part(new THREE.CylinderGeometry(r0 * 0.9, r0, 1 / segs + 0.01, 8), x0, t + 0.5 / segs, 0, 0, 0, -t * 0.8));
+    const t1 = (s + 1) / segs;
+    const r0 = 0.17 - t * 0.07;
+    const h = height / segs;
+    // Each ring flares at its top, so the trunk reads as stacked chunks.
+    const g = new THREE.CylinderGeometry(r0 * 1.12, r0 * 0.86, h * 1.02, 7);
+    const ang = Math.atan2(bend(t1) - bend(t), h);
+    g.rotateZ(-ang);
+    g.translate((bend(t) + bend(t1)) / 2, t * height + h / 2, 0);
+    const col = s % 2 ? barkA : barkB;
+    parts.push(tint(g, (c, x, y) => c.copy(col).multiplyScalar(0.85 + 0.25 * ((y - t * height) / h))));
   }
-  const trunk = mergeGeometries(trunkParts).scale(1, 3.4, 1);
-  const top = [0.9, 3.4];
-  const fronds = [];
-  for (let k = 0; k < 9; k++) {
-    const a = (k / 9) * Math.PI * 2;
-    // A drooping leaf: a strip bent downwards along its length.
-    const len = 1.9;
-    const g = new THREE.PlaneGeometry(0.55, len, 1, 6);
-    const p = g.attributes.position;
-    for (let v = 0; v < p.count; v++) {
-      const along = (p.getY(v) + len / 2) / len;
-      p.setY(v, along * len);
-      p.setZ(v, -along * along * 1.1);
-    }
-    g.rotateX(-Math.PI / 2 + 0.35);
+  const top = [bend(1), height];
+  const greens = [['#7ed957', '#2f8f3a'], ['#69c94b', '#2a7d34'], ['#8fe060', '#348f3c']];
+  const n = 10;
+  for (let k = 0; k < n; k++) {
+    const a = (k / n) * Math.PI * 2 + r() * 0.4;
+    const [light, dark] = greens[k % greens.length];
+    const g = frondGeometry(1.65 + r() * 0.3, 0.85, 0.7 + r() * 0.25, light, dark);
+    g.rotateZ(0.25 + r() * 0.2);
     g.rotateY(a);
     g.translate(top[0], top[1], 0);
-    fronds.push(g);
+    parts.push(g);
   }
-  const crown = mergeGeometries(fronds);
-  const nuts = mergeGeometries([0, 1, 2].map((k) => part(new THREE.SphereGeometry(0.1, 8, 6), top[0] + Math.cos(k * 2.1) * 0.12, top[1] - 0.12, Math.sin(k * 2.1) * 0.12)));
-  const trunkMat = new THREE.MeshStandardMaterial({ map: tex.stripes('#8a6a48', '#6e5238', 18), roughness: 0.9 });
-  const leafMat = new THREE.MeshStandardMaterial({ map: tex.palmLeaf(), alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.75 });
-  const nutMat = new THREE.MeshStandardMaterial({ color: 0x5b3a1e, roughness: 0.7 });
+  // A short spiky tuft at the very top, so the crown isn't flat.
+  for (let k = 0; k < 4; k++) {
+    const g = frondGeometry(0.8, 0.36, 0.15, '#9be86a', '#3a9a42');
+    g.rotateZ(1.0);
+    g.rotateY((k / 4) * Math.PI * 2 + 0.4);
+    g.translate(top[0], top[1] + 0.02, 0);
+    parts.push(g);
+  }
+  const nut = new THREE.Color('#6b4424');
+  for (let k = 0; k < 3; k++) {
+    const g = new THREE.IcosahedronGeometry(0.11, 0).translate(top[0] + Math.cos(k * 2.1) * 0.13, top[1] - 0.1, Math.sin(k * 2.1) * 0.13);
+    parts.push(tint(g, (c) => c.copy(nut)));
+  }
+  return mergeGeometries(parts);
+}
+
+// Obsidian outcrops for the volcano: clusters of glassy purple-black shards, lit pale lilac at
+// their tips and glowing ember-orange where they meet the ground. Flat-shaded, instanced.
+function addObsidian(scene, spots) {
+  if (!spots.length) return;
+  const r = rng(77);
+  const base = new THREE.Color('#ff7a2a');
+  const mid = new THREE.Color('#3b2a4a');
+  const tip = new THREE.Color('#a48bc4');
+  const variants = [0, 1, 2].map((v) => {
+    const parts = [];
+    const n = 3 + v;
+    for (let i = 0; i < n; i++) {
+      const h = i === 0 ? 1.6 + r() * 0.5 : 0.7 + r() * 0.7;
+      const w = 0.22 + r() * 0.14;
+      const g = new THREE.ConeGeometry(w, h, 5).translate(0, h / 2 - 0.05, 0);
+      g.rotateZ((r() - 0.5) * 0.7);
+      g.rotateX((r() - 0.5) * 0.7);
+      const a = r() * Math.PI * 2;
+      const off = i === 0 ? 0 : 0.25 + r() * 0.2;
+      g.translate(Math.cos(a) * off, 0, Math.sin(a) * off);
+      parts.push(tint(g, (c, x, y) => {
+        const t = THREE.MathUtils.clamp(y / 1.8, 0, 1);
+        if (t < 0.08) c.copy(base);
+        else c.copy(mid).lerp(tip, t ** 1.4);
+      }));
+    }
+    return mergeGeometries(parts);
+  });
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.35, metalness: 0.1 });
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
-  const r = rng(41);
-  const mats = spots.map(([x, z, s, y]) => {
-    q.setFromAxisAngle(UP, r() * Math.PI * 2);
-    const sc = 60 * s * (0.85 + r() * 0.4);
-    return m.clone().compose(new THREE.Vector3(x, y - 4, z), q, new THREE.Vector3(sc, sc, sc));
-  });
-  for (const [geo, mat] of [[trunk, trunkMat], [crown, leafMat], [nuts, nutMat]]) {
-    const im = new THREE.InstancedMesh(geo, mat, spots.length);
-    mats.forEach((mm, i) => im.setMatrixAt(i, mm));
+  const groups = variants.map(() => []);
+  spots.forEach((s, i) => groups[i % variants.length].push(s));
+  groups.forEach((list, v) => {
+    if (!list.length) return;
+    const im = new THREE.InstancedMesh(variants[v], mat, list.length);
+    list.forEach(([x, z, s, y], i) => {
+      q.setFromAxisAngle(UP, r() * Math.PI * 2);
+      const sc = 55 * s * (0.7 + r() * 0.6);
+      im.setMatrixAt(i, m.compose(new THREE.Vector3(x, y - 3, z), q, new THREE.Vector3(sc, sc * (0.8 + r() * 0.4), sc)));
+    });
     im.castShadow = true;
     im.receiveShadow = true;
+    im.computeBoundingSphere();
     scene.add(im);
-  }
+  });
+}
+
+function addPalms(scene, spots) {
+  if (!spots.length) return;
+  const r = rng(41);
+  const variants = [0.5, 0.85, 1.15].map((lean) => palmVariant(r, lean));
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85, side: THREE.DoubleSide });
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const groups = variants.map(() => []);
+  spots.forEach((s, i) => groups[i % variants.length].push(s));
+  groups.forEach((list, v) => {
+    if (!list.length) return;
+    const im = new THREE.InstancedMesh(variants[v], mat, list.length);
+    list.forEach(([x, z, s, y], i) => {
+      q.setFromAxisAngle(UP, r() * Math.PI * 2);
+      const sc = 60 * s * (0.85 + r() * 0.4);
+      im.setMatrixAt(i, m.compose(new THREE.Vector3(x, y - 4, z), q, new THREE.Vector3(sc, sc, sc)));
+    });
+    im.castShadow = true;
+    im.receiveShadow = true;
+    im.computeBoundingSphere();
+    scene.add(im);
+  });
 }
 
 // ---------- landmarks ----------
