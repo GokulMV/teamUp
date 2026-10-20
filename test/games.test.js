@@ -1835,6 +1835,48 @@ test('two item slots: a second box fills the reserve, a full kart leaves boxes a
   ar.room.destroy();
 });
 
+test('aim assist: minigun bullets share themselves out over the karts ahead and follow them; rockets lock on to a kart in front, never one behind', async () => {
+  const ar = await arenaGame(4);
+  const g = ar.game;
+  const [me, a, b, c] = [0, 1, 2, 3].map((i) => ar.kart(i));
+  ar.place(0, 900, 400); ar.place(1, 1300, 330); ar.place(2, 1350, 470); ar.place(3, 400, 400);
+  // Two karts ahead (one behind, out of the cone): the stream alternates between the two.
+  const hits = new Map();
+  for (let i = 0; i < 8; i++) { const s = g.fire('bullet', me); hits.set(s.target, (hits.get(s.target) || 0) + 1); }
+  assert.deepStrictEqual([...hits.keys()].sort(), [a.id, b.id].sort(), 'only the karts in front');
+  assert.ok([...hits.values()].every((n) => n === 4), 'shared evenly');
+  // Each shot is aimed at its kart (where it will be), not straight ahead.
+  const s = g.fire('bullet', me);
+  const t = g.karts.get(s.target);
+  const want = Math.atan2(t.y - me.y, t.x - me.x);
+  assert.ok(Math.abs(s.angle - want) < 0.05, `aimed at ${t === a ? 'a' : 'b'}: ${s.angle.toFixed(3)} vs ${want.toFixed(3)}`);
+  // ...and follows it when it moves: the bullet lands on a kart that slid aside after the shot.
+  g.shots.length = 0;
+  ar.place(2, 2500, 2500);
+  const shot = g.fire('bullet', me);
+  assert.strictEqual(shot.target, a.id);
+  a.y += 30; // dodged a little
+  const hp = a.hp;
+  step(g, 12);
+  assert.ok(a.hp < hp, 'the bullet followed it');
+
+  // Rockets: lock on to the kart ahead and home in; one behind is never chased.
+  g.shots.length = 0;
+  ar.place(1, 1450, 440); ar.place(3, 500, 400);
+  a.hp = g.hpMax;
+  const r = g.fire('rocket', me);
+  assert.strictEqual(r.target, a.id);
+  for (let i = 0; i < 40 && a.hp === g.hpMax; i++) step(g, 1);
+  assert.ok(a.hp < g.hpMax, 'the rocket found its target');
+  g.shots.length = 0;
+  ar.place(1, 2500, 2500);
+  const lone = g.fire('rocket', me);
+  assert.ok(!lone.target, 'nothing ahead: no lock on the kart behind');
+  step(g, 10);
+  assert.ok(Math.abs(Math.atan2(Math.sin(lone.angle), Math.cos(lone.angle))) < 0.3, 'and it does not turn round for it');
+  ar.room.destroy();
+});
+
 test('CPU drivers follow the two-item rule and swap to the item they need', async () => {
   // Arena: a shield up front, a rocket in reserve and a rival dead ahead: swap and fire.
   const ctx = await kartGame(1, { kartMode: 'arena', kartMap: 'colosseum', kartBots: 1, kartBotSkill: 'hard', kartItems: 'none' });

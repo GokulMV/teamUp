@@ -19,8 +19,8 @@ const HP_MAX = 100; // default arena health ('normal')
 const REGEN_DELAY = 3;
 const REGEN_RATE = 10; // hp per second
 
-const ROCKET = { speed: 1000, life: 1.8, homing: 2.2 };
-const BULLET = { speed: 1700, life: 0.55, every: 0.08, spread: 0.06 };
+const ROCKET = { speed: 1000, life: 1.8, homing: 3.4, cone: 1.05, range: 1400 }; // locks on to a kart ahead (cone: radians either side)
+const BULLET = { speed: 1700, life: 0.55, every: 0.08, spread: 0.06, aimSpread: 0.02, cone: 1.2, range: 800, targets: 3, homing: 7 };
 // Bombs are lobbed (see K.ITEM_FX.bomb: hold fire to aim near..far, a tap throws mid-range).
 const BOMB = { ...K.ITEM_FX.bomb, radius: 140 };
 const MINE = { arm: 0.8, life: 60, trigger: 40, radius: 95 };
@@ -389,9 +389,60 @@ class KartBattle {
     return true;
   }
 
+  // ---------- aim assist ----------
+  // Enemies in front of `kart` (within `cone` radians of where it points) and in range, nearest to
+  // straight ahead first: what the minigun and rockets lock on to.
+  aimTargets(kart, cone, range) {
+    const z = this.layered ? this.heightOf(kart) : 0;
+    const out = [];
+    for (const k of this.karts.values()) {
+      if (k === kart || k.id === kart.id || k.dead > 0 || k.ghost > 0 || k.finished || k.fall > 0 || this.isFriendly(k.id, kart.id)) continue;
+      if (this.layered && !this.level(k, z, 60)) continue;
+      const dx = k.x - kart.x;
+      const dy = k.y - kart.y;
+      const d = Math.hypot(dx, dy);
+      if (d > range || d < 1) continue;
+      let da = Math.atan2(dy, dx) - kart.angle;
+      da = Math.atan2(Math.sin(da), Math.cos(da));
+      if (Math.abs(da) > cone) continue;
+      out.push({ k, d, da, score: d * (1 + 1.5 * Math.abs(da)) });
+    }
+    return out.sort((a, b) => a.score - b.score);
+  }
+  // The angle from (x, y) to where kart `k` will be when a shot at `speed` gets there.
+  leadAngle(x, y, k, speed) {
+    const t = Math.hypot(k.x - x, k.y - y) / Math.max(1, speed);
+    const h = k.heading === undefined ? k.angle : k.heading;
+    return Math.atan2(k.y + Math.sin(h) * k.speed * t - y, k.x + Math.cos(h) * k.speed * t - x);
+  }
+  // Turn shot `s` towards its locked target by at most `rate` radians a second.
+  steerShot(s, k, rate, dt) {
+    let da = this.leadAngle(s.x, s.y, k, s.speed) - s.angle;
+    da = Math.atan2(Math.sin(da), Math.cos(da));
+    s.angle += Math.max(-rate * dt, Math.min(rate * dt, da));
+  }
+
   // ---------- items ----------
   fire(kind, kart, angleOffset = 0, power = BOMB.tap) {
-    const a = kart.angle + angleOffset;
+    let a = kart.angle + angleOffset;
+    // Aim assist. Minigun bullets share themselves out over up to three karts in front (each shot
+    // the next one), aimed where they'll be; a rocket locks on to the kart most nearly ahead.
+    let target = null;
+    if (kind === 'bullet') {
+      const ts = this.aimTargets(kart, BULLET.cone, BULLET.range).slice(0, BULLET.targets);
+      if (ts.length) {
+        kart.gunTurn = ((kart.gunTurn || 0) + 1) % ts.length;
+        target = ts[kart.gunTurn].k;
+        a = this.leadAngle(kart.x, kart.y, target, SHOT_SPEED.bullet + Math.max(0, kart.speed)) + (Math.random() - 0.5) * 2 * BULLET.aimSpread;
+      }
+    } else if (kind === 'rocket') {
+      const t = this.aimTargets(kart, ROCKET.cone, ROCKET.range)[0];
+      if (t) {
+        target = t.k;
+        // Pointed straight at it when it's nearly ahead (triple rockets keep their fan).
+        if (!angleOffset && Math.abs(t.da) < 0.6) a = this.leadAngle(kart.x, kart.y, target, SHOT_SPEED.rocket + Math.max(0, kart.speed));
+      }
+    }
     const speed = kind === 'bomb' ? Math.max(0, kart.speed) + K.bombLead(power) / BOMB.flight
       : SHOT_SPEED[kind] + Math.max(0, kart.speed);
     const shot = {
@@ -402,6 +453,7 @@ class KartBattle {
       ti: kart.trackIndex, // nearest centerline sample, a hint for cheap wall checks
       dmg: kind === 'rocket' && kart.item === 'triple' ? DAMAGE.triple : DAMAGE[kind],
     };
+    if (target) shot.target = target.id;
     if (this.layered) { shot.z = this.heightOf(kart); shot.vz = 0; }
     if (kind === 'bomb') {
       // Where it will land, so everyone can see the danger zone.
@@ -1139,21 +1191,17 @@ class KartBattle {
     for (const s of this.shots) {
       const owner = this.karts.get(s.owner);
       if (s.kind === 'comet') { this.updateComet(s, dt); continue; }
-      if (s.kind === 'rocket') {
-        // Gently home in on the nearest enemy ahead.
-        let turn = null;
-        let bestD = 700 * 700;
-        for (const k of alive) {
-          if (k.id === s.owner || k.ghost > 0 || k.dead > 0 || this.isFriendly(k.id, s.owner) || !this.level(k, s.z, 60)) continue;
-          const dx = k.x - s.x;
-          const dy = k.y - s.y;
-          const d2 = dx * dx + dy * dy;
-          if (d2 > bestD) continue;
-          let da = Math.atan2(dy, dx) - s.angle;
-          da = Math.atan2(Math.sin(da), Math.cos(da));
-          if (Math.abs(da) < Math.PI / 4) { bestD = d2; turn = da; }
+      if (s.kind === 'rocket' || (s.kind === 'bullet' && s.target)) {
+        // Locked on: follow the target. A rocket whose target is gone (wrecked, ghosted) looks for
+        // another kart ahead of it; it never turns round for one behind.
+        let t = s.target ? this.karts.get(s.target) : null;
+        if (t && (t.dead > 0 || t.ghost > 0 || t.fall > 0 || (this.layered && !this.level(t, s.z, 60)))) t = null;
+        if (!t && s.kind === 'rocket') {
+          const next = this.aimTargets({ id: s.owner, x: s.x, y: s.y, angle: s.angle, z: s.z }, Math.PI / 3, 900)[0];
+          t = next ? next.k : null;
+          s.target = t ? t.id : null;
         }
-        if (turn !== null) s.angle += Math.max(-ROCKET.homing * dt, Math.min(ROCKET.homing * dt, turn));
+        if (t) this.steerShot(s, t, s.kind === 'rocket' ? ROCKET.homing : BULLET.homing, dt);
       }
       const px = s.x;
       const py = s.y;
