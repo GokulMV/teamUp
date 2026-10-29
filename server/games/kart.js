@@ -209,6 +209,14 @@ class KartBattle {
   }
 
   start() {
+    // CPU drivers on a layered arena steer by its navigation grid, built the first time it's asked
+    // for (a fifth of a second on the big arenas): build it now, while everyone is still loading,
+    // not on the first tick of the race...
+    if (this.botCount > 0 && this.layered) {
+      // ...and the driving distance to every item box, which they rank the boxes by.
+      const nav = this.map.nav;
+      for (const b of this.map.itemBoxes) nav.toward(nav.nodeAt(b.x, b.y, b.z || 0, 3));
+    }
     const players = this.room.connectedPlayers.slice(0, MAX_KARTS);
     players.forEach((p, slot) => this.addKart(p, slot));
     const teamCounts = this.room.settings.teamMode
