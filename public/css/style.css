@@ -639,62 +639,58 @@ textarea { resize: vertical; min-height: 70px; }
 .kart-timer { height: 44px; padding: 0 14px; display: flex; align-items: center; font-family: var(--font-display); font-weight: 800; font-size: 24px; font-variant-numeric: tabular-nums; transition: background 0.3s; }
 .kart-timer.urgent { background: #dc2626; border-color: rgba(255, 255, 255, 0.35); animation: urgent 1s ease-in-out infinite; }
 @keyframes urgent { 50% { box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.35), 0 8px 24px -12px rgba(0, 0, 0, 0.6); } }
+/* The held item: a dark glass tile with a line of the item's family colour along its top. The
+   roulette flickers icons in it while a thin line fills its bottom edge, then the item locks in
+   with a short flash. */
 .kart-item {
-  --cell: 60px;
-  position: relative; width: 64px; height: 64px; border-radius: 18px; color: #fff;
-  background: radial-gradient(circle at 50% 40%, rgba(255, 181, 71, 0.35), rgba(14, 10, 36, 0.6) 70%); border: 2px solid rgba(255, 255, 255, 0.9);
-  box-shadow: 0 0 0 3px rgba(255, 181, 71, 0.35), 0 10px 24px -10px rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-  transition: opacity 0.18s, transform 0.18s, border-color 0.18s;
+  --ia: rgba(255, 255, 255, 0.6);
+  position: relative; width: 60px; height: 60px; border-radius: 12px; color: #fff;
+  background: linear-gradient(180deg, rgba(10, 26, 28, 0.62), rgba(6, 16, 18, 0.82));
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: inset 0 3px 0 -1px var(--ia), 0 12px 28px -14px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(10px) saturate(1.2); -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  transition: opacity 0.16s, transform 0.16s, box-shadow 0.2s, border-color 0.2s;
 }
 .mode-arena .kart-item { position: absolute; top: 0; left: calc(100% + 10px); }
-.kart-item.empty { opacity: 0; transform: scale(0.85); }
-/* Item roulette: a slot-machine reel inside the glass slot that decelerates onto the item. */
-.kart-slot { position: absolute; inset: 0; border-radius: 16px; overflow: hidden; display: grid; place-items: center; }
-.kart-item .item-icon { width: 46px; height: 46px; filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.35)); }
-.kart-item-icon { display: none; }
-.kart-item.ready .kart-item-icon { display: grid; place-items: center; }
-.kart-reel { position: absolute; left: 0; right: 0; top: 0; display: none; will-change: transform; }
-.kart-reel .cell { height: var(--cell); display: grid; place-items: center; }
-.kart-reel .item-icon { width: 40px; height: 40px; }
-.kart-item.rolling { border-color: #fde047; }
-.kart-item.rolling .kart-reel { display: block; }
-.kart-item.rolling .kart-slot::after {
-  content: ''; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(rgba(14, 10, 36, 0.85), rgba(14, 10, 36, 0) 32%, rgba(14, 10, 36, 0) 68%, rgba(14, 10, 36, 0.85));
-}
-.kart-item.ready { animation: item-ready 1.1s ease-in-out infinite; }
-.kart-item.landed .kart-item-icon { animation: item-land 0.38s cubic-bezier(.3, 1.6, .5, 1); }
-@keyframes item-ready {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(255, 181, 71, 0.35), 0 10px 24px -10px rgba(0, 0, 0, 0.7); }
-  50% { box-shadow: 0 0 0 5px rgba(253, 224, 71, 0.5), 0 0 24px 6px rgba(255, 140, 220, 0.5), 0 10px 24px -10px rgba(0, 0, 0, 0.7); }
-}
-@keyframes item-land { 0% { transform: scale(0.4) rotate(-12deg); } 70% { transform: scale(1.18) rotate(4deg); } 100% { transform: scale(1); } }
-.kart-item small { position: absolute; z-index: 1; top: -7px; right: -7px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: #ffb547; border: 2px solid #fff; font-weight: 800; font-size: 12px; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.kart-item.empty { opacity: 0; transform: translateY(-6px); }
+.kart-slot { position: absolute; inset: 0; border-radius: 11px; overflow: hidden; display: grid; place-items: center; }
+.kart-item .item-icon { width: 36px; height: 36px; display: block; }
+.kart-item-icon { display: grid; place-items: center; }
+.kart-item.rolling .kart-item-icon { opacity: 0.55; }
+.kart-roll { position: absolute; left: 8px; right: 8px; bottom: 6px; height: 2px; border-radius: 1px; background: rgba(255, 255, 255, 0.85); transform: scaleX(0); transform-origin: left; opacity: 0; }
+.kart-item.rolling .kart-roll { opacity: 1; }
+.kart-item.ready { border-color: color-mix(in srgb, var(--ia) 55%, transparent); box-shadow: inset 0 3px 0 -1px var(--ia), 0 0 0 1px color-mix(in srgb, var(--ia) 25%, transparent), 0 12px 28px -14px rgba(0, 0, 0, 0.8); }
+.kart-item.landed .kart-slot::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--ia); mix-blend-mode: screen; animation: item-lock 0.32s ease-out forwards; pointer-events: none; }
+.kart-item.landed .kart-item-icon { animation: item-in 0.22s ease-out; }
+@keyframes item-lock { from { opacity: 0.55; } to { opacity: 0; } }
+@keyframes item-in { from { transform: scale(0.86); } to { transform: none; } }
+.kart-item small { position: absolute; z-index: 1; right: 5px; bottom: 4px; font-family: var(--font-mono, ui-monospace, monospace); font-weight: 600; font-size: 11px; line-height: 1; color: rgba(255, 255, 255, 0.9); font-variant-numeric: tabular-nums; }
 .kart-item small:empty, .kart-item.rolling small { display: none; } /* the ammo would give the roulette away */
-.kart-key, .kart-rkey, .kart-help kbd { font: inherit; font-weight: 800; font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: 5px; background: rgba(255, 255, 255, 0.92); color: var(--bg); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }
-.kart-key { position: absolute; z-index: 1; bottom: -11px; left: 50%; transform: translateX(-50%); font-size: 9.5px; transition: opacity 0.18s; }
+.kart-key, .kart-rkey, .kart-help kbd { font: inherit; font-weight: 600; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; padding: 1px 5px; border-radius: 4px; background: rgba(6, 16, 18, 0.7); color: rgba(255, 255, 255, 0.78); border: 1px solid rgba(255, 255, 255, 0.18); }
+.kart-key { position: absolute; z-index: 1; top: calc(100% + 5px); left: 50%; transform: translateX(-50%); font-size: 9px; transition: opacity 0.18s; }
 .kart-item:not(.ready) .kart-key { opacity: 0; }
 /* the reserve slot: a smaller glass box beside the main one, Q swaps the two */
 .kart-reserve {
-  position: absolute; left: calc(100% + 9px); bottom: 0; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center;
-  background: radial-gradient(circle at 50% 40%, rgba(255, 181, 71, 0.22), rgba(14, 10, 36, 0.62) 70%); border: 2px solid rgba(255, 255, 255, 0.72);
-  box-shadow: 0 8px 18px -10px rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-  transition: opacity 0.18s, transform 0.18s, border-color 0.18s;
+  --ia: rgba(255, 255, 255, 0.6);
+  position: absolute; left: calc(100% + 8px); bottom: 0; width: 38px; height: 38px; border-radius: 9px; display: grid; place-items: center;
+  background: linear-gradient(180deg, rgba(10, 26, 28, 0.55), rgba(6, 16, 18, 0.78)); border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 2px 0 -1px var(--ia), 0 10px 22px -12px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  transition: opacity 0.16s, transform 0.16s;
 }
-.kart-reserve.empty { opacity: 0; transform: translateX(-10px) scale(0.75); }
-.kart-reserve .item-icon { width: 28px; height: 28px; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35)); }
+.kart-reserve.empty { opacity: 0; transform: translateX(-6px); }
+.kart-reserve .item-icon { width: 22px; height: 22px; display: block; }
 .kart-reserve-icon { display: grid; place-items: center; }
-.kart-reserve.rolling { border-color: #fde047; border-style: dashed; }
-.kart-reserve.rolling .item-icon { opacity: 0.7; }
-.kart-reserve.landed .kart-reserve-icon { animation: item-land 0.38s cubic-bezier(.3, 1.6, .5, 1); }
-.kart-reserve b { position: absolute; top: -8px; right: -8px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: #ffb547; border: 2px solid #fff; font-size: 10px; font-weight: 800; line-height: 14px; text-align: center; font-variant-numeric: tabular-nums; }
+.kart-reserve.rolling .item-icon { opacity: 0.5; }
+.kart-reserve.landed .kart-reserve-icon { animation: item-in 0.22s ease-out; }
+.kart-reserve b { position: absolute; right: 3px; bottom: 2px; font-family: var(--font-mono, ui-monospace, monospace); font-size: 9px; font-weight: 600; line-height: 1; color: rgba(255, 255, 255, 0.85); font-variant-numeric: tabular-nums; }
 .kart-reserve b:empty, .kart-reserve.rolling b { display: none; }
-.kart-rkey { position: absolute; bottom: -11px; left: 50%; transform: translateX(-50%); font-size: 9px; }
+.kart-rkey { position: absolute; top: calc(100% + 5px); left: 50%; transform: translateX(-50%); font-size: 9px; }
 .kart-reserve:not(.ready) .kart-rkey { opacity: 0; }
 /* under the top cluster: the item's name when it lands, and the comet warning */
 .kart-top-sub { position: absolute; top: calc(100% + 18px); left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .mode-arena .kart-top-sub { left: calc(100% + 42px); }
-.kart-item-name { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; white-space: nowrap; opacity: 0; transform: translateY(-4px); transition: opacity 0.2s, transform 0.2s; }
+.kart-item-name { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; white-space: nowrap; opacity: 0; transform: translateY(-3px); transition: opacity 0.2s, transform 0.2s; }
 .kart-item-name.show { opacity: 1; transform: none; }
 .kart-warn {
   display: flex; align-items: center; gap: 8px; padding: 5px 14px 5px 6px; border-radius: 999px; white-space: nowrap;
@@ -827,19 +823,19 @@ textarea { resize: vertical; min-height: 70px; }
 .tc-act { position: absolute; right: max(12px, env(safe-area-inset-right)); bottom: 8px; width: 170px; height: 158px; pointer-events: none; }
 .tc-act button { position: absolute; border-radius: 50%; pointer-events: auto; }
 .tc-fire { right: 0; bottom: 32px; width: 84px; height: 84px; border-width: 2px; opacity: 0.6; }
-.tc-fire.armed { opacity: 1; border-color: #fff; background: radial-gradient(circle at 50% 40%, rgba(255, 181, 71, 0.4), rgba(14, 10, 36, 0.55) 70%); box-shadow: 0 0 0 3px rgba(255, 181, 71, 0.45); }
-.tc-fire .item-icon { width: 50px; height: 50px; }
-.tc-fire.rolling { opacity: 0.85; border-color: #fde047; border-style: dashed; }
-.tc-fire.rolling .item-icon { width: 40px; height: 40px; opacity: 0.75; }
+.tc-fire.armed { opacity: 1; border-color: color-mix(in srgb, var(--ia, #fff) 70%, transparent); background: rgba(6, 16, 18, 0.72); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ia, #fff) 30%, transparent), 0 10px 24px -12px rgba(0, 0, 0, 0.8); }
+.tc-fire .item-icon { width: 40px; height: 40px; }
+.tc-fire.rolling { opacity: 0.85; }
+.tc-fire.rolling .item-icon { opacity: 0.55; }
 .tc-fire.armed.on { transform: scale(0.92); }
 /* the reserve item: a bubble above the fire button, tap it to swap the two */
-.tc-swap { right: 4px; bottom: 126px; width: 54px; height: 54px; border-width: 2px; border-color: rgba(255, 255, 255, 0.75); background: radial-gradient(circle at 50% 40%, rgba(255, 181, 71, 0.28), rgba(14, 10, 36, 0.55) 70%); }
+.tc-swap { right: 4px; bottom: 126px; width: 54px; height: 54px; border-width: 1px; border-color: rgba(255, 255, 255, 0.3); background: rgba(6, 16, 18, 0.66); }
 .tc-swap.empty { display: none; }
-.tc-swap .item-icon { width: 30px; height: 30px; }
-.tc-swap.rolling { border-color: #fde047; border-style: dashed; }
-.tc-swap.rolling .item-icon { opacity: 0.7; }
+.tc-swap .item-icon { width: 26px; height: 26px; }
+.tc-swap.rolling { border-color: rgba(255, 255, 255, 0.3); }
+.tc-swap.rolling .item-icon { opacity: 0.5; }
 .tc-swap.on { transform: scale(0.9); }
-.tc-swap-badge { position: absolute; left: -6px; bottom: -4px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; background: #ffb547; border: 2px solid #fff; }
+.tc-swap-badge { position: absolute; left: -6px; bottom: -4px; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: rgba(6, 16, 18, 0.9); border: 1px solid rgba(255, 255, 255, 0.4); }
 .tc-swap-badge .tc-ic { width: 12px; height: 12px; }
 .tc-drift { right: 92px; bottom: 92px; width: 60px; height: 60px; }
 .tc-drift small { position: absolute; bottom: 7px; font-size: 9px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.8; }
@@ -849,7 +845,7 @@ textarea { resize: vertical; min-height: 70px; }
 .kart-stage.no-items .tc-fire, .kart-stage.no-items .tc-swap, .kart-stage.no-items .kh-item { display: none; }
 .kart-stage.spectating .touch-controls, .kart-stage.spectating .kart-help { display: none; }
 /* empty fire button: a faint item box, so it reads as "no item yet", not as a missing control */
-.tc-fire:not(.armed)::before { content: "?"; position: absolute; inset: 0; margin: auto; width: 30px; height: 30px; box-sizing: border-box; border: 2px solid rgba(255, 255, 255, 0.55); border-radius: 9px; display: grid; place-items: center; font-weight: 800; font-size: 15px; color: rgba(255, 255, 255, 0.7); transform: rotate(-8deg); }
+.tc-fire:not(.armed)::before { content: ""; position: absolute; inset: 0; margin: auto; width: 26px; height: 26px; box-sizing: border-box; border: 1.5px solid rgba(255, 255, 255, 0.4); border-radius: 7px; }
 /* Touch: the HUD lives in the top band and the controls at the bottom, so the middle, where your
    kart and the road ahead are, stays clear. */
 .kart-stage.touch .kart-key, .kart-stage.touch .kart-reserve { display: none; }

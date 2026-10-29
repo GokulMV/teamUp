@@ -61,6 +61,10 @@ const RARE_COOLDOWN = { comet: 12, thunder: 20 };
 // Race tracks have height: karts flying higher than this pass over bananas and mines (item boxes float higher).
 const GROUND_CLEAR = 18;
 const BOX_CLEAR = 40;
+// Item boxes are picked up anywhere the kart's body touches the box (half the kart's length plus
+// half the box, with a little give), checked along the whole way driven since the last tick so a
+// fast kart can't skip over one between ticks.
+const BOX_PICK = 44;
 
 // Damage in the arena (karts have 100 hp). In a race every hit except bullets spins you out.
 const DAMAGE = {
@@ -141,6 +145,21 @@ function segmentDist2(ax, ay, bx, by, x, y) {
   const len2 = dx * dx + dy * dy;
   const t = len2 > 0 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / len2)) : 0;
   return (ax + dx * t - x) ** 2 + (ay + dy * t - y) ** 2;
+}
+
+// Did the kart come within r of (x, y) on its way this tick (from px, py to x, y)? A jump of more
+// than a few kart lengths (a respawn, a teleport) counts only where it ended up.
+function passedBy(k, x, y, r) {
+  const ax = Number.isFinite(k.px) ? k.px : k.x;
+  const ay = Number.isFinite(k.py) ? k.py : k.y;
+  let dx = k.x - ax, dy = k.y - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = 1;
+  if (len2 > 0 && len2 < 160 * 160) t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / len2));
+  else { dx = 0; dy = 0; }
+  const cx = len2 < 160 * 160 ? ax + dx * t : k.x;
+  const cy = len2 < 160 * 160 ? ay + dy * t : k.y;
+  return (cx - x) ** 2 + (cy - y) ** 2 < r * r;
 }
 
 class KartBattle {
@@ -873,6 +892,7 @@ class KartBattle {
       const input = k.input;
       const prevIndex = k.trackIndex;
       const wasFalling = k.fall > 0;
+      k.px = k.x; k.py = k.y; // where this tick's drive started (item boxes check the way between)
       K.stepKart(k, input, dt, this.map, { speed: k.speedMul * K.itemSpeed(k.star > 0, k.shrink > 0), frozen: k.freeze > 0, t: this.time });
       if (this.layered) this.layerEvents(k);
       if (!wasFalling && k.fall > 0) {
@@ -949,7 +969,7 @@ class KartBattle {
       if (this.boxes[i] > 0) { this.boxes[i] = Math.max(0, this.boxes[i] - dt); continue; }
       const box = this.map.itemBoxes[i];
       for (const k of alive) {
-        if ((k.air || 0) < BOX_CLEAR && (k.x - box.x) ** 2 + (k.y - box.y) ** 2 < 32 * 32 && this.level(k, box.z, LEVEL.box)) {
+        if ((k.air || 0) < BOX_CLEAR && passedBy(k, box.x, box.y, BOX_PICK) && this.level(k, box.z, LEVEL.box)) {
           // Both slots full (or finished): drive straight through, the box stays for someone else.
           if (k.finished || (k.item && k.item2)) continue;
           this.boxes[i] = this.boxRespawn;
@@ -1554,5 +1574,5 @@ class KartBattle {
 }
 
 module.exports = {
-  KartBattle, DAMAGE, HP_MAX, CLASS_SPEED, BOX_RESPAWN, RESPAWN_TIME, ARENA_HEALTH, KILL_LIMITS, WEAPON_ITEMS, allowedItems,
+  KartBattle, passedBy, DAMAGE, HP_MAX, CLASS_SPEED, BOX_RESPAWN, RESPAWN_TIME, ARENA_HEALTH, KILL_LIMITS, WEAPON_ITEMS, allowedItems,
 };

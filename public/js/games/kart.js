@@ -45,7 +45,7 @@ window.Games.kart = {
           <div class="kart-top">
             <div class="kart-timer kart-panel hidden" data-timer></div>
             <div class="kart-item empty" data-item>
-              <div class="kart-slot"><div class="kart-reel" data-reel></div><div class="kart-item-icon" data-item-icon></div></div>
+              <div class="kart-slot"><div class="kart-item-icon" data-item-icon></div><i class="kart-roll" data-roll></i></div>
               <small data-item-ammo></small><kbd class="kart-key">Space</kbd>
               <div class="kart-reserve empty" data-reserve title="Reserve item (Q to swap)">
                 <div class="kart-reserve-icon" data-reserve-icon></div><b data-reserve-ammo></b><kbd class="kart-rkey">Q</kbd>
@@ -544,7 +544,7 @@ window.Games.kart = {
     // ---------- HUD: item slot and roulette ----------
     // The slot lives in the glass top cluster; the touch fire button mirrors it (reel included).
     const slot = q('[data-item]');
-    const reel = q('[data-reel]');
+    const rollBar = q('[data-roll]');
     const iconBox = q('[data-item-icon]');
     const useBtn = q('.tc-fire');
     const fireIcon = q('[data-fire-icon]');
@@ -552,15 +552,18 @@ window.Games.kart = {
     const itemId = (code) => K.ITEMS[code - 1];
     // mode: empty | rolling | ready; cs: roulette time left in the last snapshot; again: a new roulette started
     const slotState = { code: 0, ammo: -1, mode: 'empty', cs: 0, again: false };
-    const roulette = { start: 0, end: 0, cells: 0, last: -1, cell: 60, strip: [] };
+    const roulette = { start: 0, end: 0, cells: 0, last: -1, strip: [] };
     let nameTimer = 0;
 
-    // Each copy gets its own SVG: an icon's gradient ids are unique per call, and a copy whose ids
-    // resolve into a hidden twin paints without its gradients.
     const iconHtml = (id) => (id ? Icons.svg(id, 'item-icon') : '');
-    function showIcon(code) {
-      iconBox.innerHTML = iconHtml(code && itemId(code));
-      fireIcon.innerHTML = iconHtml(code && itemId(code));
+    // The slot takes on the item's family colour (its top edge, ring and name).
+    const tint = (node, id) => node.style.setProperty('--ia', id ? Icons.color(id) : 'rgba(255,255,255,0.6)');
+    function showIcon(code, rolling = false) {
+      const id = code && itemId(code);
+      iconBox.innerHTML = iconHtml(id);
+      fireIcon.innerHTML = iconHtml(id);
+      tint(slot, rolling ? null : id);
+      tint(useBtn, rolling ? null : id);
     }
     function setSlotMode(mode) {
       slotState.mode = mode;
@@ -570,7 +573,8 @@ window.Games.kart = {
       useBtn.classList.toggle('armed', mode === 'ready');
       useBtn.classList.toggle('rolling', mode === 'rolling');
     }
-    // A slot-machine strip of icons that decelerates onto the item the server picked.
+    // The roulette: the icons flicker past in the slot, slowing down, while a thin line fills along
+    // its bottom edge; then the item the server picked locks in.
     function startRoulette(code, remainingMs, now) {
       const pool = (info?.itemList?.length ? info.itemList : K.ITEMS).filter((id) => K.ITEMS.includes(id));
       const strip = [];
@@ -581,12 +585,10 @@ window.Games.kart = {
         strip.push(id);
       }
       strip.push(itemId(code));
-      reel.innerHTML = strip.map((id) => `<div class="cell">${Icons.svg(id, 'item-icon')}</div>`).join('');
-      setSlotMode('rolling'); // shows the reel, so its cells have a size
-      roulette.cell = reel.firstElementChild?.offsetHeight || 60;
+      setSlotMode('rolling');
       Object.assign(roulette, { start: now, end: now + remainingMs, cells, last: -1, strip });
-      reel.style.transform = 'translateY(0)';
-      showIcon(0);
+      rollBar.style.transform = 'scaleX(0)';
+      showIcon(0, true);
       showName('');
       Sfx.pop();
     }
@@ -594,7 +596,7 @@ window.Games.kart = {
       showIcon(code);
       setSlotMode('ready');
       slot.classList.remove('landed');
-      void slot.offsetWidth; // restart the pop animation
+      void slot.offsetWidth; // restart the lock-in flash
       slot.classList.add('landed');
       showName(Icons.name(itemId(code)), 1800);
       if (ding) Sfx.rouletteDing?.();
@@ -620,13 +622,13 @@ window.Games.kart = {
       }
       if (slotState.mode === 'rolling') {
         const p = Math.min(1, (now - roulette.start) / (roulette.end - roulette.start));
-        const pos = (1 - (1 - p) ** 3) * (roulette.cells - 1); // ease out: fast spin, slow landing
-        reel.style.transform = `translateY(${-pos * roulette.cell}px)`;
-        const idx = Math.round(pos);
+        const idx = Math.round((1 - (1 - p) ** 2.4) * (roulette.cells - 1)); // ease out: fast, then slowing
+        rollBar.style.transform = `scaleX(${p.toFixed(3)})`;
         if (idx !== roulette.last) {
           roulette.last = idx;
           Sfx.rouletteTick?.(idx);
-          if (touch) fireIcon.innerHTML = Icons.svg(roulette.strip[idx], 'item-icon');
+          iconBox.innerHTML = iconHtml(roulette.strip[idx]);
+          if (touch) fireIcon.innerHTML = iconHtml(roulette.strip[idx]);
         }
         if (p >= 1) landRoulette(code, true);
       }
@@ -643,9 +645,10 @@ window.Games.kart = {
     const swapBtn = q('.tc-swap');
     const swapIcon = q('[data-swap-icon]');
     const reserve = { code: 0, ammo: -1, mode: 'empty', cs: 0, again: false, start: 0, end: 0, strip: [], last: -1 };
-    function showReserve(id) {
+    function showReserve(id, rolling = false) {
       reserveIcon.innerHTML = iconHtml(id);
       swapIcon.innerHTML = iconHtml(id);
+      tint(reserveEl, rolling ? null : id);
     }
     function setReserveMode(mode) {
       reserve.mode = mode;
@@ -678,7 +681,7 @@ window.Games.kart = {
       if (reserve.mode === 'rolling') {
         const p = Math.min(1, (now - reserve.start) / (reserve.end - reserve.start));
         const idx = Math.round((1 - (1 - p) ** 3) * (reserve.strip.length - 1));
-        if (idx !== reserve.last) { reserve.last = idx; showReserve(reserve.strip[idx]); }
+        if (idx !== reserve.last) { reserve.last = idx; showReserve(reserve.strip[idx], true); }
         if (p >= 1) {
           landReserve();
           Sfx.rouletteDing?.();

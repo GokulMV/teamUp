@@ -2727,3 +2727,31 @@ test('kart netcode: replays agree on a layered arena too (moving obstacles, ramp
     assert.ok(r.onTime > 0.95, `${map}: the server used the page's input for ${Math.round(r.onTime * 100)}% of its steps`);
   }
 });
+
+test('item boxes: a kart that brushes a box with its side picks it up, even at full boost between two ticks', async () => {
+  const ar = await arenaGame(1);
+  const g = ar.game;
+  const k = ar.kart(0);
+  const box = g.map.itemBoxes[0];
+  // Its side passes 38 from the box's middle (the kart is 32 wide; the box 24): a touch.
+  ar.place(0, box.x - 200, box.y + 38);
+  Object.assign(k, { speed: 820, angle: 0, heading: 0 });
+  g.boxes.fill(0);
+  for (let i = 0; i < 20 && !k.item; i++) { k.input = { up: true }; step(g, 1); }
+  assert.ok(k.item, 'picked up');
+  // A respawn far away never sweeps up the boxes in between.
+  const { passedBy } = require('../server/games/kart.js');
+  assert.strictEqual(passedBy({ px: 0, py: 0, x: 3000, y: 0 }, 1500, 0, 44), false);
+  assert.strictEqual(passedBy({ px: 0, py: 0, x: 60, y: 0 }, 30, 40, 44), true);
+  ar.room.destroy();
+});
+
+test('item boxes on the layered arenas sit on the floor under them (none out of reach)', () => {
+  const K = require('../public/js/shared/kart-core');
+  for (const m of K.mapList().map((i) => K.getMap(i.id, i.type)).filter((m) => m.layered)) {
+    for (const b of m.itemBoxes) {
+      const f = m.floorAt(b.x, b.y, b.z + 40, 0);
+      assert.ok(Number.isFinite(f) && Math.abs(f - b.z) < 8, `${m.id} box at ${Math.round(b.x)},${Math.round(b.y)}: z ${b.z} vs floor ${f}`);
+    }
+  }
+});

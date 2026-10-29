@@ -838,7 +838,13 @@
       return Number.isFinite(z) ? z : (liquid ? liquid.z : deathZ);
     };
 
-    const itemBoxes = (def.boxes || []).map((b) => ({ x: b.x, y: b.y, z: b.z || 0 }));
+    // Item boxes sit on the floor under them (a box written a little below a green or deck would
+    // otherwise float out of reach, never picked up).
+    const itemBoxes = (def.boxes || []).map((b) => {
+      const z = b.z || 0;
+      const f = floorAt(b.x, b.y, z + 40, 0);
+      return { x: b.x, y: b.y, z: Number.isFinite(f) && Math.abs(f - z) < 60 ? f : z };
+    });
     const spawns = (def.spawns || []).map((s) => ({ x: s.x, y: s.y, z: s.z || 0, angle: s.angle || 0 }));
     const boostPads = (def.boosts || []).map((b) => ({ x: b.x, y: b.y, z: b.z || 0, angle: b.angle || 0 }));
 
