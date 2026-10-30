@@ -58,6 +58,10 @@ window.Games.kart = {
             </div>
           </div>
           <div class="kart-intro kart-panel" data-intro></div>
+          <div class="kart-wrongway hidden" data-wrongway role="alert">
+            <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M30 38V20a8 8 0 0 0-16 0v4" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><path d="M6 20l8 9 8-9" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <div><b>WRONG WAY</b><span>Turn around</span></div>
+          </div>
           <div class="kart-board kart-panel" data-board></div>
           <div class="kart-feed" data-feed></div>
           <div class="kart-callout" data-callout></div>
@@ -131,6 +135,8 @@ window.Games.kart = {
     const colorOf = (meta) => (teamMode() ? api.teamById(meta?.team)?.color : meta?.color) || '#fff';
     const hud = KartHud.create({ stage, escape: api.escapeHtml, colorOf, metaOf: (idx) => kartsByIdx.get(idx), touch });
     let death = null; // { at, by, kind, watching } while my kart is wrecked
+    let wrongT = 0; // races: seconds spent driving against the track (the sign shows after most of one)
+    let wrongShown = false;
     let wasWrecked = false;
     let camMode = '';
     let orbitAngle = 0;
@@ -919,6 +925,17 @@ window.Games.kart = {
         Sfx.engine(Math.abs(local.speed) / K.PHYS.maxSpeed, !!(myRow[9] & (F.boost | F.star)), !!(myRow[9] & F.drift), local.falling ? 0 : local.surface, !!input.up);
       } else {
         Sfx.engineStop();
+      }
+      // Wrong way (races): moving against the track for most of a second puts up a big turn-around
+      // sign with a warning beep; it goes as soon as you're heading the right way again. Spins and
+      // jumps don't count, and on a reversed race the track's own direction is reversed too.
+      if (map && map.type === 'race' && local && latest?.phase === 'racing' && !(myRow && myRow[9] & F.dead)) {
+        wrongT = K.wrongWay(map, local) ? wrongT + dt : Math.max(0, wrongT - dt * 3);
+      } else wrongT = 0;
+      if ((wrongT > 0.8) !== wrongShown) {
+        wrongShown = wrongT > 0.8;
+        q('[data-wrongway]').classList.toggle('hidden', !wrongShown);
+        if (wrongShown) Sfx.cometWarn?.();
       }
 
       const wrecked = !!(myRow && myRow[9] & F.dead);

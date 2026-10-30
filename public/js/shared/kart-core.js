@@ -1590,6 +1590,19 @@
     return kart;
   }
 
+  // ---------- wrong way ----------
+  // How a kart is moving relative to the race track at its spot: +1 straight along the track's
+  // direction (reversed races included), -1 straight back against it, 0 across it or stopped.
+  function trackAlong(map, kart) {
+    if (!map || map.type !== 'race') return 0;
+    const at = map.nearestIndex(kart.x, kart.y, kart.trackIndex);
+    const tg = map.tangents[at.index];
+    const dir = Number.isFinite(kart.heading) ? kart.heading : kart.angle;
+    return (Math.cos(dir) * tg[0] + Math.sin(dir) * tg[1]) * Math.sign(kart.speed || 0);
+  }
+  // Going the wrong way: moving back against the track at speed, on the ground, not spinning.
+  const wrongWay = (map, kart) => trackAlong(map, kart) < -0.3 && Math.abs(kart.speed) > 90 && !(kart.air > 0) && !(kart.spin > 0) && !kart.falling;
+
   // ---------- netcode ----------
   // A player's own kart as the server sends it back to them: everything stepKart carries from one
   // step to the next, plus the item timers that change how it drives. Their screen replays its
@@ -1624,7 +1637,7 @@
 
   return {
     KART_RADIUS, WALL_PAD, CURB, RUNOFF, RAIL, DECK, SPACING, CHARACTERS, PHYS, AIM, aimPick, ITEMS, ITEM_FX, HAZARDS, MAPS, DEFAULT_MAP, Layers, Weekly,
-    getMap, mapList, mapInfo, mapsBuilt, weeklyMap, setWeeklyCheck, weeklyTries, stepKart, stepNet, NET_FIELDS, packKart, unpackKart, driftLevel, itemSpeed, bombLead, respawnOnTrack, makeRaceMap, timeToLand,
+    getMap, mapList, mapInfo, mapsBuilt, weeklyMap, setWeeklyCheck, weeklyTries, stepKart, stepNet, trackAlong, wrongWay, NET_FIELDS, packKart, unpackKart, driftLevel, itemSpeed, bombLead, respawnOnTrack, makeRaceMap, timeToLand,
     noise: { vnoise, fbm, smoothstep, polyDist },
   };
 });

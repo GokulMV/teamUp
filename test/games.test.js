@@ -2764,3 +2764,22 @@ test('sound: no two Sfx entries share a name (a later one silently replaces the 
   assert.deepStrictEqual(dupes, [], `duplicate Sfx entries: ${dupes}`);
   assert.ok(keys.includes('engine') && keys.includes('engineStop'), 'the engine entries are there');
 });
+
+test('wrong way: driving back against the race track is caught, the right way, reversing and spins are not', () => {
+  const K = require('../public/js/shared/kart-core');
+  for (const reverse of [false, true]) {
+    const map = K.getMap('grandprix', 'race', { reverse });
+    const i = 120;
+    const [x, y] = map.centerline[i];
+    const a = Math.atan2(map.tangents[i][1], map.tangents[i][0]);
+    const kart = (o) => ({ x, y, trackIndex: i, angle: a, heading: a, speed: 400, air: 0, spin: 0, ...o });
+    const label = reverse ? 'reversed race' : 'race';
+    assert.strictEqual(K.wrongWay(map, kart()), false, `${label}: the right way`);
+    assert.strictEqual(K.wrongWay(map, kart({ angle: a + Math.PI, heading: a + Math.PI })), true, `${label}: facing back and driving`);
+    assert.strictEqual(K.wrongWay(map, kart({ speed: -200 })), true, `${label}: reversing back down the track`);
+    assert.strictEqual(K.wrongWay(map, kart({ angle: a + Math.PI, heading: a + Math.PI, speed: 40 })), false, `${label}: barely moving`);
+    assert.strictEqual(K.wrongWay(map, kart({ angle: a + Math.PI, heading: a + Math.PI, spin: 0.5 })), false, `${label}: spun out`);
+    assert.strictEqual(K.wrongWay(map, kart({ angle: a + Math.PI / 2, heading: a + Math.PI / 2 })), false, `${label}: across the track`);
+  }
+  assert.strictEqual(K.wrongWay(K.getMap('harbour', 'arena'), { x: 0, y: 0, angle: 0, speed: 400 }), false, 'never in an arena');
+});
