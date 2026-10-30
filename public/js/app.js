@@ -162,6 +162,13 @@
         ],
       },
       { key: 'bcCourses', type: 'seg', label: 'Courses', hint: 'Per match', def: 3, options: [[1, '1'], [3, '3'], [5, '5']] },
+      {
+        key: 'bcDifficulty', type: 'cards', label: 'Difficulty', block: true, def: 'normal', options: [
+          ['easy', 'feather', 'Easy', 'Gentler obstacles, no killer sections'],
+          ['normal', 'chain', 'Normal', 'The classic course'],
+          ['hard', 'flame', 'Hard', 'Faster hammers, stronger wind, narrower planks'],
+        ],
+      },
       { key: 'bcRope', type: 'seg', label: 'Rope length', def: 'normal', options: [['short', 'Short'], ['normal', 'Normal'], ['long', 'Long']] },
       { key: 'bcSabotage', type: 'toggle', label: 'Sabotage', hint: 'First team to a checkpoint drops a trap on the teams behind', def: true },
     ],

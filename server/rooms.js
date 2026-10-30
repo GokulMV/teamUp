@@ -73,6 +73,7 @@ const DEFAULT_SETTINGS = {
   bcCourses: 3, // 1 | 3 | 5 courses per match
   bcLength: 'normal', // short | normal | long (4 / 6 / 8 obstacle sections)
   bcRope: 'normal', // short | normal | long
+  bcDifficulty: 'normal', // easy | normal | hard: which obstacles, and how mean they are
   bcSabotage: true, // first team to a checkpoint drops a trap on the teams behind
   // Control Room (Spaceteam-style)
   crDifficulty: 'pilot', // cadet | pilot | ace
@@ -509,6 +510,7 @@ class Room {
         }
         if (BC_SIZES.includes(data?.bcLength)) s.bcLength = data.bcLength;
         if (BC_SIZES.includes(data?.bcRope)) s.bcRope = data.bcRope;
+        if (['easy', 'normal', 'hard'].includes(data?.bcDifficulty)) s.bcDifficulty = data.bcDifficulty;
         if (typeof data?.bcSabotage === 'boolean') s.bcSabotage = data.bcSabotage;
         // Control Room options: invalid values are ignored.
         if (CR_DIFFICULTIES.includes(data?.crDifficulty)) s.crDifficulty = data.crDifficulty;

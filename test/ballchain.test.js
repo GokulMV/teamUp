@@ -234,11 +234,12 @@ test('ball & chain: a full-team sync on a ramp launches the ball over the gap', 
   const C = course('ramp');
   const sec = section(C, 'ramp');
   const ramp = C.ramps[0];
+  const plank = C.floors.find((f) => f.kind === 'plank' && f.x0 > 0);
   const run = (heavers) => {
     const team = makeTeam(C, 2);
     place(team.ball, 0, ramp.y1 - 8);
-    place(team.players[0], -60, sec.y0 + 565);
-    place(team.players[1], 60, sec.y0 + 565);
+    place(team.players[0], -60, plank.y1 + 15);
+    place(team.players[1], 60, plank.y1 + 15);
     team.players.forEach((p) => { p.input = { x: 0, y: 1, brace: false }; });
     heavers.forEach((i, k) => B.heave(team, C, team.players[i], 5 + k * 0.1));
     const launched = team.ball.air;
@@ -251,14 +252,60 @@ test('ball & chain: a full-team sync on a ramp launches the ball over the gap', 
   assert.strictEqual(sync.launched, true, 'the whole team in sync launches');
   assert.ok(sync.events.some((e) => e.type === 'land'), 'it lands');
   assert.ok(!sync.events.some((e) => e.type === 'fall' && e.ball), 'and does not fall in the gap');
-  assert.ok(sync.team.ball.y > sec.y0 + 550, 'the ball is across the gap');
+  assert.ok(sync.team.ball.y > plank.y1, 'the ball is across the gap');
   // The ball can't roll over the player-only planks either.
   const team = makeTeam(C, 2);
-  place(team.ball, 234, sec.y0 + 400);
-  place(team.players[0], 200, sec.y0 + 300);
-  place(team.players[1], 240, sec.y0 + 300);
+  const px = (plank.x0 + plank.x1) / 2;
+  place(team.ball, px, sec.y0 + 400);
+  place(team.players[0], px - 30, sec.y0 + 300);
+  place(team.players[1], px + 10, sec.y0 + 300);
   const { events } = simulate(team, C, 0.2);
   assert.ok(events.some((e) => e.type === 'fall' && e.ball));
+});
+
+test('ball & chain: Sync Jump works with every rope and difficulty: walk out on the planks pulling, heave together, clear the gap', () => {
+  for (const rope of ['short', 'normal', 'long']) {
+    for (const difficulty of ['easy', 'normal', 'hard']) {
+      const C = B.buildCourse({ name: 'T', theme: 'candy', rope, difficulty, sections: ['start', 'ramp', 'goal'].map((type) => ({ type, seed: 7, mirror: false })) });
+      const ramp = C.ramps[0];
+      const plank = C.floors.find((f) => f.kind === 'plank' && f.x0 > 0);
+      const px = (plank.x0 + plank.x1) / 2;
+      const team = makeTeam(C, 2, B.ROPES[rope]);
+      place(team.ball, 0, ramp.y1 - 30);
+      place(team.players[0], -px, ramp.y1 + 10);
+      place(team.players[1], px, ramp.y1 + 10);
+      team.players.forEach((p) => { p.input = { x: 0, y: 1, brace: false }; });
+      let launched = false;
+      let far = 0;
+      const { events } = simulate(team, C, 6, 0, (t) => {
+        for (const p of team.players) far = Math.max(far, Math.hypot(p.x - team.ball.x, p.y - team.ball.y));
+        if (!launched && team.ball.vy > 45 && team.ball.y >= ramp.y0 && team.ball.y <= ramp.y1) {
+          B.heave(team, C, team.players[0], t);
+          launched = !!B.heave(team, C, team.players[1], t + 0.05)?.launch;
+        }
+      });
+      const label = `${rope} rope, ${difficulty}`;
+      assert.ok(far < B.ROPES[rope].max, `${label}: the planks are within the rope's reach (${Math.round(far)})`);
+      assert.ok(launched, `${label}: the sync launches it`);
+      assert.deepStrictEqual(events.filter((e) => e.type === 'fall').map((e) => (e.ball ? 'ball' : `p${e.idx}`)), [], `${label}: nobody falls`);
+      assert.ok(team.ball.y > plank.y1 + B.PHYS.ballR, `${label}: across the gap`);
+    }
+  }
+});
+
+test('ball & chain: difficulty picks the sections and how mean they are', () => {
+  const plan = (difficulty) => B.planMatch(42, 5, 'long', 4, { difficulty });
+  const easy = plan('easy').flatMap((c) => c.sections.map((s) => s.type)).filter((t) => B.SECTIONS[t].diff);
+  assert.ok(easy.every((t) => B.SECTIONS[t].diff <= 2), `easy has no hardest sections: ${easy}`);
+  assert.strictEqual(plan('hard')[0].difficulty, 'hard', 'the difficulty travels with the course to the clients');
+  const hard = plan('hard').flatMap((c) => c.sections.map((s) => s.type)).filter((t) => B.SECTIONS[t].diff >= 3).length;
+  const normal = plan('normal').flatMap((c) => c.sections.map((s) => s.type)).filter((t) => B.SECTIONS[t].diff >= 3).length;
+  assert.ok(hard > normal, `hard draws more of the hardest sections (${hard} vs ${normal})`);
+  const built = (difficulty, type) => B.buildCourse({ name: 'T', theme: 'candy', difficulty, sections: ['start', type, 'goal'].map((t) => ({ type: t, seed: 7, mirror: false })) });
+  const hammers = (d) => built(d, 'hammers').hammers;
+  assert.ok(hammers('hard').length > hammers('easy').length && hammers('hard')[0].period < hammers('easy')[0].period, 'more and faster hammers on hard');
+  const wind = (d) => built(d, 'fans').zones.find((z) => z.type === 'wind').ax;
+  assert.ok(Math.abs(wind('hard')) > Math.abs(wind('normal')) && Math.abs(wind('normal')) > Math.abs(wind('easy')), 'stronger wind the harder it is');
 });
 
 test('ball & chain: bracing turns a player into an anchor that holds the ball on a slope', () => {

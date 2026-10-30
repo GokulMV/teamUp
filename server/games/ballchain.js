@@ -61,6 +61,7 @@ class BallChain {
     this.courseCount = COURSE_OPTIONS.includes(s.bcCourses) ? s.bcCourses : 3;
     this.length = LENGTH_OPTIONS.includes(s.bcLength) ? s.bcLength : 'normal';
     this.ropeKind = ROPE_OPTIONS.includes(s.bcRope) ? s.bcRope : 'normal';
+    this.difficulty = B.DIFFICULTIES[s.bcDifficulty] ? s.bcDifficulty : 'normal';
     this.sabotage = s.bcSabotage !== false;
     this.teams = [];
     this.players = []; // idx -> { id, name, color, avatar, team }
@@ -110,7 +111,7 @@ class BallChain {
     this.formTeams();
     const minTeam = Math.min(...this.teams.map((t) => t.memberIds.length));
     this.seed = Math.floor(Math.random() * 1e9);
-    this.plan = B.planMatch(this.seed, this.courseCount, this.length, minTeam);
+    this.plan = B.planMatch(this.seed, this.courseCount, this.length, minTeam, { rope: this.ropeKind, difficulty: this.difficulty });
     this.beginCourse(0);
     this.interval = fixedLoop(TICK_HZ, () => this.tick());
   }

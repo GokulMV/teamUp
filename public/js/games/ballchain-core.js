@@ -42,6 +42,13 @@
     long: { rest: 195, max: 315 },
   };
   const LENGTHS = { short: 4, normal: 6, long: 8 }; // obstacle sections per course
+  // Difficulty: which sections a course draws from (their diff, 1..3) and how mean each one is
+  // (builders read b.d: 0 easy, 1 normal, 2 hard, and pick values with b.pick(easy, normal, hard)).
+  const DIFFICULTIES = {
+    easy: { d: 0, maxDiff: 2, hardBias: 0 },
+    normal: { d: 1, maxDiff: 3, hardBias: 0 },
+    hard: { d: 2, maxDiff: 3, hardBias: 1.4 },
+  };
   const COURSE_TIME = { short: 150, normal: 210, long: 270 }; // seconds before a course times out
   const LANE_SPACING = 1150;
   const HALF = 280; // half the usual lane width
@@ -88,9 +95,10 @@
         b.wall(-HALF - 16, -HALF, 0, 940, 'rail'); b.wall(HALF, HALF + 16, 0, 940, 'rail');
         // Fences of pillars: players slip between them, the ball only fits through the one big gap.
         const left = r() < 0.5;
+        const rad = b.pick(24, 28, 33);
         [170, 340, 510, 680, 850].forEach((y, i) => {
           const gap = (i % 2 === 0) === left ? -150 : 150;
-          for (const x of [-250, -150, -50, 50, 150, 250]) if (x !== gap) b.post(x, y, 28, 'pillar');
+          for (const x of [-250, -150, -50, 50, 150, 250]) if (x !== gap) b.post(x, y, rad, 'pillar');
         });
       },
     },
@@ -100,7 +108,7 @@
       build(b) {
         b.floor(-HALF, HALF, 0, 740, 'pad');
         b.wall(-HALF, -80, 370, 402, 'wall'); b.wall(80, HALF, 370, 402, 'wall');
-        const g = b.gate(-80, 80, 370, 402, { all: false, hold: 0.5 });
+        const g = b.gate(-80, 80, 370, 402, { all: false, hold: b.pick(1.2, 0.5, 0.25) });
         b.plate(-200, 250, 44, g);
         b.plate(200, 530, 44, g);
       },
@@ -111,7 +119,7 @@
       build(b) {
         b.floor(-HALF, HALF, 0, 760, 'pad');
         b.wall(-HALF, -80, 430, 462, 'wall'); b.wall(80, HALF, 430, 462, 'wall');
-        const g = b.gate(-80, 80, 430, 462, { all: true, hold: 2.6 });
+        const g = b.gate(-80, 80, 430, 462, { all: true, hold: b.pick(4, 2.6, 1.7) });
         b.plate(-205, 300, 44, g);
         b.plate(205, 300, 44, g);
       },
@@ -122,9 +130,11 @@
       build(b, r) {
         b.floor(-HALF, HALF, 0, 180, 'pad');
         b.floor(-HALF, HALF, 620, 800, 'pad');
-        const sway = r() < 0.6;
-        b.floor(-215, -125, 180, 620, 'bridge', { sway: sway ? { amp: 36, period: 5, phase: 0 } : null });
-        b.floor(125, 215, 180, 620, 'bridge', { sway: sway ? { amp: 36, period: 5, phase: Math.PI } : null });
+        const sway = b.pick(false, r() < 0.6, true);
+        const amp = b.pick(0, 36, 50);
+        const w = b.pick(55, 45, 36); // half the plank's width
+        b.floor(-170 - w, -170 + w, 180, 620, 'bridge', { sway: sway ? { amp, period: b.pick(5, 5, 4), phase: 0 } : null });
+        b.floor(170 - w, 170 + w, 180, 620, 'bridge', { sway: sway ? { amp, period: b.pick(5, 5, 4), phase: Math.PI } : null });
       },
     },
     tilt: {
@@ -134,8 +144,8 @@
         b.floor(-HALF, HALF, 0, 780, 'slope');
         b.wall(-HALF - 16, -HALF, 0, 780, 'rail');
         // Flat for the first stretch: a team put back at the checkpoint gets its footing first.
-        b.zone(-HALF, HALF, 160, 710, { type: 'slope', gx: 340 });
-        for (const y of [220, 420, 620]) b.post(-170, y, 26, 'pillar');
+        b.zone(-HALF, HALF, 160, 710, { type: 'slope', gx: b.pick(250, 340, 420) });
+        for (const y of b.pick([220, 320, 420, 520, 620], [220, 420, 620], [320, 620])) b.post(-170, y, 26, 'pillar');
       },
     },
     downhill: {
@@ -149,7 +159,7 @@
         b.floor(-240, 30, 480, 600, 'slope'); b.floor(190, 240, 480, 600, 'slope');
         b.floor(-240, 240, 600, 840, 'pad');
         b.wall(-256, -240, 0, 840, 'rail'); b.wall(240, 256, 0, 840, 'rail');
-        b.zone(-240, 240, 60, 620, { type: 'slope', gy: 330 });
+        b.zone(-240, 240, 60, 620, { type: 'slope', gy: b.pick(240, 330, 400) });
         b.hole(-190, -30, 260, 380); b.hole(30, 190, 480, 600);
       },
     },
@@ -158,9 +168,10 @@
       hint: 'Belts drag everything toward the edge. Pull upstream, brace if it slips.',
       build(b) {
         b.floor(-HALF, HALF, 0, 820, 'pad');
-        b.zone(-HALF, HALF, 130, 290, { type: 'belt', vx: 170 });
-        b.zone(-HALF, HALF, 370, 530, { type: 'belt', vx: -170 });
-        b.zone(-HALF, HALF, 610, 720, { type: 'belt', vy: -150 });
+        const v = b.pick(120, 170, 230);
+        b.zone(-HALF, HALF, 130, 290, { type: 'belt', vx: v });
+        b.zone(-HALF, HALF, 370, 530, { type: 'belt', vx: -v });
+        b.zone(-HALF, HALF, 610, 720, { type: 'belt', vy: -v * 0.9 });
         b.post(-215, 210, 24, 'pillar');
         b.post(215, 450, 24, 'pillar');
       },
@@ -171,8 +182,9 @@
       build(b) {
         b.floor(-HALF, HALF, 0, 840, 'pad');
         b.wall(-HALF - 16, -HALF, 0, 840, 'rail');
-        const z1 = b.zone(-HALF, HALF, 150, 360, { type: 'wind', ax: 470, on: 2.4, off: 2.2, phase: 0 });
-        const z2 = b.zone(-HALF, HALF, 470, 680, { type: 'wind', ax: 470, on: 2.4, off: 2.2, phase: 2.3 });
+        const wind = { type: 'wind', ax: b.pick(340, 470, 600), on: b.pick(1.8, 2.4, 2.9), off: b.pick(2.8, 2.2, 1.6) };
+        const z1 = b.zone(-HALF, HALF, 150, 360, { ...wind, phase: 0 });
+        const z2 = b.zone(-HALF, HALF, 470, 680, { ...wind, phase: 2.3 });
         b.fan(-HALF - 40, 255, z1); b.fan(-HALF - 40, 575, z2);
       },
     },
@@ -183,7 +195,7 @@
         b.floor(-160, 160, 0, 200, 'pad');
         b.disc(0, 460, 300, 'disc');
         b.floor(-160, 160, 720, 920, 'pad');
-        b.sweeper(0, 460, { len: 292, w: 20, speed: r() < 0.5 ? 1 : -1, arms: 2, phase: r() * TAU });
+        b.sweeper(0, 460, { len: 292, w: 20, speed: (r() < 0.5 ? 1 : -1) * b.pick(0.7, 1, 1.3), arms: b.pick(2, 2, 3), phase: r() * TAU });
       },
     },
     hammers: {
@@ -191,7 +203,7 @@
       hint: 'Padded hammers swing across a narrow path. Wait for the gap.',
       build(b) {
         b.floor(-200, 200, 0, 880, 'pad');
-        [200, 440, 680].forEach((y, i) => b.hammer(0, y, { amp: 150, period: 3.2, phase: i * 2.1, r: 48 }));
+        b.pick([240, 640], [200, 440, 680], [170, 350, 530, 710]).forEach((y, i) => b.hammer(0, y, { amp: b.pick(130, 150, 165), period: b.pick(4, 3.2, 2.6), phase: i * 2.1, r: b.pick(44, 48, 52) }));
       },
     },
     bumpers: {
@@ -209,20 +221,29 @@
       hint: 'Ice slides, mud sticks. Heave together to get through the mud.',
       build(b) {
         b.floor(-HALF, HALF, 0, 840, 'pad');
-        b.zone(-HALF, HALF, 140, 400, { type: 'ice' });
-        b.zone(-200, 200, 480, 760, { type: 'mud' });
+        b.zone(-HALF, HALF, 140, b.pick(320, 400, 440), { type: 'ice' });
+        b.zone(b.pick(-150, -200, -HALF), b.pick(150, 200, HALF), 480, 760, { type: 'mud' });
       },
     },
     ramp: {
       name: 'Sync Jump', icon: '🚀', len: 880, diff: 3, tags: ['coord'],
       hint: 'Cross the planks, then HEAVE together with the ball on the ramp to launch it.',
+      // Laid out for the rope: the planks are always within a rope's reach of the ball on the ramp
+      // (so pulling from them drags it forward, not sideways), and the gap is what a sync heave clears.
       build(b) {
-        b.floor(-HALF, HALF, 0, 340, 'pad');
-        b.floor(-HALF, HALF, 550, 880, 'pad');
-        b.floor(-252, -216, 340, 550, 'plank', { ball: false });
-        b.floor(216, 252, 340, 550, 'plank', { ball: false });
-        b.wall(-HALF - 16, -HALF, 0, 340, 'rail'); b.wall(HALF, HALF + 16, 0, 340, 'rail');
-        b.ramp(-120, 120, 220, 340);
+        const R = b.rope;
+        const gap = Math.round(clamp(R.rest * b.pick(0.95, 1.1, 1.25), 120, 230));
+        const w = b.pick(34, 27, 21); // half a plank's width
+        const px = Math.round(clamp(R.rest * 0.62, PHYS.ballR + w + 8, 200)); // planks' middles
+        const top = 340;
+        const len = top + gap + 330;
+        b.floor(-HALF, HALF, 0, top, 'pad');
+        b.floor(-HALF, HALF, top + gap, len, 'pad');
+        b.floor(-px - w, -px + w, top, top + gap, 'plank', { ball: false });
+        b.floor(px - w, px + w, top, top + gap, 'plank', { ball: false });
+        b.wall(-HALF - 16, -HALF, 0, top, 'rail'); b.wall(HALF, HALF + 16, 0, top, 'rail');
+        b.ramp(-Math.min(120, px - w - 4), Math.min(120, px - w - 4), 220, top, { land: top + gap + PHYS.ballR + 40 });
+        return len;
       },
     },
     goal: {
@@ -247,10 +268,14 @@
   // ---------- course planning ----------
   // A match is a list of course definitions ({ name, theme, sections: [{ type, seed, mirror }] }),
   // small enough to send to clients, which rebuild the geometry with buildCourse().
-  function planMatch(seed, count, length, minTeam = 2) {
+  // opts: { rope: ROPES key, difficulty: DIFFICULTIES key }, carried in every course definition.
+  function planMatch(seed, count, length, minTeam = 2, opts = {}) {
     const r = rng(seed);
     const n = LENGTHS[length] || LENGTHS.normal;
-    const pool = OBSTACLES.filter((t) => !SECTIONS[t].minTeam || minTeam >= SECTIONS[t].minTeam);
+    const rope = ROPES[opts.rope] ? opts.rope : 'normal';
+    const difficulty = DIFFICULTIES[opts.difficulty] ? opts.difficulty : 'normal';
+    const D = DIFFICULTIES[difficulty];
+    const pool = OBSTACLES.filter((t) => (!SECTIONS[t].minTeam || minTeam >= SECTIONS[t].minTeam) && SECTIONS[t].diff <= D.maxDiff);
     const coord = pool.filter((t) => SECTIONS[t].tags.includes('coord'));
     let deck = [];
     const themeStart = Math.floor(r() * THEMES.length);
@@ -260,12 +285,13 @@
       const picked = [];
       let guard = 0;
       while (picked.length < Math.min(n, pool.length) && guard++ < 200) {
-        if (!deck.length) deck = shuffle(pool, r);
+        // Hard leans on the hardest sections: they come up more often in the deck.
+        if (!deck.length) deck = shuffle(D.hardBias ? [...pool, ...pool.filter((t) => SECTIONS[t].diff >= 3)] : pool, r);
         const t = deck.pop();
         if (!picked.includes(t)) picked.push(t);
       }
       // Every course needs at least one section where the team has to split up and coordinate.
-      if (!picked.some((t) => coord.includes(t))) {
+      if (!picked.some((t) => coord.includes(t)) && coord.length) {
         const options = coord.filter((t) => !picked.includes(t));
         picked[Math.floor(r() * picked.length)] = options[Math.floor(r() * options.length)];
       }
@@ -274,7 +300,7 @@
       const theme = THEMES[(themeStart + c) % THEMES.length];
       courses.push({
         name: names[theme][Math.floor(c / THEMES.length) % names[theme].length],
-        theme,
+        theme, rope, difficulty,
         sections: ['start', ...order, 'goal'].map((type) => ({ type, seed: Math.floor(r() * 1e9), mirror: r() < 0.5 })),
       });
     }
@@ -288,6 +314,7 @@
       fans: [], ramps: [], holes: [], checkpoints: [], sections: [], goal: null,
     };
     let y0 = 0;
+    const dd = (DIFFICULTIES[def.difficulty] || DIFFICULTIES.normal).d;
     def.sections.forEach((sd, si) => {
       const S = SECTIONS[sd.type];
       if (!S) throw new Error(`Unknown section ${sd.type}`);
@@ -318,14 +345,15 @@
         },
         hammer(x, y, o) { C.hammers.push({ x: X(x), y: y0 + y, amp: o.amp * m, period: o.period, phase: o.phase, r: o.r }); },
         fan(x, y, zone) { C.fans.push({ x: X(x), y: y0 + y, zone, dir: m }); },
-        ramp(xa, xb, ya, yb) { const [x0, x1] = rx(xa, xb); C.ramps.push({ x0, x1, y0: y0 + ya, y1: y0 + yb }); },
+        ramp(xa, xb, ya, yb, o = {}) { const [x0, x1] = rx(xa, xb); C.ramps.push({ x0, x1, y0: y0 + ya, y1: y0 + yb, land: o.land ? y0 + o.land : y0 + yb + 300 }); },
+        d: dd, pick: (e, n, h) => [e, n, h][dd], rope: ROPES[def.rope] || ROPES.normal,
         goal(x, y, rad) { C.goal = { x: X(x), y: y0 + y, r: rad }; },
       };
-      S.build(b, rng(sd.seed || 1));
-      C.sections.push({ type: sd.type, name: S.name, icon: S.icon, hint: S.hint || '', y0, y1: y0 + S.len, mirror: m === -1 });
+      const len = S.build(b, rng(sd.seed || 1)) || S.len; // a builder can size its section (Sync Jump)
+      C.sections.push({ type: sd.type, name: S.name, icon: S.icon, hint: S.hint || '', y0, y1: y0 + len, mirror: m === -1 });
       // A checkpoint at the start of every obstacle section: falls send the ball back here.
       if (sd.type !== 'goal') C.checkpoints.push({ y: y0, spawnX: 0, spawnY: y0 + (si === 0 ? 210 : 95), sec: si });
-      y0 += S.len;
+      y0 += len;
     });
     C.len = y0;
     return C;
@@ -1030,7 +1058,10 @@
       const extra = k - out.need;
       b.air = true;
       b.vz = 430 + 55 * extra;
-      b.vy = Math.max(b.vy, 270 + 45 * extra);
+      // Far enough to land past the gap wherever on the ramp it took off (the flight lasts 2vz/g).
+      const ramp = C.ramps.find((r) => b.x >= r.x0 && b.x <= r.x1 && b.y >= r.y0 && b.y <= r.y1);
+      const need = ramp ? (ramp.land - b.y) / ((2 * b.vz) / PHYS.gravity) : 270;
+      b.vy = Math.max(b.vy, need, 270) + 45 * extra;
       b.vx *= 0.4;
       sync.launched = true;
       out.launch = true;
@@ -1062,7 +1093,7 @@
   }
 
   return {
-    PHYS, ROPES, LENGTHS, COURSE_TIME, LANE_SPACING, SECTIONS, OBSTACLES, THEMES,
+    PHYS, ROPES, LENGTHS, DIFFICULTIES, COURSE_TIME, LANE_SPACING, SECTIONS, OBSTACLES, THEMES,
     rng, shuffle, planMatch, buildCourse,
     floorOffset, windOn, windIn, armAngle, hammerPos, floorAt, surfaceAt,
     makeTeam, spawnTeam, placeNearBall, activePlayers, baseMass, ballMass, ropeFor, crewCheck, isHelping,
