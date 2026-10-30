@@ -143,38 +143,55 @@
     src.stop(t + dur + 0.05);
   }
 
-  // Kart engine: a real recording (Kenney's CC0 motorbike, a single cylinder like a kart's),
-  // sped up and slowed down with the revs and muffled more when coasting. No synthesis: every
-  // synthesized engine sounded like a synthesizer. ENGINES can take more recordings later
-  // (sample: a KART key, baseHz: the firing rate in the recording, idle/top: the range to play it at).
+  // Kart engine: real recordings (Kenney's CC0 single-cylinder bike and car engines, each firing
+  // about 28 times a second), never synthesized. Played much faster they gargle, and at their own
+  // speed they plod like a tractor, so each is layered with a copy of itself half a firing later:
+  // twice the firing rate with each firing still sounding real. A kart then idles around 65
+  // firings a second and screams up to about 135 with the recording sped up no more than 2.4x.
+  // layers: [recording (a KART key), gain, start offsets in recording seconds]; baseHz: firings a
+  // second at playback rate 1 with the copies; idle/top: the range to play at.
+  const HALF = 1 / (2 * 28.2);
   const ENGINES = {
-    moto: { name: 'Single-cylinder', sample: 'moto', baseHz: 28, idle: 30, top: 96, lp: [1300, 2000, 800], pops: true },
+    kart: { name: 'Kart', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 1, [0, HALF]]], lp: [3400, 500, 300], pops: true },
+    blend: { name: 'Kart, heavier', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 0.8, [0, HALF]], ['car', 0.45, [0.37, 0.37 + HALF]]], lp: [3200, 600, 400], pops: true },
+    single: { name: 'Single cylinder', baseHz: 28.2, idle: 56, top: 104, layers: [['moto', 1, [0]]], lp: [3200, 600, 400], pops: true },
   };
   const ENGINE_IDS = Object.keys(ENGINES);
-  let engineId = 'moto';
+  let engineId = 'kart';
   try { const saved = localStorage.getItem('teamup-kart-engine'); if (ENGINES[saved]) engineId = saved; } catch { /* ignore */ }
   const enginePreset = () => ENGINES[engineId];
+  const engineSamples = (P) => [...new Set(P.layers.map((l) => l[0]))];
   // One engine voice of preset P into `dest` on audio context `ac`, starting at f firings a second.
-  function kartVoice(ac, dest, f, P, recording) {
+  // recordings: { KART key: AudioBuffer }.
+  function kartVoice(ac, dest, f, P, recordings) {
     const t = ac.currentTime;
     const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = P.lp[0]; lp.Q.value = 0.5;
-    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 40;
+    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 60;
     const out = ac.createGain(); out.gain.value = 0;
-    const src = ac.createBufferSource();
-    src.buffer = recording;
-    src.loop = true;
-    src.playbackRate.setValueAtTime(f / P.baseHz, t);
-    src.connect(hp); hp.connect(lp); lp.connect(out); out.connect(dest);
-    src.start(t, Math.random() * 2);
+    hp.connect(lp); lp.connect(out); out.connect(dest);
+    const srcs = [];
+    const start = Math.random() * 2;
+    for (const [name, gain, offsets] of P.layers) {
+      for (const off of offsets) {
+        const src = ac.createBufferSource();
+        src.buffer = recordings[name];
+        src.loop = true;
+        src.playbackRate.setValueAtTime(f / P.baseHz, t);
+        const g = ac.createGain(); g.gain.value = gain;
+        src.connect(g); g.connect(hp);
+        src.start(t, (start + off) % recordings[name].duration);
+        srcs.push(src);
+      }
+    }
     const rev = (fHz) => Math.max(0, Math.min(1.2, (fHz - P.idle) / (P.top - P.idle)));
     return {
       out, lp,
       // f: firings a second; load: 0 coasting .. 1 full throttle; tc: how quickly it gets there.
       set(at, fHz, load, tc = 0.06) {
-        src.playbackRate.setTargetAtTime(fHz / P.baseHz, at, tc * 1.5);
+        for (const src of srcs) src.playbackRate.setTargetAtTime(fHz / P.baseHz, at, tc * 1.5);
         lp.frequency.setTargetAtTime(P.lp[0] + rev(fHz) * P.lp[1] + load * P.lp[2], at, 0.08);
       },
-      stop(at) { try { src.stop(at); } catch { /* stopped */ } },
+      stop(at) { for (const src of srcs) { try { src.stop(at); } catch { /* stopped */ } } },
     };
   }
 
@@ -200,8 +217,9 @@
     const t = ctx.currentTime;
     if (!engine) {
       const P = enginePreset();
-      if (!buf(P.sample)) { loadSample(KART[P.sample]); return; } // the recording isn't here yet
-      const v = kartVoice(ctx, engines, P.idle, P, buf(P.sample));
+      const names = engineSamples(P);
+      if (names.some((n) => !buf(n))) { names.forEach((n) => loadSample(KART[n])); return; } // not here yet
+      const v = kartVoice(ctx, engines, P.idle, P, Object.fromEntries(names.map((n) => [n, buf(n)])));
       // Starting up: the engine catches, blips and settles to idle.
       v.set(t, P.idle * 0.6, 0.3, 0.001);
       v.set(t + 0.12, P.idle + (P.top - P.idle) * 0.45, 1, 0.08);
@@ -290,7 +308,7 @@
   // Kart Battle's recorded sounds (CC0: Kenney's racing, FPS and platformer starter kits; see
   // CREDITS.md). Loaded when a kart game starts; until they arrive the synthesized versions play.
   const KART = {
-    moto: '/audio/kart/engine-moto.wav', skid: '/audio/kart/skid.wav', impact: '/audio/kart/impact.mp3',
+    moto: '/audio/kart/engine-moto.wav', car: '/audio/kart/engine-car.wav', skid: '/audio/kart/skid.wav', impact: '/audio/kart/impact.mp3',
     explode: '/audio/kart/explode.mp3', hurt: '/audio/kart/hurt.mp3', blaster: '/audio/kart/blaster.mp3',
     repeater: '/audio/kart/repeater.mp3', swap: '/audio/kart/swap.mp3', hop: '/audio/kart/hop.mp3',
     land: '/audio/kart/land.mp3', coin: '/audio/kart/coin.mp3', break: '/audio/kart/break.mp3',
@@ -324,9 +342,12 @@
   // Rival karts' engines: the nearest few, panned to where they are and fading with distance.
   // Each plays a loop of the same kart engine, rendered once at a set firing rate, sped up and
   // slowed down to follow its kart.
+  // Rivals play the main recording once (no layering: they're quieter and further away), at the
+  // same firing rate as the engine choice.
   function rivalLoop() {
-    const b = buf(enginePreset().sample);
-    if (!b) loadSample(KART[enginePreset().sample]);
+    const name = enginePreset().layers[0][0];
+    const b = buf(name);
+    if (!b) loadSample(KART[name]);
     return b;
   }
   const rivalVoices = new Map(); // id -> { src, g, p }
@@ -356,7 +377,7 @@
       }
       const near = Math.max(0, 1 - r.dist / 1100);
       const sp = Math.max(0, Math.min(1.3, r.speed));
-      v.src.playbackRate.setTargetAtTime((kartHz(sp, true, false) / enginePreset().baseHz) * v.pitch, t, 0.1);
+      v.src.playbackRate.setTargetAtTime((kartHz(sp, true, false) / 28.2) * 0.62 * v.pitch, t, 0.1); // a little lower and further off than yours
       v.lp.frequency.setTargetAtTime(1200 + sp * 2600, t, 0.1);
       v.g.gain.setTargetAtTime(0.12 * (enginePreset().vol || 1) * near * near * (0.45 + 0.55 * Math.min(1, sp)), t, 0.12);
       if (v.p) v.p.pan.setTargetAtTime(Math.max(-0.9, Math.min(0.9, r.pan)), t, 0.08);
