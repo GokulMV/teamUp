@@ -597,7 +597,7 @@ function buildBarriers(scene, map, theme, ctx, R) {
       const y = map.terrainAt(x, z, q);
       if (map.water !== null && y < map.water + 2) continue;
       if (y > R.H[i] + 35) continue; // a hillside is wall enough
-      spots.push([x, z, y, i]);
+      spots.push([x, z, y, i, side, [-R.N[i][0] * side, -R.N[i][1] * side]]);
     }
   }
   const m = new THREE.Matrix4();
@@ -621,16 +621,86 @@ function buildBarriers(scene, map, theme, ctx, R) {
     });
     scene.add(posts);
   } else {
-    const tires = new THREE.InstancedMesh(new THREE.CylinderGeometry(13, 13, 22, 12), new THREE.MeshStandardMaterial({ roughness: 0.8 }), spots.length);
-    spots.forEach(([x, z, y, i0], i) => {
-      m.makeTranslation(x, y + 10, z);
-      tires.setMatrixAt(i, m);
-      tires.setColorAt(i, new THREE.Color(theme.barrierColors[Math.floor(i0 / 2) % 2]));
-    });
-    tires.castShadow = true;
-    tires.receiveShadow = true;
-    scene.add(tires);
+    tyreWall(scene, map, theme, spots);
   }
+}
+
+// A tyre: rounded rubber with a hole through the middle (a lathed profile), lying flat.
+function tyreGeometry(r = 15, h = 10.5, hole = 7.5) {
+  const pts = [];
+  const bulge = h / 2;
+  for (let k = 0; k <= 8; k++) { // the outer tread, rounded top and bottom
+    const a = -Math.PI / 2 + (k / 8) * Math.PI;
+    pts.push(new THREE.Vector2(r - bulge + Math.cos(a) * bulge, Math.sin(a) * bulge));
+  }
+  pts.push(new THREE.Vector2(hole, bulge * 0.8), new THREE.Vector2(hole, -bulge * 0.8), pts[0].clone());
+  return new THREE.LatheGeometry(pts, 18).translate(0, h / 2, 0);
+}
+
+// Tyre walls along the run-off: stacks two high, packed shoulder to shoulder (a stack at every
+// sample and one between), painted in the theme's two colours in runs, with a dark conveyor-belt
+// strap bolted along the front of each run, as on a real kart track.
+function tyreWall(scene, map, theme, spots) {
+  const geo = tyreGeometry();
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.85, flatShading: false });
+  const stacks = [];
+  const belts = [];
+  // Consecutive spots on the same side make a run; fill between neighbours and strap the run.
+  const bySide = new Map();
+  for (const sp of spots) {
+    const key = sp[4];
+    if (!bySide.has(key)) bySide.set(key, []);
+    bySide.get(key).push(sp);
+  }
+  for (const list of bySide.values()) {
+    for (let k = 0; k < list.length; k++) {
+      const a = list[k];
+      stacks.push([a[0], a[1], a[2], a[3]]);
+      const b = list[k + 1];
+      if (!b || b[3] - a[3] !== 1) continue;
+      const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (d > 70) continue;
+      stacks.push([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2, a[3]]);
+      belts.push([a, b, d]);
+    }
+  }
+  const tyres = new THREE.InstancedMesh(geo, mat, stacks.length * 2);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const one = new THREE.Vector3(1, 1, 1);
+  const c = new THREE.Color();
+  const r = rng(12);
+  stacks.forEach(([x, z, y, i0], k) => {
+    const col = theme.barrierColors[Math.floor(i0 / 3) % 2];
+    for (let lvl = 0; lvl < 2; lvl++) {
+      q.setFromAxisAngle(UP, r() * Math.PI);
+      m.compose(new THREE.Vector3(x + (r() - 0.5) * 1.5, y - 1 + lvl * 10.5, z + (r() - 0.5) * 1.5), q, one);
+      tyres.setMatrixAt(k * 2 + lvl, m);
+      tyres.setColorAt(k * 2 + lvl, c.set(col).multiplyScalar(0.92 + r() * 0.12));
+    }
+  });
+  tyres.castShadow = true;
+  tyres.receiveShadow = true;
+  tyres.computeBoundingSphere();
+  scene.add(tyres);
+  if (!belts.length) return;
+  // The strap: a dark rubber belt across the road-side face of the stacks, with a pale stripe.
+  const strap = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 9, 2.4), new THREE.MeshStandardMaterial({ color: 0x2c3038, roughness: 0.7 }), belts.length);
+  const stripe = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1.6, 2.6), new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.5 }), belts.length);
+  const v = new THREE.Vector3();
+  belts.forEach(([a, b, d], k) => {
+    // Out from the stacks' middles toward the road (a[5]: the road-side normal at the spot).
+    const nx = a[5][0];
+    const nz = a[5][1];
+    v.set((a[0] + b[0]) / 2 + nx * 15.5, (a[2] + b[2]) / 2 + 11, (a[1] + b[1]) / 2 + nz * 15.5);
+    q.setFromAxisAngle(UP, -Math.atan2(b[1] - a[1], b[0] - a[0]));
+    m.compose(v, q, new THREE.Vector3(d + 1, 1, 1));
+    strap.setMatrixAt(k, m);
+    stripe.setMatrixAt(k, m);
+  });
+  strap.receiveShadow = true;
+  stripe.position.y = 0;
+  scene.add(strap, stripe);
 }
 
 // ---------- boost pads (lying on the slope) ----------
@@ -1151,7 +1221,7 @@ function buildLandmarks(scene, map, theme, ctx, R) {
   for (const l of map.landmarks || []) {
     const y = map.terrainAt(l.x, l.y);
     if (l.kind === 'lighthouse') addLighthouse(scene, l.x, y, l.y, ctx);
-    else if (l.kind === 'grandstand') addGrandstand(scene, map, R, l, ctx);
+    else if (l.kind === 'grandstand') addGrandstand(scene, map, R, l, ctx, theme);
     else if (l.kind === 'towers') addTowers(scene, map, R, l);
   }
   if (map.crater) {
@@ -1222,68 +1292,144 @@ function addLighthouse(scene, x, y, z, ctx) {
   scene.add(g);
 }
 
-function addGrandstand(scene, map, R, l, ctx) {
-  // A covered stand along the road at fraction l.at, on side l.side, l.len units long.
+// A covered grandstand along the road at fraction l.at, on side l.side, l.len long: white tiers
+// with coloured risers and seats, a curved canopy on cantilever trusses with a striped fascia, a
+// front rail, and a crowd (bodies and heads) bouncing on their seats. Colours from the theme.
+function addGrandstand(scene, map, R, l, ctx, theme) {
   const n = R.n;
   const i0 = Math.floor((map.reverse ? 1 - l.at : l.at) * n) % n;
   const side = (map.reverse ? -1 : 1) * (l.side || 1);
   const len = l.len || 900;
   const p = R.pts[i0];
   const t = map.tangents[i0];
-  const off = map.wallD[i0] + 30;
+  const off = map.wallD[i0] + 40;
   const cx = p[0] + R.N[i0][0] * off * side;
   const cz = p[1] + R.N[i0][1] * off * side;
-  const y = map.terrainAt(cx, cz);
+  const y = Math.min(map.terrainAt(cx, cz), R.H[i0]);
+  const [colA, colB] = (theme && theme.barrierColors) || [0xe11d2e, 0xf1f5f9];
   const g = new THREE.Group();
-  const standMat = new THREE.MeshStandardMaterial({ map: tex.concrete('#c7cbd3'), roughness: 0.9 });
-  const steps = 6;
-  for (let s = 0; s < steps; s++) {
-    const step = new THREE.Mesh(new THREE.BoxGeometry(len, 16 + s * 16, 34), standMat);
-    step.position.set(0, (16 + s * 16) / 2, s * 34);
+  const white = new THREE.MeshStandardMaterial({ color: 0xf4f1ea, roughness: 0.85 });
+  const riser = new THREE.MeshStandardMaterial({ color: new THREE.Color(colA).multiplyScalar(0.8), roughness: 0.8 });
+  const steel = new THREE.MeshStandardMaterial({ color: 0xd9dee6, roughness: 0.45, metalness: 0.4 });
+  const rows = 7;
+  const tread = 32;
+  const rise = 15;
+  // A plinth to stand it on (hides any slope underneath).
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(len + 30, 60, rows * tread + 30), white);
+  plinth.position.set(0, -26, (rows * tread) / 2 - 8);
+  plinth.receiveShadow = true;
+  g.add(plinth);
+  for (let s = 0; s < rows; s++) {
+    const h = 6 + s * rise;
+    const step = new THREE.Mesh(new THREE.BoxGeometry(len, h, tread), riser);
+    step.position.set(0, h / 2, s * tread);
     step.castShadow = true;
     step.receiveShadow = true;
-    g.add(step);
+    const top = new THREE.Mesh(new THREE.BoxGeometry(len + 2, 2, tread + 1), white);
+    top.position.set(0, h + 1, s * tread);
+    top.receiveShadow = true;
+    g.add(step, top);
   }
-  const roofMat = new THREE.MeshStandardMaterial({ color: 0xe11d2e, roughness: 0.6, side: THREE.DoubleSide });
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(len + 40, 6, 260), roofMat);
-  roof.position.set(0, 200, 90);
-  roof.rotation.x = -0.12;
-  roof.castShadow = true;
-  g.add(roof);
-  const poleMat = new THREE.MeshStandardMaterial({ color: 0xe5e7eb, metalness: 0.5, roughness: 0.4 });
-  for (let k = -2; k <= 2; k++) {
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(4, 4, 200, 8), poleMat);
-    pole.position.set((k / 2) * (len / 2 - 20), 100, 200);
-    g.add(pole);
+  // Back wall and the side walls.
+  const backH = 6 + rows * rise + 40;
+  const back = new THREE.Mesh(new THREE.BoxGeometry(len, backH, 10), white);
+  back.position.set(0, backH / 2, rows * tread - tread / 2 + 5);
+  back.castShadow = true;
+  g.add(back);
+  for (const sx of [-1, 1]) {
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(10, backH, rows * tread), white);
+    wall.position.set(sx * (len / 2 + 5), backH / 2, (rows * tread) / 2 - tread / 2);
+    wall.castShadow = true;
+    g.add(wall);
   }
-  // The crowd.
-  const crowdColors = [0xef4444, 0x3b82f6, 0x22c55e, 0xeab308, 0xec4899, 0xffffff, 0xa855f7, 0xf97316];
-  const max = MOBILE ? 400 : 1100;
-  const crowd = new THREE.InstancedMesh(new THREE.CapsuleGeometry(5, 8, 2, 6), new THREE.MeshStandardMaterial({ roughness: 0.8 }), max);
+  // Front rail: posts and a top bar.
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 2.5, 2.5), steel);
+  rail.position.set(0, 22, -tread / 2 - 2);
+  g.add(rail);
+  const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(2, 22, 2), steel, Math.ceil(len / 60) + 1);
   const m = new THREE.Matrix4();
+  for (let k = 0; k < posts.count; k++) posts.setMatrixAt(k, m.makeTranslation(-len / 2 + k * 60, 11, -tread / 2 - 2));
+  g.add(posts);
+  // The canopy: a shallow curved shell over the tiers, held up by trusses from the back.
+  const depth = rows * tread + 70;
+  const canopyGeo = new THREE.CylinderGeometry(depth * 1.6, depth * 1.6, len + 40, 32, 1, true, -0.32, 0.64).rotateZ(Math.PI / 2);
+  const canopy = new THREE.Mesh(canopyGeo, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, side: THREE.DoubleSide }));
+  canopy.position.set(0, backH + 30 - depth * 1.6, rows * tread / 2 - 30);
+  canopy.castShadow = true;
+  g.add(canopy);
+  // Striped fascia along the front edge of the canopy.
+  const stripes = 16;
+  for (let k = 0; k < stripes; k++) {
+    const seg = new THREE.Mesh(new THREE.BoxGeometry((len + 40) / stripes, 14, 4), new THREE.MeshStandardMaterial({ color: k % 2 ? colB : colA, roughness: 0.6 }));
+    seg.position.set(-len / 2 - 20 + ((k + 0.5) * (len + 40)) / stripes, backH + 24, rows * tread / 2 - 30 - depth * 1.6 * Math.sin(0.32) + 2);
+    g.add(seg);
+  }
+  const trusses = 5;
+  for (let k = 0; k < trusses; k++) {
+    const x = -len / 2 + 20 + (k * (len - 40)) / (trusses - 1);
+    const mast = new THREE.Mesh(new THREE.BoxGeometry(6, backH + 30, 6), steel);
+    mast.position.set(x, (backH + 30) / 2, rows * tread - tread / 2 + 14);
+    const boom = new THREE.Mesh(new THREE.BoxGeometry(4, 4, depth * 1.05), steel);
+    boom.position.set(x, backH + 34, rows * tread / 2 - 30);
+    boom.rotation.x = 0.04;
+    g.add(mast, boom);
+  }
+  // Seats and the crowd: bodies (shirts) and heads, a few seats left empty.
+  const seatCols = [new THREE.Color(colA), new THREE.Color(colB)];
+  const shirts = [0xef4444, 0x3b82f6, 0x22c55e, 0xeab308, 0xec4899, 0xffffff, 0xa855f7, 0xf97316, 0x14b8a6, 0x1f2937];
+  const skins = [0xf5d0b0, 0xe0ac80, 0xc68642, 0x8d5524, 0xffdbac];
+  const perRow = Math.floor((len - 40) / 13);
+  const max = Math.min(MOBILE ? 500 : 1400, rows * perRow);
+  const seats = new THREE.InstancedMesh(new THREE.BoxGeometry(10, 5, 9), new THREE.MeshStandardMaterial({ roughness: 0.7 }), rows * perRow);
+  const bodies = new THREE.InstancedMesh(new THREE.CapsuleGeometry(4.2, 6, 2, 6).translate(0, 8, 0), new THREE.MeshStandardMaterial({ roughness: 0.8 }), max);
+  const heads = new THREE.InstancedMesh(new THREE.SphereGeometry(3.6, 8, 6).translate(0, 18, 0), new THREE.MeshStandardMaterial({ roughness: 0.7 }), max);
   const r = rng(5);
+  const col = new THREE.Color();
+  let si = 0;
   let ci = 0;
-  for (let s = 0; s < steps && ci < max; s++) {
-    for (let x = -len / 2 + 20; x < len / 2 - 20 && ci < max; x += 12 + r() * 10) {
-      m.makeTranslation(x, 16 + s * 16 + 9, s * 34 + (r() - 0.5) * 10);
-      crowd.setMatrixAt(ci, m);
-      crowd.setColorAt(ci, new THREE.Color(crowdColors[Math.floor(r() * crowdColors.length)]));
-      ci++;
+  for (let s = 0; s < rows; s++) {
+    const sy = 6 + s * rise + 2;
+    for (let k = 0; k < perRow; k++) {
+      const x = -len / 2 + 26 + k * 13;
+      const z = s * tread + 4;
+      seats.setMatrixAt(si, m.makeTranslation(x, sy + 2.5, z));
+      seats.setColorAt(si, seatCols[(k + s) % 2]);
+      si++;
+      if (ci < max && r() < 0.86) {
+        m.makeTranslation(x + (r() - 0.5) * 2, sy + 2, z - 2);
+        bodies.setMatrixAt(ci, m);
+        heads.setMatrixAt(ci, m);
+        bodies.setColorAt(ci, col.set(shirts[Math.floor(r() * shirts.length)]));
+        heads.setColorAt(ci, col.set(skins[Math.floor(r() * skins.length)]));
+        ci++;
+      }
     }
   }
-  crowd.count = ci;
-  g.add(crowd);
+  seats.count = si;
+  bodies.count = ci;
+  heads.count = ci;
+  // The crowd bounces on the GPU: each spectator to their own beat, from where they sit.
+  for (const mesh of [bodies, heads]) {
+    mesh.material.onBeforeCompile = (sh) => {
+      sh.uniforms.uTime = ctx.uniforms.uTime;
+      sh.vertexShader = 'uniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+        float seed = instanceMatrix[3].x * 0.137 + instanceMatrix[3].z * 0.29;
+        transformed.y += max(0.0, sin(uTime * (5.0 + fract(seed) * 3.0) + seed * 6.28)) * 3.5;`);
+    };
+    mesh.castShadow = false;
+    g.add(mesh);
+  }
+  g.add(seats);
   g.position.set(cx, y, cz);
-  // Turned so local +z points away from the road: the low front rows face the racers and
-  // the tall back, roof poles and flags sit behind the crowd.
+  // Turned so local +z points away from the road: the low front rows face the racers.
   g.rotation.y = -Math.atan2(t[1], t[0]) + (side > 0 ? 0 : Math.PI);
   scene.add(g);
-  ctx.crowd = crowd;
-  // Flags along the top.
+  ctx.crowd = bodies;
+  // Flags along the canopy's back edge.
   const flagCols = ['#ef4444', '#facc15', '#3b82f6', '#22c55e'];
   for (let k = 0; k < 8; k++) {
-    const flag = new THREE.Mesh(new THREE.PlaneGeometry(40, 24), new THREE.MeshStandardMaterial({ color: flagCols[k % 4], side: THREE.DoubleSide, roughness: 0.7 }));
-    flag.position.set(-len / 2 + 40 + (k * (len - 80)) / 7, 236, 200);
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(36, 22), new THREE.MeshStandardMaterial({ color: flagCols[k % 4], side: THREE.DoubleSide, roughness: 0.7 }));
+    flag.position.set(-len / 2 + 40 + (k * (len - 80)) / 7, backH + 70, rows * tread - tread / 2 + 14);
     g.add(flag);
     ctx.flags.push(flag);
   }
