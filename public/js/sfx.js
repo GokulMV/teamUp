@@ -99,67 +99,126 @@
     src.stop(t + dur + 0.05);
   }
 
-  // Kart engine: a small, high-revving two-stroke, synthesized live so its pitch follows the kart
-  // exactly (there is no gearbox on a kart: the note just climbs with the speed). A buzzy pulse at
-  // the firing rate (about 55 Hz at idle, 230 flat out, so 3,300 to 14,000 rpm) through a little
-  // drive and the exhaust's fixed resonances, with a raspy intake noise that pulses with every
-  // firing. Lifting off at high revs drops the rasp and spits a few exhaust crackles.
-  const KART_IDLE_HZ = 55;
-  const KART_TOP_HZ = 230;
+  // Kart engines: six to choose from (see ENGINES), all driven the same way. A synthesized engine
+  // is a set of oscillators at multiples of the firing rate f, through a little drive and the
+  // exhaust's fixed resonances (so the tone changes as the note sweeps through them, as a real
+  // engine's does), plus intake rasp: noise gated on and off at the firing rate. There is no
+  // gearbox on a kart: the note just climbs with the speed. The motorbike is a recording instead,
+  // sped up and slowed down.
+  const ENGINES = {
+    twostroke: {
+      name: 'Race two-stroke', idle: 60, top: 260,
+      osc: [['sawtooth', 1, 0.55, 0], ['square', 1, 0.32, 7], ['triangle', 0.5, 0.3, 0]], drive: 3,
+      res: [[620, 1.4, 7], [1650, 2.2, 5]], lp: [1500, 3800, 1400], rasp: [2800, 0.8, 0.08, 0.2, 0.16], gate: [1, 0.5],
+    },
+    rental: {
+      name: 'Rental four-stroke', idle: 30, top: 100,
+      osc: [['square', 1, 0.5, 0], ['sawtooth', 2, 0.25, 0], ['triangle', 0.5, 0.6, 0]], drive: 4,
+      res: [[300, 1.2, 8], [900, 1.6, 4]], lp: [700, 1700, 600], rasp: [1400, 1, 0.05, 0.12, 0.06], gate: [1, 0.9],
+    },
+    moto: { name: 'Motorbike', sample: 'moto', baseHz: 28, idle: 28, top: 100, lp: [1400, 3600, 1200] },
+    electric: {
+      name: 'Electric', idle: 180, top: 1100, vol: 0.65,
+      osc: [['sine', 1, 0.6, 0], ['sawtooth', 1, 0.1, 0], ['sine', 3, 0.14, 0], ['triangle', 0.5, 0.22, 0]], drive: 1.2,
+      res: [[2400, 3, 4]], lp: [2600, 5200, 900], rasp: null, gate: null,
+    },
+    arcade: {
+      name: 'Arcade buzz', idle: 90, top: 340,
+      osc: [['square', 1, 0.45, 0], ['square', 1, 0.35, 9]], drive: 1.8, vibrato: [7, 14],
+      res: [[1000, 1, 6]], lp: [1800, 3000, 800], rasp: null, gate: null,
+    },
+    twin: {
+      name: 'Twin-cylinder', idle: 40, top: 165,
+      osc: [['sawtooth', 1, 0.5, 0], ['square', 0.5, 0.35, 0], ['sawtooth', 1.5, 0.18, 0]], drive: 3.5,
+      res: [[450, 1.3, 7], [1200, 2, 5]], lp: [1000, 2600, 900], rasp: [2000, 0.9, 0.06, 0.16, 0.1], gate: [0.5, 0.65],
+    },
+  };
+  const ENGINE_IDS = Object.keys(ENGINES);
+  let engineId = 'twostroke';
+  try { const saved = localStorage.getItem('teamup-kart-engine'); if (ENGINES[saved]) engineId = saved; } catch { /* ignore */ }
+  const enginePreset = () => ENGINES[engineId];
   function driveCurve(k) {
     const n = 1024;
     const curve = new Float32Array(n);
     for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = Math.tanh(k * x) / Math.tanh(k); }
     return curve;
   }
-  // One engine voice into `dest` on audio context `ac`, running at firing rate f.
-  function kartVoice(ac, dest, f, noise) {
+  // One engine voice of preset P into `dest` on audio context `ac`, starting at firing rate f.
+  // sampleBuf: the recording, for a sampled preset.
+  function kartVoice(ac, dest, f, noise, P, sampleBuf) {
     const t = ac.currentTime;
-    const saw = ac.createOscillator(); saw.type = 'sawtooth';
-    const sq = ac.createOscillator(); sq.type = 'square'; sq.detune.value = 7;
-    const sub = ac.createOscillator(); sub.type = 'triangle'; // a little weight under the buzz
-    const gs = ac.createGain(); gs.gain.value = 0.55;
-    const gq = ac.createGain(); gq.gain.value = 0.32;
-    const gb = ac.createGain(); gb.gain.value = 0.3;
-    const pre = ac.createGain(); pre.gain.value = 0.9;
-    const shaper = ac.createWaveShaper(); shaper.curve = driveCurve(2.6); shaper.oversample = '2x';
-    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 70; hp.Q.value = 0.7;
-    // The expansion chamber and the airbox: fixed resonances, so the tone changes as the note
-    // sweeps through them (what makes it sound like a real engine rather than a synth).
-    const r1 = ac.createBiquadFilter(); r1.type = 'peaking'; r1.frequency.value = 620; r1.Q.value = 1.4; r1.gain.value = 7;
-    const r2 = ac.createBiquadFilter(); r2.type = 'peaking'; r2.frequency.value = 1650; r2.Q.value = 2.2; r2.gain.value = 5;
-    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2200; lp.Q.value = 0.6;
-    saw.connect(gs); sq.connect(gq); sub.connect(gb);
-    gs.connect(pre); gq.connect(pre); gb.connect(pre);
-    pre.connect(shaper); shaper.connect(hp); hp.connect(r1); r1.connect(r2); r2.connect(lp);
-    // Intake rasp: noise, band-passed, gated on and off by a pulse at the firing rate.
-    const nz = ac.createBufferSource(); nz.buffer = noise; nz.loop = true;
-    const nf = ac.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = 2800; nf.Q.value = 0.8;
-    const gate = ac.createGain(); gate.gain.value = 0.5;
-    const am = ac.createOscillator(); am.type = 'square';
-    const amDepth = ac.createGain(); amDepth.gain.value = 0.5;
-    am.connect(amDepth); amDepth.connect(gate.gain);
-    const rasp = ac.createGain(); rasp.gain.value = 0.22;
-    nz.connect(nf); nf.connect(gate); gate.connect(rasp); rasp.connect(lp);
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = P.lp[0]; lp.Q.value = 0.6;
     const out = ac.createGain(); out.gain.value = 0;
     lp.connect(out); out.connect(dest);
-    const oscs = [saw, sq, am];
-    for (const o of oscs) o.frequency.setValueAtTime(f, t);
-    sub.frequency.setValueAtTime(f / 2, t);
-    for (const o of [...oscs, sub]) o.start(t);
-    nz.start(t, Math.random());
+    const rev = (fHz) => Math.max(0, Math.min(1.2, (fHz - P.idle) / (P.top - P.idle)));
+    if (P.sample) {
+      const src = ac.createBufferSource(); src.buffer = sampleBuf; src.loop = true;
+      const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 40;
+      src.connect(hp); hp.connect(lp);
+      src.playbackRate.setValueAtTime(f / P.baseHz, t);
+      src.start(t, Math.random() * 2);
+      const voice = {
+        out, lp,
+        set(at, fHz, load, tc = 0.06) {
+          src.playbackRate.setTargetAtTime(fHz / P.baseHz, at, tc * 1.5);
+          lp.frequency.setTargetAtTime(P.lp[0] + rev(fHz) * P.lp[1] + load * P.lp[2], at, 0.08);
+        },
+        stop(at) { try { src.stop(at); } catch { /* stopped */ } },
+      };
+      return voice;
+    }
+    const pre = ac.createGain(); pre.gain.value = 0.9;
+    const shaper = ac.createWaveShaper(); shaper.curve = driveCurve(P.drive); shaper.oversample = '2x';
+    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 45; hp.Q.value = 0.7;
+    pre.connect(shaper); shaper.connect(hp);
+    let last = hp;
+    for (const [rf, q, g] of P.res) {
+      const r = ac.createBiquadFilter(); r.type = 'peaking'; r.frequency.value = rf; r.Q.value = q; r.gain.value = g;
+      last.connect(r); last = r;
+    }
+    last.connect(lp);
+    const oscs = P.osc.map(([type, mult, gain, detune]) => {
+      const o = ac.createOscillator(); o.type = type; o.detune.value = detune;
+      const g = ac.createGain(); g.gain.value = gain;
+      o.connect(g); g.connect(pre);
+      return { o, mult };
+    });
+    if (P.vibrato) {
+      const lfo = ac.createOscillator(); lfo.frequency.value = P.vibrato[0];
+      const depth = ac.createGain(); depth.gain.value = P.vibrato[1]; // cents
+      lfo.connect(depth);
+      for (const { o } of oscs) depth.connect(o.detune);
+      oscs.push({ o: lfo, mult: 0 });
+    }
+    // Intake rasp: [band, Q, gain at idle, more with load, more with revs], gated by a pulse at
+    // gate[0] x the firing rate, gate[1] deep.
+    let rasp = null;
+    let nz = null;
+    if (P.rasp) {
+      nz = ac.createBufferSource(); nz.buffer = noise; nz.loop = true;
+      const nf = ac.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = P.rasp[0]; nf.Q.value = P.rasp[1];
+      const gate = ac.createGain(); gate.gain.value = 1 - P.gate[1];
+      const am = ac.createOscillator(); am.type = 'square';
+      const amDepth = ac.createGain(); amDepth.gain.value = P.gate[1];
+      am.connect(amDepth); amDepth.connect(gate.gain);
+      rasp = ac.createGain(); rasp.gain.value = P.rasp[2];
+      nz.connect(nf); nf.connect(gate); gate.connect(rasp); rasp.connect(lp);
+      oscs.push({ o: am, mult: P.gate[0] });
+    }
+    const tune = (at, fHz, tc) => { for (const { o, mult } of oscs) if (mult) o.frequency.setTargetAtTime(fHz * mult, at, tc); };
+    for (const { o, mult } of oscs) { if (mult) o.frequency.setValueAtTime(f * mult, t); o.start(t); }
+    if (nz) nz.start(t, Math.random());
     const voice = {
-      out, lp, rasp, pre,
+      out, lp,
       // f: firing rate; load: 0 coasting .. 1 full throttle; tc: how quickly it gets there.
       set(at, fHz, load, tc = 0.06) {
-        const rev = Math.max(0, Math.min(1.2, (fHz - KART_IDLE_HZ) / (KART_TOP_HZ - KART_IDLE_HZ)));
-        for (const o of oscs) o.frequency.setTargetAtTime(fHz, at, tc);
-        sub.frequency.setTargetAtTime(fHz / 2, at, tc);
-        lp.frequency.setTargetAtTime(1500 + rev * 3800 + load * 1400, at, 0.08);
-        rasp.gain.setTargetAtTime(0.08 + load * (0.18 + rev * 0.16), at, 0.06);
+        const r = rev(fHz);
+        tune(at, fHz, tc);
+        lp.frequency.setTargetAtTime(P.lp[0] + r * P.lp[1] + load * P.lp[2], at, 0.08);
+        if (rasp) rasp.gain.setTargetAtTime(P.rasp[2] + load * (P.rasp[3] + r * P.rasp[4]), at, 0.06);
         pre.gain.setTargetAtTime(0.55 + load * 0.45, at, 0.06);
       },
-      stop(at) { for (const o of [...oscs, sub, nz]) { try { o.stop(at); } catch { /* stopped */ } } },
+      stop(at) { for (const { o } of oscs) { try { o.stop(at); } catch { /* stopped */ } } if (nz) { try { nz.stop(at); } catch { /* stopped */ } } },
     };
     voice.set(t, f, 0.6, 0.001);
     return voice;
@@ -167,19 +226,22 @@
 
   // Continuous engine sound for your own kart. surface: 0 road, 1 run-off, 2 grass (K.stepKart).
   let engine = null;
-  function kartHz(speedRatio, throttle, boosting) {
+  function kartHz(speedRatio, throttle, boosting, P = enginePreset()) {
     const r = Math.max(0, Math.min(1.35, speedRatio));
-    return KART_IDLE_HZ + (KART_TOP_HZ - KART_IDLE_HZ) * Math.min(1.15, r) ** 0.8 + (throttle ? 9 : 0) + (boosting ? 26 : 0);
+    const span = P.top - P.idle;
+    return P.idle + span * Math.min(1.15, r) ** 0.8 + (throttle ? span * 0.045 : 0) + (boosting ? span * 0.13 : 0);
   }
   function engineUpdate(speedRatio, boosting, drifting, surface = 0, throttle = true) {
     if (!ready()) { engineStop(); return; }
     const t = ctx.currentTime;
     if (!engine) {
-      const v = kartVoice(ctx, master, KART_IDLE_HZ, noiseBuf);
+      const P = enginePreset();
+      if (P.sample && !buf(P.sample)) { loadSample(KART[P.sample]); return; } // the recording isn't here yet
+      const v = kartVoice(ctx, master, P.idle, noiseBuf, P, P.sample && buf(P.sample));
       // Starting up: the engine catches, blips and settles to idle.
-      v.set(t, KART_IDLE_HZ * 0.6, 0.3, 0.001);
-      v.set(t + 0.12, KART_IDLE_HZ * 2.6, 1, 0.08);
-      v.set(t + 0.42, KART_IDLE_HZ, 0.3, 0.18);
+      v.set(t, P.idle * 0.6, 0.3, 0.001);
+      v.set(t + 0.12, P.idle + (P.top - P.idle) * 0.45, 1, 0.08);
+      v.set(t + 0.42, P.idle, 0.3, 0.18);
       v.out.gain.setTargetAtTime(0.2, t, 0.05);
       const skidBuf = buf('skid');
       const s = ctx.createBufferSource();
@@ -200,17 +262,17 @@
       rumble.connect(rf); rf.connect(rg); rg.connect(master);
       rumble.start(t, Math.random());
       if (!skidBuf) loadSample(KART.skid);
-      engine = { voice: v, s, sg, skid: !!skidBuf, rumble, rg, warm: t + 0.75, throttle: false, hz: KART_IDLE_HZ, popAt: 0 };
+      engine = { voice: v, P, s, sg, skid: !!skidBuf, rumble, rg, warm: t + 0.75, throttle: false, hz: P.idle, popAt: 0 };
       return;
     }
     if (t < engine.warm) return; // let the start-up blip play out
     const r = Math.max(0, Math.min(1.35, speedRatio));
-    const hz = kartHz(r, throttle, boosting);
+    const hz = kartHz(r, throttle, boosting, engine.P);
     // Revs rise quickly on the throttle and fall back more slowly when coasting.
     engine.voice.set(t, hz, throttle ? 1 : 0.2, throttle ? 0.07 : 0.22);
-    engine.voice.out.gain.setTargetAtTime(0.15 + Math.min(1, r) * 0.08 + (throttle ? 0.03 : 0) + (boosting ? 0.04 : 0), t, 0.1);
+    engine.voice.out.gain.setTargetAtTime((0.15 + Math.min(1, r) * 0.08 + (throttle ? 0.03 : 0) + (boosting ? 0.04 : 0)) * (engine.P.vol || 1), t, 0.1);
     // Lift off at high revs: a few crackles out of the exhaust.
-    if (engine.throttle && !throttle && engine.hz > 150 && t > engine.popAt) {
+    if (engine.throttle && !throttle && !engine.P.sample && engine.P.rasp && engine.hz > engine.P.idle + (engine.P.top - engine.P.idle) * 0.55 && t > engine.popAt) {
       engine.popAt = t + 0.9;
       const n = 2 + Math.floor(Math.random() * 3);
       for (let i = 0; i < n; i++) noise({ dur: 0.035, vol: 0.06 + Math.random() * 0.05, filter: 'bandpass', from: 1800 + Math.random() * 1500, to: 600, q: 1.2, delay: 0.05 + i * (0.06 + Math.random() * 0.07) });
@@ -227,7 +289,7 @@
     engine = null;
     try {
       const t = ctx.currentTime;
-      if (!quick) e.voice.set(t, KART_IDLE_HZ * 0.5, 0, 0.2); // winds down
+      if (!quick) e.voice.set(t, e.P.idle * 0.5, 0, 0.2); // winds down
       e.voice.out.gain.setTargetAtTime(0, t, quick ? 0.03 : 0.15);
       e.sg.gain.setTargetAtTime(0, t, 0.04);
       e.rg.gain.setTargetAtTime(0, t, 0.04);
@@ -264,7 +326,7 @@
   // Kart Battle's recorded sounds (CC0: Kenney's racing, FPS and platformer starter kits; see
   // CREDITS.md). Loaded when a kart game starts; until they arrive the synthesized versions play.
   const KART = {
-    skid: '/audio/kart/skid.wav', impact: '/audio/kart/impact.mp3',
+    moto: '/audio/kart/engine-moto.wav', skid: '/audio/kart/skid.wav', impact: '/audio/kart/impact.mp3',
     explode: '/audio/kart/explode.mp3', hurt: '/audio/kart/hurt.mp3', blaster: '/audio/kart/blaster.mp3',
     repeater: '/audio/kart/repeater.mp3', swap: '/audio/kart/swap.mp3', hop: '/audio/kart/hop.mp3',
     land: '/audio/kart/land.mp3', coin: '/audio/kart/coin.mp3', break: '/audio/kart/break.mp3',
@@ -298,24 +360,35 @@
   // Rival karts' engines: the nearest few, panned to where they are and fading with distance.
   // Each plays a loop of the same kart engine, rendered once at a set firing rate, sped up and
   // slowed down to follow its kart.
-  const RIVAL_HZ = 120;
-  let rivalLoop = null; // AudioBuffer, or a promise while it renders
+  // (The recorded motorbike is its own loop.)
+  let rivalLoop = null; // { id, buf, hz }, or a promise while it renders
   function renderRivalLoop() {
-    if (rivalLoop) return;
+    const P = enginePreset();
+    if (rivalLoop && rivalLoop.id === engineId) return;
+    if (P.sample) {
+      const b = buf(P.sample);
+      if (b) rivalLoop = { id: engineId, buf: b, hz: P.baseHz };
+      else loadSample(KART[P.sample]);
+      return;
+    }
+    if (rivalLoop && rivalLoop.then) return;
     const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
     if (!OAC) return;
     const sr = ctx.sampleRate;
-    const off = new OAC(1, sr * 2, sr); // 2 s: a whole number of firings at 120 Hz, so it loops cleanly
-    const v = kartVoice(off, off.destination, RIVAL_HZ, noiseBuf);
-    v.set(0, RIVAL_HZ, 0.8, 0.0001);
+    // 2 s at an even firing rate: a whole number of cycles of every partial, so it loops cleanly.
+    const hz = 2 * Math.round((P.idle + P.top) / 4);
+    const off = new OAC(1, sr * 2, sr);
+    const v = kartVoice(off, off.destination, hz, noiseBuf, P);
+    v.set(0, hz, 0.8, 0.0001);
     v.out.gain.setValueAtTime(0.9, 0);
-    rivalLoop = off.startRendering().then((b) => { rivalLoop = b; return b; }).catch(() => { rivalLoop = null; });
+    const id = engineId;
+    rivalLoop = off.startRendering().then((b) => { rivalLoop = { id, buf: b, hz }; }).catch(() => { rivalLoop = null; });
   }
   const rivalVoices = new Map(); // id -> { src, g, p }
   function rivalsUpdate(list) {
     if (!ready()) { rivalsStop(); return; }
     renderRivalLoop();
-    if (!(rivalLoop instanceof AudioBuffer)) return;
+    if (!rivalLoop || !rivalLoop.buf || rivalLoop.id !== engineId) return;
     const t = ctx.currentTime;
     const keep = new Set();
     for (const r of list.slice(0, 3)) {
@@ -323,7 +396,7 @@
       let v = rivalVoices.get(r.id);
       if (!v) {
         const src = ctx.createBufferSource();
-        src.buffer = rivalLoop;
+        src.buffer = rivalLoop.buf;
         src.loop = true;
         const lp = ctx.createBiquadFilter();
         lp.type = 'lowpass'; lp.frequency.value = 1600;
@@ -338,9 +411,9 @@
       }
       const near = Math.max(0, 1 - r.dist / 1100);
       const sp = Math.max(0, Math.min(1.3, r.speed));
-      v.src.playbackRate.setTargetAtTime((kartHz(sp, true, false) / RIVAL_HZ) * v.pitch, t, 0.1);
+      v.src.playbackRate.setTargetAtTime((kartHz(sp, true, false) / rivalLoop.hz) * v.pitch, t, 0.1);
       v.lp.frequency.setTargetAtTime(1200 + sp * 2600, t, 0.1);
-      v.g.gain.setTargetAtTime(0.12 * near * near * (0.45 + 0.55 * Math.min(1, sp)), t, 0.12);
+      v.g.gain.setTargetAtTime(0.12 * (enginePreset().vol || 1) * near * near * (0.45 + 0.55 * Math.min(1, sp)), t, 0.12);
       if (v.p) v.p.pan.setTargetAtTime(Math.max(-0.9, Math.min(0.9, r.pan)), t, 0.08);
     }
     for (const [id, v] of rivalVoices) {
@@ -407,6 +480,16 @@
     engine: engineUpdate,
     engineStop() { engineStop(); rivalsStop(); },
     rivals: rivalsUpdate,
+    // The kart engine sounds to choose from ({ id, name }), the one in use, and choosing one.
+    engines: () => ENGINE_IDS.map((id) => ({ id, name: ENGINES[id].name })),
+    engine: () => engineId,
+    setEngine(id) {
+      if (!ENGINES[id] || id === engineId) return;
+      engineId = id;
+      try { localStorage.setItem('teamup-kart-engine', id); } catch { /* ignore */ }
+      engineStop(true); // the next update starts the new one
+      rivalsStop();
+    },
     kartPreload() { init(); if (ctx) Object.values(KART).forEach(loadSample); },
     // Start lights: 3, 2, 1 are a clean, round tone (a sine with a soft octave over it, like a race
     // start's timing beacon); GO is the same an octave up with a fifth on top and a whoosh.
