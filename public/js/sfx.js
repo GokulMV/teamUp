@@ -151,13 +151,19 @@
   // layers: [recording (a KART key), gain, start offsets in recording seconds]; baseHz: firings a
   // second at playback rate 1 with the copies; idle/top: the range to play at.
   const HALF = 1 / (2 * 28.2);
+  // The cartoon engines (default): single firings cut out of the bike recording, short and
+  // windowed so no rumble, echo or wobble comes with them, re-fired quickly into a light toy-sized
+  // loop with the bass taken out (made offline, see CREDITS.md). baseHz: firings a second in it.
   const ENGINES = {
+    toy: { name: 'Toy buzz', baseHz: 100, idle: 75, top: 190, layers: [['toy', 1, [0]]], lp: [4200, 0, 0], pops: false },
+    putt: { name: 'Putt-putt', baseHz: 60, idle: 48, top: 126, layers: [['putt', 1, [0]]], lp: [4200, 0, 0], pops: false },
+    zippy: { name: 'Zippy', baseHz: 120, idle: 96, top: 264, layers: [['zippy', 1, [0]]], lp: [4200, 0, 0], pops: false },
     kart: { name: 'Kart', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 1, [0, HALF]]], lp: [3400, 500, 300], pops: true },
     blend: { name: 'Kart, heavier', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 0.8, [0, HALF]], ['car', 0.45, [0.37, 0.37 + HALF]]], lp: [3200, 600, 400], pops: true },
     single: { name: 'Single cylinder', baseHz: 28.2, idle: 56, top: 104, layers: [['moto', 1, [0]]], lp: [3200, 600, 400], pops: true },
   };
   const ENGINE_IDS = Object.keys(ENGINES);
-  let engineId = 'single';
+  let engineId = 'toy';
   try { const saved = localStorage.getItem('teamup-kart-engine'); if (ENGINES[saved]) engineId = saved; } catch { /* ignore */ }
   const enginePreset = () => ENGINES[engineId];
   const engineSamples = (P) => [...new Set(P.layers.map((l) => l[0]))];
@@ -308,6 +314,7 @@
   // Kart Battle's recorded sounds (CC0: Kenney's racing, FPS and platformer starter kits; see
   // CREDITS.md). Loaded when a kart game starts; until they arrive the synthesized versions play.
   const KART = {
+    toy: '/audio/kart/engine-toy.wav', putt: '/audio/kart/engine-putt.wav', zippy: '/audio/kart/engine-zippy.wav',
     moto: '/audio/kart/engine-moto.wav', car: '/audio/kart/engine-car.wav', skid: '/audio/kart/skid.wav', impact: '/audio/kart/impact.mp3',
     explode: '/audio/kart/explode.mp3', hurt: '/audio/kart/hurt.mp3', blaster: '/audio/kart/blaster.mp3',
     repeater: '/audio/kart/repeater.mp3', swap: '/audio/kart/swap.mp3', hop: '/audio/kart/hop.mp3',
@@ -377,7 +384,7 @@
       }
       const near = Math.max(0, 1 - r.dist / 1100);
       const sp = Math.max(0, Math.min(1.3, r.speed));
-      v.src.playbackRate.setTargetAtTime((kartHz(sp, true, false) / 28.2) * 0.62 * v.pitch, t, 0.1); // a little lower and further off than yours
+      v.src.playbackRate.setTargetAtTime((kartHz(sp, true, false) / enginePreset().baseHz) * (enginePreset().layers[0][2].length > 1 ? 1.24 : 0.92) * v.pitch, t, 0.1); // a little lower than yours
       v.lp.frequency.setTargetAtTime(1200 + sp * 2600, t, 0.1);
       v.g.gain.setTargetAtTime(0.06 * near * near * (0.45 + 0.55 * Math.min(1, sp)), t, 0.12); // quiet: several at once turn to mush
       if (v.p) v.p.pan.setTargetAtTime(Math.max(-0.9, Math.min(0.9, r.pan)), t, 0.08);
