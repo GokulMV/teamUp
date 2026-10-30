@@ -155,15 +155,11 @@
   // layers: [recording (a KART key), gain, start offsets in recording seconds]; baseHz: firings a
   // second at playback rate 1 with the copies; idle/top: the range to play at.
   const HALF = 1 / (2 * 28.2);
-  // The cartoon kart (default), built from scratch: a little, light engine that goes "brrrm".
-  // Every firing is its own tiny soft "bup" (about 20 ms: a 1.5 ms fade-in, so no click, then a
-  // quick ring-out), one of a dozen slightly different ones, each fired a touch early or late and
-  // a touch louder or softer, so nothing repeats or locks into a tone. As the revs rise the bups
-  // come faster and brighten from an "ooo" to an "aaa": the vroom. Lifting off softens them, and
-  // the odd one goes missing (a putter). No noise, no reverb, almost no low end: a toy, not a truck.
-  // idle/top: bups a second; form: how bright they are at idle and flat out.
+  // The cartoon kart (default), built from scratch: a smooth, buzzy little engine whose note
+  // glides up with the revs (idle/top: its pitch in Hz; form: the bright formant at idle and flat
+  // out). See cartoonVoice() below.
   const ENGINES = {
-    cartoon: { name: 'Cartoon kart', cartoon: true, idle: 34, top: 108, form: [0.85, 1.35], pops: false },
+    cartoon: { name: 'Cartoon kart', cartoon: true, idle: 95, top: 280, form: [900, 1700], pops: false },
     kart: { name: 'Kart (recorded)', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 1, [0, HALF]]], lp: [3400, 500, 300], pops: true },
     blend: { name: 'Kart, heavier', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 0.8, [0, HALF]], ['car', 0.45, [0.37, 0.37 + HALF]]], lp: [3200, 600, 400], pops: true },
     single: { name: 'Single cylinder', baseHz: 28.2, idle: 56, top: 104, layers: [['moto', 1, [0]]], lp: [3200, 600, 400], pops: true },
@@ -174,78 +170,88 @@
   const enginePreset = () => ENGINES[engineId];
   const engineSamples = (P) => (P.layers ? [...new Set(P.layers.map((l) => l[0]))] : []);
 
-  // A dozen bups for the cartoon kart, made once per sample rate.
-  const bupSets = new Map();
-  function bups(ac) {
-    const sr = ac.sampleRate;
-    if (bupSets.has(sr)) return bupSets.get(sr);
-    let seed = 4242;
+  // The cartoon kart's buzz: one smooth, rich tone (a kazoo-like spectrum, odd harmonics strong)
+  // that glides with the revs, two voices a few cents apart, a touch of drive, and a formant that
+  // brightens as it revs. Never still: the pitch wanders a cent or two and the level flutters a
+  // little all the time, and hitting the throttle kicks it up in pitch and level for a moment.
+  const buzzWaves = new Map();
+  function buzzWave(ac) {
+    if (buzzWaves.has(ac)) return buzzWaves.get(ac);
+    const N = 28;
+    const re = new Float32Array(N + 1);
+    const im = new Float32Array(N + 1);
+    let seed = 99;
     const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-    const set = [];
-    for (let v = 0; v < 12; v++) {
-      const n = Math.round(sr * 0.022);
-      const b = ac.createBuffer(1, n, sr);
-      const d = b.getChannelData(0);
-      const f1 = 700 * (1 + (rand() - 0.5) * 0.12);
-      const f2 = 1750 * (1 + (rand() - 0.5) * 0.14);
-      const sub = 190 * (1 + (rand() - 0.5) * 0.1);
-      const ph1 = rand() * 6.28;
-      const ph2 = rand() * 6.28;
-      const att = sr * 0.0016;
-      let peak = 0;
-      for (let i = 0; i < n; i++) {
-        const t = i / sr;
-        const chirp = 1 - 0.12 * (i / n); // each bup drops a little in pitch as it dies
-        const a = i < att ? 0.5 - 0.5 * Math.cos((Math.PI * i) / att) : 1;
-        const x = Math.sin(6.2832 * f1 * chirp * t + ph1) * Math.exp(-t / 0.0055)
-          + 0.35 * Math.sin(6.2832 * f2 * chirp * t + ph2) * Math.exp(-t / 0.0035)
-          + 0.22 * Math.sin(6.2832 * sub * t) * Math.exp(-t / 0.004);
-        d[i] = a * x;
-        peak = Math.max(peak, Math.abs(d[i]));
-      }
-      for (let i = 0; i < n; i++) d[i] /= peak;
-      set.push(b);
+    for (let n = 1; n <= N; n++) {
+      const a = (n % 2 ? 1 : 0.55) / n ** 0.85;
+      const ph = rand() * 6.2832; // not phase-locked: no hard buzz-saw edge
+      re[n] = a * Math.cos(ph);
+      im[n] = a * Math.sin(ph);
     }
-    bupSets.set(sr, set);
-    return set;
+    const w = ac.createPeriodicWave(re, im);
+    buzzWaves.set(ac, w);
+    return w;
   }
-  // The cartoon kart's voice: bups scheduled a little ahead (pump() each frame) at the current
-  // rate. set() takes the same arguments as a recorded voice's.
+  function driveCurve(k) {
+    const n = 1024;
+    const curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = Math.tanh(k * x) / Math.tanh(k); }
+    return curve;
+  }
   function cartoonVoice(ac, dest, P) {
+    const t0 = ac.currentTime;
+    const pre = ac.createGain(); pre.gain.value = 0.7;
+    const shaper = ac.createWaveShaper(); shaper.curve = driveCurve(1.8); shaper.oversample = '2x';
+    const form = ac.createBiquadFilter(); form.type = 'peaking'; form.frequency.value = P.form[0]; form.Q.value = 1.1; form.gain.value = 7;
+    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 80; hp.Q.value = 0.6;
     const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 4200; lp.Q.value = 0.5;
+    const level = ac.createGain(); level.gain.value = 0.6; // throttle, flutter and punch ride on this
     const out = ac.createGain(); out.gain.value = 0;
-    lp.connect(out); out.connect(dest);
-    const set = bups(ac);
-    let seed = Math.floor(Math.random() * 1e6) + 1;
-    const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-    const st = { hz: P.idle, load: 0.3, toHz: P.idle, toLoad: 0.3, tc: 0.1, next: ac.currentTime + 0.03, stopped: false };
-    const voice = {
+    pre.connect(shaper); shaper.connect(form); form.connect(hp); hp.connect(lp); lp.connect(level); level.connect(out); out.connect(dest);
+    const wave = buzzWave(ac);
+    const oscs = [0, 6].map((cents, k) => {
+      const o = ac.createOscillator();
+      o.setPeriodicWave(wave);
+      o.frequency.value = P.idle;
+      o.detune.value = cents;
+      const g = ac.createGain(); g.gain.value = k ? 0.6 : 1;
+      o.connect(g); g.connect(pre);
+      o.start(t0);
+      return o;
+    });
+    const st = { hz: P.idle, load: 0.3, last: 0, wander: 0, throttle: false };
+    const rev = (fHz) => Math.max(0, Math.min(1.2, (fHz - P.idle) / (P.top - P.idle)));
+    return {
       out, lp,
-      set(at, fHz, load, tc = 0.06) { st.toHz = fHz; st.toLoad = load; st.tc = Math.max(0.02, tc); },
-      pump(now) {
-        if (st.stopped) return;
-        if (st.next < now) st.next = now + 0.005; // a stalled tab: pick up from here
-        while (st.next < now + 0.09) {
-          const dt = 1 / st.hz;
-          const k = Math.min(1, dt / st.tc);
-          st.hz += (st.toHz - st.hz) * k;
-          st.load += (st.toLoad - st.load) * k;
-          const rev = Math.max(0, Math.min(1.2, (st.hz - P.idle) / (P.top - P.idle)));
-          if (!(st.load < 0.4 && rand() < 0.12)) { // coasting: the odd bup goes missing
-            const src = ac.createBufferSource();
-            src.buffer = set[Math.floor(rand() * set.length)];
-            src.playbackRate.value = (P.form[0] + (P.form[1] - P.form[0]) * rev) * (1 + (rand() - 0.5) * 0.06);
-            const g = ac.createGain();
-            g.gain.value = (0.55 + 0.45 * Math.min(1, st.load)) * (0.85 + rand() * 0.15);
-            src.connect(g); g.connect(lp);
-            src.start(st.next);
-          }
-          st.next += dt * (1 + (rand() - 0.5) * 0.06);
+      set(at, fHz, load, tc = 0.06) {
+        const on = load > 0.5;
+        // Punch: the moment the throttle goes down, a quick kick up in pitch and level.
+        if (on && !st.throttle) {
+          for (const o of oscs) { o.frequency.setTargetAtTime(fHz * 1.09, at, 0.02); o.frequency.setTargetAtTime(fHz, at + 0.06, 0.08); }
+          level.gain.setTargetAtTime(1.25, at, 0.01);
+          level.gain.setTargetAtTime(0.6 + 0.4 * load, at + 0.05, 0.1);
+        } else {
+          for (const o of oscs) o.frequency.setTargetAtTime(fHz, at, tc);
         }
+        st.throttle = on;
+        st.hz = fHz;
+        st.load = load;
+        const r = rev(fHz);
+        form.frequency.setTargetAtTime(P.form[0] + (P.form[1] - P.form[0]) * r, at, 0.08);
+        pre.gain.setTargetAtTime(0.55 + 0.35 * load, at, 0.06);
       },
-      stop(at) { st.stopped = true; out.gain.setTargetAtTime(0, at, 0.04); },
+      // Every ~40 ms: let the pitch wander a cent or two and the level flutter, so it never sits
+      // on one exact note.
+      pump(now) {
+        if (now - st.last < 0.04) return;
+        st.last = now;
+        st.wander += (Math.random() - 0.5) * 6 - st.wander * 0.3;
+        oscs[0].detune.setTargetAtTime(st.wander, now, 0.03);
+        oscs[1].detune.setTargetAtTime(6 + st.wander * 0.7 + (Math.random() - 0.5) * 3, now, 0.03);
+        level.gain.setTargetAtTime((0.6 + 0.4 * st.load) * (0.94 + Math.random() * 0.1), now, 0.03);
+      },
+      stop(at) { out.gain.setTargetAtTime(0, at, 0.04); for (const o of oscs) { try { o.stop(at + 0.3); } catch { /* stopped */ } } },
     };
-    return voice;
   }
   // One engine voice of preset P into `dest` on audio context `ac`, starting at f firings a second.
   // recordings: { KART key: AudioBuffer }.
