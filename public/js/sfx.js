@@ -157,7 +157,7 @@
     single: { name: 'Single cylinder', baseHz: 28.2, idle: 56, top: 104, layers: [['moto', 1, [0]]], lp: [3200, 600, 400], pops: true },
   };
   const ENGINE_IDS = Object.keys(ENGINES);
-  let engineId = 'kart';
+  let engineId = 'single';
   try { const saved = localStorage.getItem('teamup-kart-engine'); if (ENGINES[saved]) engineId = saved; } catch { /* ignore */ }
   const enginePreset = () => ENGINES[engineId];
   const engineSamples = (P) => [...new Set(P.layers.map((l) => l[0]))];
@@ -357,7 +357,7 @@
     if (!loop) return;
     const t = ctx.currentTime;
     const keep = new Set();
-    for (const r of list.slice(0, 3)) {
+    for (const r of list.slice(0, 2)) {
       keep.add(r.id);
       let v = rivalVoices.get(r.id);
       if (!v) {
@@ -379,7 +379,7 @@
       const sp = Math.max(0, Math.min(1.3, r.speed));
       v.src.playbackRate.setTargetAtTime((kartHz(sp, true, false) / 28.2) * 0.62 * v.pitch, t, 0.1); // a little lower and further off than yours
       v.lp.frequency.setTargetAtTime(1200 + sp * 2600, t, 0.1);
-      v.g.gain.setTargetAtTime(0.12 * (enginePreset().vol || 1) * near * near * (0.45 + 0.55 * Math.min(1, sp)), t, 0.12);
+      v.g.gain.setTargetAtTime(0.06 * near * near * (0.45 + 0.55 * Math.min(1, sp)), t, 0.12); // quiet: several at once turn to mush
       if (v.p) v.p.pan.setTargetAtTime(Math.max(-0.9, Math.min(0.9, r.pan)), t, 0.08);
     }
     for (const [id, v] of rivalVoices) {
