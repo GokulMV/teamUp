@@ -417,7 +417,7 @@
   function loadSample(url) {
     if (samples[url] || !ctx) return;
     samples[url] = { buf: null };
-    fetch(url).then((r) => r.arrayBuffer()).then((b) => ctx.decodeAudioData(b)).then((buf) => { samples[url].buf = buf; }).catch(() => {});
+    fetch(url).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); }).then((b) => ctx.decodeAudioData(b)).then((buf) => { samples[url].buf = buf; }).catch((e) => { samples[url].failed = String(e && e.message || e); });
   }
   function sample(url, vol = 0.5, rate = 1) {
     if (!ready()) return;
@@ -563,11 +563,13 @@
       if (m) { engineStop(); rivalsStop(); starStop(); }
     },
     engine: engineUpdate,
+    // For checking from the console: which engine, whether its recordings loaded, whether it runs.
+    engineDebug: () => ({ id: engineId, running: !!engine, state: ctx && ctx.state, loaded: Object.fromEntries(engineSamples(enginePreset()).map((n) => [n, samples[KART[n]] ? (samples[KART[n]].buf ? 'ok' : samples[KART[n]].failed || 'loading') : 'not requested'])) }),
     engineStop() { engineStop(); rivalsStop(); },
     rivals: rivalsUpdate,
     // The kart engine sounds to choose from ({ id, name }), the one in use, and choosing one.
     engines: () => ENGINE_IDS.map((id) => ({ id, name: ENGINES[id].name })),
-    engine: () => engineId,
+    engineChoice: () => engineId,
     setEngine(id) {
       if (!ENGINES[id] || id === engineId) return;
       engineId = id;

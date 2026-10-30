@@ -2755,3 +2755,12 @@ test('item boxes on the layered arenas sit on the floor under them (none out of 
     }
   }
 });
+
+test('sound: no two Sfx entries share a name (a later one silently replaces the one the game calls)', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../public/js/sfx.js'), 'utf8');
+  const body = src.slice(src.indexOf('  const Sfx = {'), src.indexOf('\n  };', src.indexOf('  const Sfx = {')));
+  const keys = [...body.matchAll(/^ {4}([a-zA-Z]\w*)(?:\s*:|\s*\()/gm)].map((m) => m[1]);
+  const dupes = keys.filter((k, i) => keys.indexOf(k) !== i);
+  assert.deepStrictEqual(dupes, [], `duplicate Sfx entries: ${dupes}`);
+  assert.ok(keys.includes('engine') && keys.includes('engineStop'), 'the engine entries are there');
+});
