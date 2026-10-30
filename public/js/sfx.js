@@ -155,11 +155,11 @@
   // layers: [recording (a KART key), gain, start offsets in recording seconds]; baseHz: firings a
   // second at playback rate 1 with the copies; idle/top: the range to play at.
   const HALF = 1 / (2 * 28.2);
-  // The cartoon kart (default), built from scratch: a smooth, buzzy little engine whose note
-  // glides up with the revs (idle/top: its pitch in Hz; form: the bright formant at idle and flat
-  // out). See cartoonVoice() below.
+  // The cartoon kart (default), built from scratch: a little exhaust that goes "brrrap", its
+  // puffs coming faster as it revs (idle/top: puffs a second; form: the exhaust's main band).
+  // See cartoonVoice() below.
   const ENGINES = {
-    cartoon: { name: 'Cartoon kart', cartoon: true, idle: 95, top: 280, form: [900, 1700], pops: false },
+    cartoon: { name: 'Cartoon kart', cartoon: true, idle: 90, top: 260, form: [700, 1700], pops: true },
     kart: { name: 'Kart (recorded)', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 1, [0, HALF]]], lp: [3400, 500, 300], pops: true },
     blend: { name: 'Kart, heavier', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 0.8, [0, HALF]], ['car', 0.45, [0.37, 0.37 + HALF]]], lp: [3200, 600, 400], pops: true },
     single: { name: 'Single cylinder', baseHz: 28.2, idle: 56, top: 104, layers: [['moto', 1, [0]]], lp: [3200, 600, 400], pops: true },
@@ -170,87 +170,81 @@
   const enginePreset = () => ENGINES[engineId];
   const engineSamples = (P) => (P.layers ? [...new Set(P.layers.map((l) => l[0]))] : []);
 
-  // The cartoon kart's buzz: one smooth, rich tone (a kazoo-like spectrum, odd harmonics strong)
-  // that glides with the revs, two voices a few cents apart, a touch of drive, and a formant that
-  // brightens as it revs. Never still: the pitch wanders a cent or two and the level flutters a
-  // little all the time, and hitting the throttle kicks it up in pitch and level for a moment.
-  const buzzWaves = new Map();
-  function buzzWave(ac) {
-    if (buzzWaves.has(ac)) return buzzWaves.get(ac);
-    const N = 28;
+  // The cartoon kart's exhaust: puffs of air, not tones. Noise (so no two puffs are ever alike)
+  // shaped like an exhaust (two mid bands, nothing up top, a little low thump), gated on and off
+  // at the firing rate by a narrow pulse so there is quiet between puffs. Fast enough, the puffs
+  // fuse into a "brrrap" whose pitch is the firing rate; the rasp brightens as it revs and the
+  // throttle kicks it. Nothing here makes a steady tone of its own.
+  const gateWaves = new Map();
+  function gateWave(ac) {
+    if (gateWaves.has(ac)) return gateWaves.get(ac);
+    // A narrow, rounded pulse (about a third of each cycle open): a sum of harmonics in phase.
+    const N = 12;
     const re = new Float32Array(N + 1);
     const im = new Float32Array(N + 1);
-    let seed = 99;
-    const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-    for (let n = 1; n <= N; n++) {
-      const a = (n % 2 ? 1 : 0.55) / n ** 0.85;
-      const ph = rand() * 6.2832; // not phase-locked: no hard buzz-saw edge
-      re[n] = a * Math.cos(ph);
-      im[n] = a * Math.sin(ph);
-    }
-    const w = ac.createPeriodicWave(re, im);
-    buzzWaves.set(ac, w);
+    for (let n = 1; n <= N; n++) re[n] = (Math.sin(n * Math.PI * 0.33) / (n * Math.PI * 0.33)) * Math.exp(-n / 9);
+    const w = ac.createPeriodicWave(re, im, { disableNormalization: false });
+    gateWaves.set(ac, w);
     return w;
   }
-  function driveCurve(k) {
-    const n = 1024;
-    const curve = new Float32Array(n);
-    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = Math.tanh(k * x) / Math.tanh(k); }
-    return curve;
-  }
-  function cartoonVoice(ac, dest, P) {
+  function cartoonVoice(ac, dest, P, noiseBuffer = noiseBuf) {
     const t0 = ac.currentTime;
-    const pre = ac.createGain(); pre.gain.value = 0.7;
-    const shaper = ac.createWaveShaper(); shaper.curve = driveCurve(1.8); shaper.oversample = '2x';
-    const form = ac.createBiquadFilter(); form.type = 'peaking'; form.frequency.value = P.form[0]; form.Q.value = 1.1; form.gain.value = 7;
-    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 80; hp.Q.value = 0.6;
-    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 4200; lp.Q.value = 0.5;
-    const level = ac.createGain(); level.gain.value = 0.6; // throttle, flutter and punch ride on this
+    const noiseSrc = ac.createBufferSource(); noiseSrc.buffer = noiseBuffer; noiseSrc.loop = true;
+    // The exhaust's colour: two mid bands and a low thump, then the gate.
+    const b1 = ac.createBiquadFilter(); b1.type = 'bandpass'; b1.frequency.value = P.form[0]; b1.Q.value = 0.9;
+    const b2 = ac.createBiquadFilter(); b2.type = 'bandpass'; b2.frequency.value = P.form[0] * 2.2; b2.Q.value = 1.3;
+    const lo = ac.createBiquadFilter(); lo.type = 'lowpass'; lo.frequency.value = 260; lo.Q.value = 0.7;
+    const g1 = ac.createGain(); g1.gain.value = 1;
+    const g2 = ac.createGain(); g2.gain.value = 0.55;
+    const gl = ac.createGain(); gl.gain.value = 0.7;
+    const mix = ac.createGain(); mix.gain.value = 1;
+    noiseSrc.connect(b1); b1.connect(g1); g1.connect(mix);
+    noiseSrc.connect(b2); b2.connect(g2); g2.connect(mix);
+    noiseSrc.connect(lo); lo.connect(gl); gl.connect(mix);
+    const gate = ac.createGain(); gate.gain.value = 0;
+    const pulse = ac.createOscillator(); pulse.setPeriodicWave(gateWave(ac)); pulse.frequency.value = P.idle;
+    const depth = ac.createGain(); depth.gain.value = 1;
+    pulse.connect(depth); depth.connect(gate.gain); // the gate opens once a firing
+    mix.connect(gate);
+    // Two low-passes in a row: a steep top, so the air never turns to hiss.
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3000; lp.Q.value = 0.6;
+    const lp2 = ac.createBiquadFilter(); lp2.type = 'lowpass'; lp2.frequency.value = 3400; lp2.Q.value = 0.5;
+    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 70;
+    const level = ac.createGain(); level.gain.value = 0.6;
     const out = ac.createGain(); out.gain.value = 0;
-    pre.connect(shaper); shaper.connect(form); form.connect(hp); hp.connect(lp); lp.connect(level); level.connect(out); out.connect(dest);
-    const wave = buzzWave(ac);
-    const oscs = [0, 6].map((cents, k) => {
-      const o = ac.createOscillator();
-      o.setPeriodicWave(wave);
-      o.frequency.value = P.idle;
-      o.detune.value = cents;
-      const g = ac.createGain(); g.gain.value = k ? 0.6 : 1;
-      o.connect(g); g.connect(pre);
-      o.start(t0);
-      return o;
-    });
+    gate.connect(hp); hp.connect(lp); lp.connect(lp2); lp2.connect(level); level.connect(out); out.connect(dest);
+    noiseSrc.start(t0, Math.random());
+    pulse.start(t0);
     const st = { hz: P.idle, load: 0.3, last: 0, wander: 0, throttle: false };
     const rev = (fHz) => Math.max(0, Math.min(1.2, (fHz - P.idle) / (P.top - P.idle)));
     return {
       out, lp,
       set(at, fHz, load, tc = 0.06) {
         const on = load > 0.5;
-        // Punch: the moment the throttle goes down, a quick kick up in pitch and level.
         if (on && !st.throttle) {
-          for (const o of oscs) { o.frequency.setTargetAtTime(fHz * 1.09, at, 0.02); o.frequency.setTargetAtTime(fHz, at + 0.06, 0.08); }
-          level.gain.setTargetAtTime(1.25, at, 0.01);
-          level.gain.setTargetAtTime(0.6 + 0.4 * load, at + 0.05, 0.1);
-        } else {
-          for (const o of oscs) o.frequency.setTargetAtTime(fHz, at, tc);
-        }
+          // Punch: the throttle goes down, the revs flare and it barks for a moment.
+          pulse.frequency.setTargetAtTime(fHz * 1.1, at, 0.02);
+          pulse.frequency.setTargetAtTime(fHz, at + 0.07, 0.08);
+          level.gain.setTargetAtTime(1.3, at, 0.01);
+          level.gain.setTargetAtTime(0.6 + 0.4 * load, at + 0.06, 0.1);
+        } else pulse.frequency.setTargetAtTime(fHz, at, tc);
         st.throttle = on;
         st.hz = fHz;
         st.load = load;
         const r = rev(fHz);
-        form.frequency.setTargetAtTime(P.form[0] + (P.form[1] - P.form[0]) * r, at, 0.08);
-        pre.gain.setTargetAtTime(0.55 + 0.35 * load, at, 0.06);
+        b1.frequency.setTargetAtTime(P.form[0] * (1 + 0.6 * r), at, 0.08);
+        b2.frequency.setTargetAtTime(P.form[0] * 2.2 * (1 + 0.5 * r), at, 0.08);
+        g2.gain.setTargetAtTime(0.4 + 0.5 * load * (0.5 + r), at, 0.06); // more rasp on the throttle, more at high revs
+        gl.gain.setTargetAtTime(0.75 - 0.35 * r, at, 0.08); // the thump thins out as it revs
       },
-      // Every ~40 ms: let the pitch wander a cent or two and the level flutter, so it never sits
-      // on one exact note.
+      // Every ~40 ms the firing rate wanders a little, so the rasp never settles into a pattern.
       pump(now) {
         if (now - st.last < 0.04) return;
         st.last = now;
-        st.wander += (Math.random() - 0.5) * 6 - st.wander * 0.3;
-        oscs[0].detune.setTargetAtTime(st.wander, now, 0.03);
-        oscs[1].detune.setTargetAtTime(6 + st.wander * 0.7 + (Math.random() - 0.5) * 3, now, 0.03);
-        level.gain.setTargetAtTime((0.6 + 0.4 * st.load) * (0.94 + Math.random() * 0.1), now, 0.03);
+        st.wander += (Math.random() - 0.5) * 0.03 - st.wander * 0.3;
+        pulse.frequency.setTargetAtTime(st.hz * (1 + st.wander), now, 0.03);
       },
-      stop(at) { out.gain.setTargetAtTime(0, at, 0.04); for (const o of oscs) { try { o.stop(at + 0.3); } catch { /* stopped */ } } },
+      stop(at) { out.gain.setTargetAtTime(0, at, 0.04); for (const n of [noiseSrc, pulse]) { try { n.stop(at + 0.3); } catch { /* stopped */ } } },
     };
   }
   // One engine voice of preset P into `dest` on audio context `ac`, starting at f firings a second.
