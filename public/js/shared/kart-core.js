@@ -44,7 +44,8 @@
     miniTurbo: [0.55, 1.0], // boost seconds for each level
     padBoost: 0.8,
     gravity: 1750,
-    rampLift: 520, // vertical launch speed off a ramp at full speed
+    rampLift: 520, // vertical launch speed off a ramp at top speed (it scales with the kart's speed)
+    rampGravity: 0.8, // gravity on a ramp's flight, for a longer, floatier arc
     airSteer: 0.4, // steering left in the air
     slopePull: 620, // gravity along the road: uphill slows you, downhill speeds you up
     slopeTop: 0.9, // top speed change per unit of grade
@@ -1163,7 +1164,7 @@
 
   // Time until a flying kart comes down (on ground at its take-off height).
   function timeToLand(kart) {
-    const G = PHYS.gravity;
+    const G = PHYS.gravity * (kart.rampFly ? PHYS.rampGravity : 1);
     const vz = kart.vz || 0;
     return (vz + Math.sqrt(Math.max(0, vz * vz + 2 * G * Math.max(0, kart.air || 0)))) / G;
   }
@@ -1184,13 +1185,13 @@
     const groundVz = Number.isFinite(kart.gz) ? clamp((g - kart.gz) / dt, rv - 300, rv + 300) : rv;
     if (kart.air > 0) {
       kart.airTime = (kart.airTime || 0) + dt;
-      kart.vz -= G * dt;
+      kart.vz -= G * (kart.rampFly ? PHYS.rampGravity : 1) * dt;
       kart.z += kart.vz * dt;
       if (kart.z <= g) {
         // Touchdown: carry on at the slope's speed (a descent is not a new crest). A trick in the
         // air pays out as a mini boost.
         kart.landed = -kart.vz;
-        kart.z = g; kart.air = 0; kart.vz = groundVz; kart.airTime = 0; kart.trickable = false; kart.hopping = false;
+        kart.z = g; kart.air = 0; kart.vz = groundVz; kart.airTime = 0; kart.trickable = false; kart.hopping = false; kart.rampFly = false;
         if (kart.tricked) kart.boost = Math.max(kart.boost || 0, PHYS.trickBoost);
         kart.tricked = false;
       } else {
@@ -1227,8 +1228,12 @@
         if (s0 > map.n / 2) s0 -= map.n; else if (s0 < -map.n / 2) s0 += map.n;
         if (s1 > map.n / 2) s1 -= map.n; else if (s1 < -map.n / 2) s1 += map.n;
         if (s0 < 0 && s1 >= 0 && s0 > -6) {
-          // Over the lip: launch. Slow karts only get a little hop.
-          kart.vz = Math.max(kart.vz || 0, r.lift * clamp(kart.speed / 330, 0.25, 1));
+          // Over the lip: launch, as hard as you hit it. The faster you go (for your kart class) the
+          // higher and further you fly (a boost only further: the lift tops out a little past top
+          // speed); a slow kart only gets a little hop.
+          const top = PHYS.maxSpeed * ((opts && opts.speed) || 1);
+          kart.vz = Math.max(kart.vz || 0, r.lift * clamp(kart.speed / top, 0.3, 1.05));
+          kart.rampFly = true;
           kart.air = Math.max(kart.air, 0.5);
           kart.z = g + kart.air;
           kart.airTime = 0;
@@ -1321,7 +1326,7 @@
     const groundVz = Number.isFinite(kart.gz) && Number.isFinite(g) ? clamp((g - kart.gz) / dt, slopeVz - 300, slopeVz + 300) : slopeVz;
     if (kart.air > 0) {
       kart.airTime = (kart.airTime || 0) + dt;
-      kart.vz -= G * dt;
+      kart.vz -= G * (kart.rampFly ? PHYS.rampGravity : 1) * dt;
       let z = kart.z + kart.vz * dt;
       if (kart.vz > 0) {
         const ceil = map.ceilingAt(kart.x, kart.y, kart.z + Layers.KART_H - 1);
@@ -1590,7 +1595,7 @@
   // step to the next, plus the item timers that change how it drives. Their screen replays its
   // newer inputs from exactly there, so it ends up where the server's kart will be.
   const NET_FIELDS = ['x', 'y', 'angle', 'heading', 'speed', 'steerS', 'kx', 'ky', 'z', 'vz', 'air', 'airTime', 'gz',
-    'drift', 'driftTime', 'boost', 'spin', 'hopHeld', 'hopCd', 'hopping', 'padCd', 'launch',
+    'drift', 'driftTime', 'boost', 'spin', 'hopHeld', 'hopCd', 'hopping', 'padCd', 'launch', 'rampFly',
     'trick', 'tricked', 'trickable', 'prevDrift', 'trackIndex', 'safeIndex', 'star', 'shrink', 'freeze'];
   // Item timers the server counts down after each step (see TIMERS in server/games/kart.js).
   const NET_TIMERS = ['star', 'shrink', 'freeze'];

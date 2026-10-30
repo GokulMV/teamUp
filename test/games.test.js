@@ -1409,7 +1409,7 @@ test('jumps and landings are the same at 30, 60 and 144 frames a second', () => 
   for (const id of raceIds()) {
     const map = K.MAPS[id];
     const n = map.n;
-    const nearRamp = (i) => map.ramps.some((r) => { const d = (((i - r.i) * r.dir + n * 1.5) % n) - n / 2; return d > -8 && d < 14; });
+    const nearRamp = (i) => map.ramps.some((r) => { const d = (((i - r.i) * r.dir + n * 1.5) % n) - n / 2; return d > -8 && d < 26; }); // a ramp's flight (longer the faster you hit it)
     for (const hz of [30, 60, 144]) {
       const p = map.centerline[0];
       const t = map.tangents[0];
