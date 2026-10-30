@@ -15,16 +15,46 @@
     ctx = new AC();
     master = ctx.createGain();
     master.gain.value = muted ? 0 : 0.55;
-    const comp = ctx.createDynamicsCompressor();
-    master.connect(comp);
-    comp.connect(ctx.destination);
     direct = ctx.createGain();
     direct.gain.value = muted ? 0 : 1;
-    direct.connect(ctx.destination);
+    const post = postChain();
+    master.connect(post);
+    direct.connect(post);
     noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 1.5, ctx.sampleRate);
     const d = noiseBuf.getChannelData(0);
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
     return ctx;
+  }
+
+  // Everything goes out through one warm chain: a low-pass at 4.2 kHz (nothing harsh up top), a
+  // small generated room (a stereo noise burst with an exponential tail, about 22% wet) and a
+  // gentle soft-knee 3:1 compressor.
+  function roomImpulse(secs = 1.1, tau = 0.28) {
+    const n = Math.round(ctx.sampleRate * secs);
+    const ir = ctx.createBuffer(2, n, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = ir.getChannelData(c);
+      let lp = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / ctx.sampleRate;
+        lp += 0.45 * ((Math.random() * 2 - 1) - lp); // a darker tail, like soft walls
+        d[i] = lp * Math.exp(-t / tau) * Math.min(1, t / 0.004);
+      }
+    }
+    return ir;
+  }
+  function postChain() {
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 4200; lp.Q.value = 0.5;
+    const dry = ctx.createGain(); dry.gain.value = 0.78;
+    const room = ctx.createConvolver(); room.buffer = roomImpulse();
+    const wet = ctx.createGain(); wet.gain.value = 0.22 * 2.2; // the impulse is quiet: brings it to ~22% of the mix
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -20; comp.knee.value = 18; comp.ratio.value = 3; comp.attack.value = 0.008; comp.release.value = 0.25;
+    lp.connect(dry); dry.connect(comp);
+    lp.connect(room); room.connect(wet); wet.connect(comp);
+    comp.connect(ctx.destination);
+    return lp;
   }
 
   // Browsers only allow audio after a user gesture.
@@ -40,44 +70,50 @@
     gain.gain.exponentialRampToValueAtTime(0.0001, t + attack + hold + release);
   }
 
-  function tone(freq, { type = 'sine', dur = 0.15, vol = 0.3, slide = 0, delay = 0, attack = 0.005 } = {}) {
+  // Every note is a soft mallet strike: a sine fundamental with a twin a few cents sharp (a slow
+  // beat between them), and overtones at 2x and 4x that fade quickly. A 3-8 ms soft attack, then a
+  // natural exponential ring-out of 200-600 ms. Each partial starts at its own moment and is a
+  // hair off true, so nothing is phase-locked or perfectly periodic.
+  function mallet(freq, { vol = 0.25, ring = 0.35, delay = 0, slide = 0, slideTime = 0.2 } = {}) {
     if (!ready()) return;
     const t = ctx.currentTime + delay;
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(freq, t);
-    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, freq * slide), t + dur);
-    env(g, t, attack, dur * 0.3, dur * 0.7, vol);
-    o.connect(g);
-    g.connect(master);
-    o.start(t);
-    o.stop(t + dur + 0.05);
-  }
-
-  // A clean tone with a fast attack and a smooth decay: a sine, a quiet octave and a touch of
-  // the fifth, through a gentle low-pass so nothing buzzes.
-  function chime(freq, dur = 0.3, vol = 0.2, delay = 0) {
-    if (!ready()) return;
-    const t = ctx.currentTime + delay;
+    const attack = 0.003 + Math.random() * 0.005;
+    ring = Math.max(0.2, Math.min(0.6, ring));
     const out = ctx.createGain();
-    out.gain.setValueAtTime(0.0001, t);
-    out.gain.exponentialRampToValueAtTime(vol, t + 0.008);
-    out.gain.exponentialRampToValueAtTime(vol * 0.55, t + dur * 0.35);
-    out.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = Math.min(9000, freq * 5);
-    lp.connect(out); out.connect(master);
-    for (const [mult, g] of [[1, 1], [2, 0.28], [3, 0.08]]) {
+    out.gain.setValueAtTime(0, t);
+    out.gain.linearRampToValueAtTime(vol, t + attack);
+    out.gain.setTargetAtTime(0, t + attack, ring / 4.6); // about -40 dB by the end of the ring
+    out.connect(master);
+    const end = t + attack + ring * 1.25;
+    const partials = [
+      [1, 0, 0.55, 1], // [multiple, detune (cents), level, how long it rings, as a share of the ring]
+      [1, 3 + Math.random() * 2, 0.35, 1],
+      [2, (Math.random() - 0.5) * 4, 0.2, 0.25],
+      [4, (Math.random() - 0.5) * 6, 0.08, 0.12],
+    ];
+    for (const [mult, cents, level, life] of partials) {
+      const f = freq * mult;
+      if (f > 5000) continue; // nothing harsh up top
       const o = ctx.createOscillator();
       o.type = 'sine';
-      o.frequency.setValueAtTime(freq * mult, t);
-      const og = ctx.createGain();
-      og.gain.value = g;
-      o.connect(og); og.connect(lp);
-      o.start(t);
-      o.stop(t + dur + 0.05);
+      o.detune.value = cents;
+      o.frequency.setValueAtTime(f, t);
+      if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, f * slide), t + slideTime);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(level, t);
+      if (life < 1) g.gain.setTargetAtTime(0, t + attack, (ring * life) / 3);
+      o.connect(g); g.connect(out);
+      const start = t + Math.random() * 0.0015;
+      o.start(start);
+      o.stop(end);
     }
+  }
+  // The old tone() and chime() calls, now mallet strikes (an oscillator type is ignored).
+  function tone(freq, { dur = 0.15, vol = 0.3, slide = 0, delay = 0 } = {}) {
+    mallet(freq, { vol: vol * 0.9, ring: 0.2 + dur * 1.2, delay, slide, slideTime: dur });
+  }
+  function chime(freq, dur = 0.3, vol = 0.2, delay = 0) {
+    mallet(freq, { vol, ring: dur * 1.4, delay });
   }
 
   function noise({ dur = 0.3, vol = 0.3, filter = 'lowpass', from = 4000, to = 200, q = 1, delay = 0 } = {}) {
@@ -91,7 +127,7 @@
     f.frequency.setValueAtTime(from, t);
     f.frequency.exponentialRampToValueAtTime(Math.max(30, to), t + dur);
     const g = ctx.createGain();
-    env(g, t, 0.005, dur * 0.15, dur * 0.85, vol);
+    env(g, t, 0.004, dur * 0.15, dur * 0.85, vol);
     src.connect(f);
     f.connect(g);
     g.connect(master);
@@ -99,38 +135,41 @@
     src.stop(t + dur + 0.05);
   }
 
-  // Kart engines: six to choose from (see ENGINES), all driven the same way. A synthesized engine
-  // is a set of oscillators at multiples of the firing rate f, through a little drive and the
-  // exhaust's fixed resonances (so the tone changes as the note sweeps through them, as a real
-  // engine's does), plus intake rasp: noise gated on and off at the firing rate. There is no
-  // gearbox on a kart: the note just climbs with the speed. The motorbike is a recording instead,
-  // sped up and slowed down.
+  // Kart engines: six to choose from (see ENGINES), all driven the same way. An engine is a train
+  // of separate combustion bangs, each a little stronger or weaker and a little early or late
+  // (that unevenness is what makes it sound like an engine, not a synthesizer): a sharp crack, a
+  // burst of exhaust noise and, on the big four-strokes, a low thump. A couple of seconds of those
+  // are laid into a loop once, sped up and slowed down with the revs, then played through the
+  // exhaust: a pipe resonance (a short echo feeding back on itself), the silencer's fixed body
+  // resonances and its muffling, none of which move with the revs, as on a real engine. idle/top
+  // are firing cycles a second; loopHz is the loop's own rate. The motorbike is a recording.
   const ENGINES = {
     twostroke: {
-      name: 'Race two-stroke', idle: 60, top: 260,
-      osc: [['sawtooth', 1, 0.55, 0], ['square', 1, 0.32, 7], ['triangle', 0.5, 0.3, 0]], drive: 3,
-      res: [[620, 1.4, 7], [1650, 2.2, 5]], lp: [1500, 3800, 1400], rasp: [2800, 0.8, 0.08, 0.2, 0.16], gate: [1, 0.5],
+      name: 'Race two-stroke', idle: 45, top: 235, loopHz: 100, pattern: [1],
+      click: 1, noise: 0.9, noiseTau: 0.0018, thump: 0, jitter: 0.06, ampVar: 0.32,
+      comb: [3.1, 0.55], res: [[760, 1.3, 5], [2100, 1.8, 4]], lp: [1800, 1700, 700], drive: 2.2, pops: true,
     },
     rental: {
-      name: 'Rental four-stroke', idle: 30, top: 100,
-      osc: [['square', 1, 0.5, 0], ['sawtooth', 2, 0.25, 0], ['triangle', 0.5, 0.6, 0]], drive: 4,
-      res: [[300, 1.2, 8], [900, 1.6, 4]], lp: [700, 1700, 600], rasp: [1400, 1, 0.05, 0.12, 0.06], gate: [1, 0.9],
+      name: 'Rental four-stroke', idle: 16, top: 48, loopHz: 30, pattern: [1],
+      click: 0.6, noise: 0.45, noiseTau: 0.004, thump: 1, thumpHz: 85, jitter: 0.07, ampVar: 0.24,
+      comb: [6.5, 0.6], res: [[320, 1.2, 6], [950, 1.5, 3]], lp: [800, 1300, 500], drive: 2.8,
     },
-    moto: { name: 'Motorbike', sample: 'moto', baseHz: 28, idle: 28, top: 100, lp: [1400, 3600, 1200] },
-    electric: {
-      name: 'Electric', idle: 180, top: 1100, vol: 0.65,
-      osc: [['sine', 1, 0.6, 0], ['sawtooth', 1, 0.1, 0], ['sine', 3, 0.14, 0], ['triangle', 0.5, 0.22, 0]], drive: 1.2,
-      res: [[2400, 3, 4]], lp: [2600, 5200, 900], rasp: null, gate: null,
-    },
-    arcade: {
-      name: 'Arcade buzz', idle: 90, top: 340,
-      osc: [['square', 1, 0.45, 0], ['square', 1, 0.35, 9]], drive: 1.8, vibrato: [7, 14],
-      res: [[1000, 1, 6]], lp: [1800, 3000, 800], rasp: null, gate: null,
-    },
+    moto: { name: 'Motorbike', sample: 'moto', baseHz: 28, idle: 28, top: 100, lp: [1200, 2200, 800], pops: true },
     twin: {
-      name: 'Twin-cylinder', idle: 40, top: 165,
-      osc: [['sawtooth', 1, 0.5, 0], ['square', 0.5, 0.35, 0], ['sawtooth', 1.5, 0.18, 0]], drive: 3.5,
-      res: [[450, 1.3, 7], [1200, 2, 5]], lp: [1000, 2600, 900], rasp: [2000, 0.9, 0.06, 0.16, 0.1], gate: [0.5, 0.65],
+      name: 'Twin-cylinder', idle: 24, top: 112, loopHz: 50, pattern: [0.75, 1.25], // uneven firing
+      click: 0.9, noise: 0.7, noiseTau: 0.0026, thump: 0.5, thumpHz: 120, jitter: 0.055, ampVar: 0.26,
+      comb: [4.2, 0.55], res: [[480, 1.3, 6], [1350, 1.8, 4]], lp: [1400, 2000, 700], drive: 2.6, pops: true,
+    },
+    shifter: {
+      name: 'Shifter kart (gearbox)', idle: 50, top: 270, loopHz: 110, pattern: [1],
+      click: 1.1, noise: 1, noiseTau: 0.0016, thump: 0, jitter: 0.065, ampVar: 0.3,
+      comb: [2.6, 0.5], res: [[900, 1.4, 5], [2600, 2, 4]], lp: [2000, 1600, 600], drive: 2.4, pops: true,
+      gears: [0.2, 0.34, 0.48, 0.62, 0.77, 0.92, 1.2], // top of each gear, as a share of top speed
+    },
+    thumper: {
+      name: 'Big single four-stroke', idle: 20, top: 95, loopHz: 40, pattern: [1],
+      click: 0.9, noise: 0.6, noiseTau: 0.003, thump: 1.2, thumpHz: 70, jitter: 0.06, ampVar: 0.26,
+      comb: [5.2, 0.62], res: [[420, 1.2, 6], [1300, 1.6, 4]], lp: [1000, 2200, 800], drive: 2.6, pops: true,
     },
   };
   const ENGINE_IDS = Object.keys(ENGINES);
@@ -143,85 +182,110 @@
     for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = Math.tanh(k * x) / Math.tanh(k); }
     return curve;
   }
-  // One engine voice of preset P into `dest` on audio context `ac`, starting at firing rate f.
+  // Two seconds of firings for preset P at P.loopHz cycles a second, looping seamlessly.
+  const firingLoops = new Map();
+  function firingLoop(ac, P) {
+    const key = `${P.name}|${ac.sampleRate}`;
+    if (firingLoops.has(key)) return firingLoops.get(key);
+    const sr = ac.sampleRate;
+    const secs = 2;
+    const len = sr * secs;
+    let seed = 1234567;
+    const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const gauss = () => (rand() + rand() + rand() - 1.5) / 0.5;
+    // When each firing happens: the pattern repeated, every gap a little off, scaled to fit exactly.
+    const sum = P.pattern.reduce((a, b) => a + b, 0);
+    const gaps = [];
+    for (let c = 0; c < P.loopHz * secs; c++) for (const g of P.pattern) gaps.push((g / sum) * (1 + P.jitter * gauss()));
+    const total = gaps.reduce((a, b) => a + b, 0);
+    const d = new Float32Array(len);
+    const pulse = Math.round(sr * 0.022);
+    let at = 0;
+    for (const g of gaps) {
+      const start = Math.round((at / total) * len);
+      at += g;
+      let amp = 1 + P.ampVar * (rand() * 2 - 1);
+      if (rand() < 0.02) amp *= 0.3; // the odd weak stroke
+      const thumpHz = (P.thumpHz || 0) * (1 + 0.08 * (rand() - 0.5));
+      for (let k = 0; k < pulse; k++) {
+        const t = k / sr;
+        // A crack that rises over about a millisecond (no hard click), then the noise and thump.
+        const v = P.click * (1 - Math.exp(-t / 0.0004)) * Math.exp(-t / 0.0011) * 1.8
+          + P.noise * (rand() * 2 - 1) * Math.exp(-t / P.noiseTau)
+          + (P.thump ? P.thump * Math.sin(2 * Math.PI * thumpHz * t) * Math.exp(-t / 0.007) : 0);
+        d[(start + k) % len] += amp * v;
+      }
+    }
+    // Take the fizz off the noise (a gentle low-pass) and any DC (a high-pass), both run twice
+    // round the loop so the join is seamless, then normalise.
+    const lpA = Math.exp((-2 * Math.PI * 5200) / sr);
+    const hpA = Math.exp((-2 * Math.PI * 30) / sr);
+    let lpY = 0;
+    let hpX = 0;
+    let hpY = 0;
+    const out = new Float32Array(len);
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < len; i++) {
+        lpY = (1 - lpA) * d[i] + lpA * lpY;
+        hpY = hpA * (hpY + lpY - hpX);
+        hpX = lpY;
+        if (pass) out[i] = hpY;
+      }
+    }
+    let peak = 0;
+    for (let i = 0; i < len; i++) peak = Math.max(peak, Math.abs(out[i]));
+    const buffer = ac.createBuffer(1, len, sr);
+    const ch = buffer.getChannelData(0);
+    for (let i = 0; i < len; i++) ch[i] = (out[i] / peak) * 0.9;
+    firingLoops.set(key, buffer);
+    return buffer;
+  }
+  // One engine voice of preset P into `dest` on audio context `ac`, starting at f cycles a second.
   // sampleBuf: the recording, for a sampled preset.
   function kartVoice(ac, dest, f, noise, P, sampleBuf) {
     const t = ac.currentTime;
-    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = P.lp[0]; lp.Q.value = 0.6;
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = P.lp[0]; lp.Q.value = 0.5;
     const out = ac.createGain(); out.gain.value = 0;
     lp.connect(out); out.connect(dest);
     const rev = (fHz) => Math.max(0, Math.min(1.2, (fHz - P.idle) / (P.top - P.idle)));
-    if (P.sample) {
-      const src = ac.createBufferSource(); src.buffer = sampleBuf; src.loop = true;
-      const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 40;
-      src.connect(hp); hp.connect(lp);
-      src.playbackRate.setValueAtTime(f / P.baseHz, t);
-      src.start(t, Math.random() * 2);
-      const voice = {
-        out, lp,
-        set(at, fHz, load, tc = 0.06) {
-          src.playbackRate.setTargetAtTime(fHz / P.baseHz, at, tc * 1.5);
-          lp.frequency.setTargetAtTime(P.lp[0] + rev(fHz) * P.lp[1] + load * P.lp[2], at, 0.08);
-        },
-        stop(at) { try { src.stop(at); } catch { /* stopped */ } },
-      };
-      return voice;
-    }
+    const src = ac.createBufferSource();
+    src.buffer = P.sample ? sampleBuf : firingLoop(ac, P);
+    src.loop = true;
+    const base = P.sample ? P.baseHz : P.loopHz;
+    src.playbackRate.setValueAtTime(f / base, t);
     const pre = ac.createGain(); pre.gain.value = 0.9;
-    const shaper = ac.createWaveShaper(); shaper.curve = driveCurve(P.drive); shaper.oversample = '2x';
-    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 45; hp.Q.value = 0.7;
-    pre.connect(shaper); shaper.connect(hp);
-    let last = hp;
-    for (const [rf, q, g] of P.res) {
-      const r = ac.createBiquadFilter(); r.type = 'peaking'; r.frequency.value = rf; r.Q.value = q; r.gain.value = g;
-      last.connect(r); last = r;
+    src.connect(pre);
+    if (P.sample) {
+      const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 40;
+      pre.connect(hp); hp.connect(lp);
+    } else {
+      const shaper = ac.createWaveShaper(); shaper.curve = driveCurve(P.drive); shaper.oversample = '2x';
+      pre.connect(shaper);
+      // The pipe: a short echo fed back on itself rings at its own fixed pitches.
+      const pipe = ac.createGain(); pipe.gain.value = 1;
+      const delay = ac.createDelay(0.05); delay.delayTime.value = P.comb[0] / 1000;
+      const fb = ac.createGain(); fb.gain.value = P.comb[1];
+      const damp = ac.createBiquadFilter(); damp.type = 'lowpass'; damp.frequency.value = 3500;
+      shaper.connect(pipe); pipe.connect(delay); delay.connect(damp); damp.connect(fb); fb.connect(pipe);
+      let last = pipe;
+      for (const [rf, q, g] of P.res) {
+        const r = ac.createBiquadFilter(); r.type = 'peaking'; r.frequency.value = rf; r.Q.value = q; r.gain.value = g;
+        last.connect(r); last = r;
+      }
+      const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 35;
+      last.connect(hp); hp.connect(lp);
     }
-    last.connect(lp);
-    const oscs = P.osc.map(([type, mult, gain, detune]) => {
-      const o = ac.createOscillator(); o.type = type; o.detune.value = detune;
-      const g = ac.createGain(); g.gain.value = gain;
-      o.connect(g); g.connect(pre);
-      return { o, mult };
-    });
-    if (P.vibrato) {
-      const lfo = ac.createOscillator(); lfo.frequency.value = P.vibrato[0];
-      const depth = ac.createGain(); depth.gain.value = P.vibrato[1]; // cents
-      lfo.connect(depth);
-      for (const { o } of oscs) depth.connect(o.detune);
-      oscs.push({ o: lfo, mult: 0 });
-    }
-    // Intake rasp: [band, Q, gain at idle, more with load, more with revs], gated by a pulse at
-    // gate[0] x the firing rate, gate[1] deep.
-    let rasp = null;
-    let nz = null;
-    if (P.rasp) {
-      nz = ac.createBufferSource(); nz.buffer = noise; nz.loop = true;
-      const nf = ac.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = P.rasp[0]; nf.Q.value = P.rasp[1];
-      const gate = ac.createGain(); gate.gain.value = 1 - P.gate[1];
-      const am = ac.createOscillator(); am.type = 'square';
-      const amDepth = ac.createGain(); amDepth.gain.value = P.gate[1];
-      am.connect(amDepth); amDepth.connect(gate.gain);
-      rasp = ac.createGain(); rasp.gain.value = P.rasp[2];
-      nz.connect(nf); nf.connect(gate); gate.connect(rasp); rasp.connect(lp);
-      oscs.push({ o: am, mult: P.gate[0] });
-    }
-    const tune = (at, fHz, tc) => { for (const { o, mult } of oscs) if (mult) o.frequency.setTargetAtTime(fHz * mult, at, tc); };
-    for (const { o, mult } of oscs) { if (mult) o.frequency.setValueAtTime(f * mult, t); o.start(t); }
-    if (nz) nz.start(t, Math.random());
-    const voice = {
+    src.start(t, Math.random() * 2);
+    return {
       out, lp,
-      // f: firing rate; load: 0 coasting .. 1 full throttle; tc: how quickly it gets there.
-      set(at, fHz, load, tc = 0.06) {
-        const r = rev(fHz);
-        tune(at, fHz, tc);
-        lp.frequency.setTargetAtTime(P.lp[0] + r * P.lp[1] + load * P.lp[2], at, 0.08);
-        if (rasp) rasp.gain.setTargetAtTime(P.rasp[2] + load * (P.rasp[3] + r * P.rasp[4]), at, 0.06);
-        pre.gain.setTargetAtTime(0.55 + load * 0.45, at, 0.06);
+      // f: cycles a second; load: 0 coasting .. 1 full throttle; tc: how quickly it gets there.
+      set(at2, fHz, load, tc = 0.06) {
+        src.playbackRate.setTargetAtTime(fHz / base, at2, tc);
+        lp.frequency.setTargetAtTime(P.lp[0] + rev(fHz) * P.lp[1] + load * P.lp[2], at2, 0.08);
+        pre.gain.setTargetAtTime(0.5 + load * 0.5, at2, 0.06);
       },
-      stop(at) { for (const { o } of oscs) { try { o.stop(at); } catch { /* stopped */ } } if (nz) { try { nz.stop(at); } catch { /* stopped */ } } },
+      stop(at2) { try { src.stop(at2); } catch { /* stopped */ } },
     };
-    voice.set(t, f, 0.6, 0.001);
-    return voice;
   }
 
   // Continuous engine sound for your own kart. surface: 0 road, 1 run-off, 2 grass (K.stepKart).
@@ -229,7 +293,17 @@
   function kartHz(speedRatio, throttle, boosting, P = enginePreset()) {
     const r = Math.max(0, Math.min(1.35, speedRatio));
     const span = P.top - P.idle;
-    return P.idle + span * Math.min(1.15, r) ** 0.8 + (throttle ? span * 0.045 : 0) + (boosting ? span * 0.13 : 0);
+    let rev;
+    if (P.gears) {
+      // Through the gears: the revs climb in each one and drop back at every change up.
+      let g = P.gears.findIndex((top) => r <= top);
+      if (g < 0) g = P.gears.length - 1;
+      const lo = g ? P.gears[g - 1] : 0;
+      const frac = Math.min(1, (r - lo) / (P.gears[g] - lo));
+      const from = g ? 0.5 : 0;
+      rev = from + (1 - from) * frac;
+    } else rev = Math.min(1.15, r) ** 0.8;
+    return P.idle + span * rev + (throttle ? span * 0.045 : 0) + (boosting ? span * (P.gears ? 0.05 : 0.13) : 0);
   }
   function engineUpdate(speedRatio, boosting, drifting, surface = 0, throttle = true) {
     if (!ready()) { engineStop(); return; }
@@ -272,7 +346,7 @@
     engine.voice.set(t, hz, throttle ? 1 : 0.2, throttle ? 0.07 : 0.22);
     engine.voice.out.gain.setTargetAtTime((0.15 + Math.min(1, r) * 0.08 + (throttle ? 0.03 : 0) + (boosting ? 0.04 : 0)) * (engine.P.vol || 1), t, 0.1);
     // Lift off at high revs: a few crackles out of the exhaust.
-    if (engine.throttle && !throttle && !engine.P.sample && engine.P.rasp && engine.hz > engine.P.idle + (engine.P.top - engine.P.idle) * 0.55 && t > engine.popAt) {
+    if (engine.throttle && !throttle && engine.P.pops && engine.hz > engine.P.idle + (engine.P.top - engine.P.idle) * 0.55 && t > engine.popAt) {
       engine.popAt = t + 0.9;
       const n = 2 + Math.floor(Math.random() * 3);
       for (let i = 0; i < n; i++) noise({ dur: 0.035, vol: 0.06 + Math.random() * 0.05, filter: 'bandpass', from: 1800 + Math.random() * 1500, to: 600, q: 1.2, delay: 0.05 + i * (0.06 + Math.random() * 0.07) });
@@ -430,38 +504,29 @@
     rivalVoices.clear();
   }
 
-  // Star power: a bright looping arpeggio over a bass pulse while it lasts.
-  let starNodes = [];
+  // Star power: a bright arpeggio of mallet notes over a low pulse while it lasts, played a beat
+  // at a time (so it stops the moment the star does).
+  let starTimer = null;
   function starStop() {
-    const t = ctx ? ctx.currentTime : 0;
-    for (const n of starNodes) { try { n.stop(t + 0.02); } catch { /* already stopped */ } }
-    starNodes = [];
+    clearInterval(starTimer);
+    starTimer = null;
   }
   function starStart(seconds) {
     starStop();
     if (!ready()) return;
-    const t0 = ctx.currentTime + 0.02;
     const beat = 0.125;
     const melody = [784, 988, 1175, 1568, 1175, 988, 880, 1109, 1319, 1760, 1319, 1109];
     const bass = [196, 196, 220, 220];
     const steps = Math.floor(seconds / beat);
-    for (let i = 0; i < steps; i++) {
-      const t = t0 + i * beat;
-      const voices = [[melody[i % melody.length], 'square', 0.045]];
-      if (i % 2 === 0) voices.push([bass[Math.floor(i / 12) % bass.length], 'triangle', 0.09]);
-      for (const [f, type, vol] of voices) {
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.type = type;
-        o.frequency.setValueAtTime(f, t);
-        env(g, t, 0.004, 0.03, 0.08, vol);
-        o.connect(g);
-        g.connect(master);
-        o.start(t);
-        o.stop(t + 0.13);
-        starNodes.push(o);
-      }
-    }
+    let i = 0;
+    const play = () => {
+      if (i >= steps || !ready()) { starStop(); return; }
+      mallet(melody[i % melody.length], { vol: 0.07, ring: 0.22 });
+      if (i % 2 === 0) mallet(bass[Math.floor(i / 12) % bass.length], { vol: 0.1, ring: 0.3 });
+      i++;
+    };
+    play();
+    starTimer = setInterval(play, beat * 1000);
   }
 
   const Sfx = {
