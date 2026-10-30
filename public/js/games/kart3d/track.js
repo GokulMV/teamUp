@@ -625,27 +625,22 @@ function buildBarriers(scene, map, theme, ctx, R) {
   }
 }
 
-// A tyre: rounded rubber with a hole through the middle (a lathed profile), lying flat.
-function tyreGeometry(r = 15, h = 10.5, hole = 7.5) {
-  const pts = [];
-  const bulge = h / 2;
-  for (let k = 0; k <= 8; k++) { // the outer tread, rounded top and bottom
-    const a = -Math.PI / 2 + (k / 8) * Math.PI;
-    pts.push(new THREE.Vector2(r - bulge + Math.cos(a) * bulge, Math.sin(a) * bulge));
-  }
-  pts.push(new THREE.Vector2(hole, bulge * 0.8), new THREE.Vector2(hole, -bulge * 0.8), pts[0].clone());
-  return new THREE.LatheGeometry(pts, 18).translate(0, h / 2, 0);
+// A stack of two tyres in one low-poly piece (flat-shaded, toon): each a rounded ring of rubber
+// with a hole through the middle, about 140 triangles for the pair.
+function tyreStackGeometry(r = 17, h = 11, hole = 8.5) {
+  const b = h / 2;
+  const prof = [[hole, -b * 0.75], [r - b * 0.55, -b], [r, -b * 0.35], [r, b * 0.35], [r - b * 0.55, b], [hole, b * 0.75], [hole, -b * 0.75]];
+  const one = new THREE.LatheGeometry(prof.map(([x, y]) => new THREE.Vector2(x, y)), 7);
+  return mergeGeometries([one.clone().translate(0, b, 0), one.translate(0, h + b, 0).rotateY(0.45)]);
 }
 
-// Tyre walls along the run-off: stacks two high, packed shoulder to shoulder (a stack at every
-// sample and one between), painted in the theme's two colours in runs, with a dark conveyor-belt
-// strap bolted along the front of each run, as on a real kart track.
+// Tyre walls along the run-off: a two-high stack at every spot, wide enough to sit shoulder to
+// shoulder, painted in the theme's two colours in runs, with a dark belt strap along the road side
+// of each run, as on a real kart track. Kept light: one instance per stack.
 function tyreWall(scene, map, theme, spots) {
-  const geo = tyreGeometry();
-  const mat = new THREE.MeshStandardMaterial({ roughness: 0.85, flatShading: false });
-  const stacks = [];
+  const geo = tyreStackGeometry();
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.85, flatShading: true });
   const belts = [];
-  // Consecutive spots on the same side make a run; fill between neighbours and strap the run.
   const bySide = new Map();
   for (const sp of spots) {
     const key = sp[4];
@@ -653,54 +648,43 @@ function tyreWall(scene, map, theme, spots) {
     bySide.get(key).push(sp);
   }
   for (const list of bySide.values()) {
-    for (let k = 0; k < list.length; k++) {
+    for (let k = 0; k + 1 < list.length; k++) {
       const a = list[k];
-      stacks.push([a[0], a[1], a[2], a[3]]);
       const b = list[k + 1];
-      if (!b || b[3] - a[3] !== 1) continue;
+      if (b[3] - a[3] !== 1) continue;
       const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      if (d > 70) continue;
-      stacks.push([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2, a[3]]);
-      belts.push([a, b, d]);
+      if (d <= 70) belts.push([a, b, d]);
     }
   }
-  const tyres = new THREE.InstancedMesh(geo, mat, stacks.length * 2);
+  const tyres = new THREE.InstancedMesh(geo, mat, spots.length);
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
-  const one = new THREE.Vector3(1, 1, 1);
   const c = new THREE.Color();
   const r = rng(12);
-  stacks.forEach(([x, z, y, i0], k) => {
-    const col = theme.barrierColors[Math.floor(i0 / 3) % 2];
-    for (let lvl = 0; lvl < 2; lvl++) {
-      q.setFromAxisAngle(UP, r() * Math.PI);
-      m.compose(new THREE.Vector3(x + (r() - 0.5) * 1.5, y - 1 + lvl * 10.5, z + (r() - 0.5) * 1.5), q, one);
-      tyres.setMatrixAt(k * 2 + lvl, m);
-      tyres.setColorAt(k * 2 + lvl, c.set(col).multiplyScalar(0.92 + r() * 0.12));
-    }
+  spots.forEach(([x, z, y, i0], k) => {
+    q.setFromAxisAngle(UP, r() * Math.PI);
+    m.compose(new THREE.Vector3(x, y - 1, z), q, new THREE.Vector3(1, 1, 1));
+    tyres.setMatrixAt(k, m);
+    tyres.setColorAt(k, c.set(theme.barrierColors[Math.floor(i0 / 3) % 2]).multiplyScalar(0.92 + r() * 0.12));
   });
   tyres.castShadow = true;
   tyres.receiveShadow = true;
   tyres.computeBoundingSphere();
   scene.add(tyres);
   if (!belts.length) return;
-  // The strap: a dark rubber belt across the road-side face of the stacks, with a pale stripe.
+  // The strap: a dark rubber belt across the road-side face of the stacks.
   const strap = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 9, 2.4), new THREE.MeshStandardMaterial({ color: 0x2c3038, roughness: 0.7 }), belts.length);
-  const stripe = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1.6, 2.6), new THREE.MeshStandardMaterial({ color: 0xf1f5f9, roughness: 0.5 }), belts.length);
   const v = new THREE.Vector3();
   belts.forEach(([a, b, d], k) => {
-    // Out from the stacks' middles toward the road (a[5]: the road-side normal at the spot).
     const nx = a[5][0];
     const nz = a[5][1];
-    v.set((a[0] + b[0]) / 2 + nx * 15.5, (a[2] + b[2]) / 2 + 11, (a[1] + b[1]) / 2 + nz * 15.5);
+    v.set((a[0] + b[0]) / 2 + nx * 17.5, (a[2] + b[2]) / 2 + 11, (a[1] + b[1]) / 2 + nz * 17.5);
     q.setFromAxisAngle(UP, -Math.atan2(b[1] - a[1], b[0] - a[0]));
     m.compose(v, q, new THREE.Vector3(d + 1, 1, 1));
     strap.setMatrixAt(k, m);
-    stripe.setMatrixAt(k, m);
   });
   strap.receiveShadow = true;
-  stripe.position.y = 0;
-  scene.add(strap, stripe);
+  scene.add(strap);
 }
 
 // ---------- boost pads (lying on the slope) ----------

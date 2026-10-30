@@ -712,7 +712,7 @@ export function addToonTrees(scene, all, { seed = 5, bush = false, greens = ['#4
         cols.push(c.r, c.g, c.b);
       }
       g.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
-      blobs.push(g.toNonIndexed());
+      blobs.push(g.index ? g.toNonIndexed() : g);
     }
     if (!bush) {
       const trunk = new THREE.CylinderGeometry(0.09, 0.15, 1.2, 6).translate(0, 0.6, 0).toNonIndexed();
