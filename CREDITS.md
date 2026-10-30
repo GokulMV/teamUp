@@ -29,8 +29,7 @@ Everything else in Ball & Chain (course pieces, stick figures, textures, the oth
 | `coin.mp3`, `break.mp3`, `fall.mp3` | Item box and roulette, ice shattering, falling off | CC0 1.0 | Kenney, [Starter Kit 3D Platformer](https://github.com/KenneyNL/Starter-Kit-3D-Platformer) |
 | `tick.mp3`, `drop.mp3`, `clunk.mp3`, `spin.mp3` (from `toggle`, `placement-a`, `placement-c`, `rotate`) | Roulette ticks and hit ticks, bananas and ink, shells and sticky bombs, shields and spikes | CC0 1.0 | Kenney, [Starter Kit City Builder](https://github.com/KenneyNL/Starter-Kit-City-Builder) |
 
-| `engine-toy.wav`, `engine-putt.wav`, `engine-zippy.wav` (single firings cut from `audio/engine-motorcycle.ogg`, re-fired into short toy-engine loops) | The cartoon kart engines (Toy buzz is the default) | CC0 1.0 | Kenney, [Starter Kit Racing](https://github.com/KenneyNL/Starter-Kit-Racing) |
-| `engine-moto.wav` (from `audio/engine-motorcycle.ogg`, looped), `engine-car.wav` (from `audio/engine.ogg`, looped) | Your engine and the rivals': each layered with itself half a firing apart and pitched with speed | CC0 1.0 | Kenney, [Starter Kit Racing](https://github.com/KenneyNL/Starter-Kit-Racing) |
+| `engine-moto.wav` (from `audio/engine-motorcycle.ogg`, looped), `engine-car.wav` (from `audio/engine.ogg`, looped) | The recorded engine choices (the default cartoon kart is made in code, `public/js/sfx.js`) | CC0 1.0 | Kenney, [Starter Kit Racing](https://github.com/KenneyNL/Starter-Kit-Racing) |
 
 The two loops were cut to a few seconds, crossfaded end into start so they loop without a click, and saved as 22 kHz mono WAV (gapless in every browser); the rest are small mono MP3s. The countdown, mini-turbo and item jingles are still synthesized (`public/js/sfx.js`), layered over these where noted there.
 

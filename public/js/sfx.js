@@ -155,22 +155,98 @@
   // layers: [recording (a KART key), gain, start offsets in recording seconds]; baseHz: firings a
   // second at playback rate 1 with the copies; idle/top: the range to play at.
   const HALF = 1 / (2 * 28.2);
-  // The cartoon engines (default): single firings cut out of the bike recording, short and
-  // windowed so no rumble, echo or wobble comes with them, re-fired quickly into a light toy-sized
-  // loop with the bass taken out (made offline, see CREDITS.md). baseHz: firings a second in it.
+  // The cartoon kart (default), built from scratch: a little, light engine that goes "brrrm".
+  // Every firing is its own tiny soft "bup" (about 20 ms: a 1.5 ms fade-in, so no click, then a
+  // quick ring-out), one of a dozen slightly different ones, each fired a touch early or late and
+  // a touch louder or softer, so nothing repeats or locks into a tone. As the revs rise the bups
+  // come faster and brighten from an "ooo" to an "aaa": the vroom. Lifting off softens them, and
+  // the odd one goes missing (a putter). No noise, no reverb, almost no low end: a toy, not a truck.
+  // idle/top: bups a second; form: how bright they are at idle and flat out.
   const ENGINES = {
-    toy: { name: 'Toy buzz', baseHz: 100, idle: 75, top: 190, layers: [['toy', 1, [0]]], lp: [4200, 0, 0], pops: false },
-    putt: { name: 'Putt-putt', baseHz: 60, idle: 48, top: 126, layers: [['putt', 1, [0]]], lp: [4200, 0, 0], pops: false },
-    zippy: { name: 'Zippy', baseHz: 120, idle: 96, top: 264, layers: [['zippy', 1, [0]]], lp: [4200, 0, 0], pops: false },
-    kart: { name: 'Kart', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 1, [0, HALF]]], lp: [3400, 500, 300], pops: true },
+    cartoon: { name: 'Cartoon kart', cartoon: true, idle: 34, top: 108, form: [0.85, 1.35], pops: false },
+    kart: { name: 'Kart (recorded)', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 1, [0, HALF]]], lp: [3400, 500, 300], pops: true },
     blend: { name: 'Kart, heavier', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 0.8, [0, HALF]], ['car', 0.45, [0.37, 0.37 + HALF]]], lp: [3200, 600, 400], pops: true },
     single: { name: 'Single cylinder', baseHz: 28.2, idle: 56, top: 104, layers: [['moto', 1, [0]]], lp: [3200, 600, 400], pops: true },
   };
   const ENGINE_IDS = Object.keys(ENGINES);
-  let engineId = 'toy';
+  let engineId = 'cartoon';
   try { const saved = localStorage.getItem('teamup-kart-engine'); if (ENGINES[saved]) engineId = saved; } catch { /* ignore */ }
   const enginePreset = () => ENGINES[engineId];
-  const engineSamples = (P) => [...new Set(P.layers.map((l) => l[0]))];
+  const engineSamples = (P) => (P.layers ? [...new Set(P.layers.map((l) => l[0]))] : []);
+
+  // A dozen bups for the cartoon kart, made once per sample rate.
+  const bupSets = new Map();
+  function bups(ac) {
+    const sr = ac.sampleRate;
+    if (bupSets.has(sr)) return bupSets.get(sr);
+    let seed = 4242;
+    const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const set = [];
+    for (let v = 0; v < 12; v++) {
+      const n = Math.round(sr * 0.022);
+      const b = ac.createBuffer(1, n, sr);
+      const d = b.getChannelData(0);
+      const f1 = 700 * (1 + (rand() - 0.5) * 0.12);
+      const f2 = 1750 * (1 + (rand() - 0.5) * 0.14);
+      const sub = 190 * (1 + (rand() - 0.5) * 0.1);
+      const ph1 = rand() * 6.28;
+      const ph2 = rand() * 6.28;
+      const att = sr * 0.0016;
+      let peak = 0;
+      for (let i = 0; i < n; i++) {
+        const t = i / sr;
+        const chirp = 1 - 0.12 * (i / n); // each bup drops a little in pitch as it dies
+        const a = i < att ? 0.5 - 0.5 * Math.cos((Math.PI * i) / att) : 1;
+        const x = Math.sin(6.2832 * f1 * chirp * t + ph1) * Math.exp(-t / 0.0055)
+          + 0.35 * Math.sin(6.2832 * f2 * chirp * t + ph2) * Math.exp(-t / 0.0035)
+          + 0.22 * Math.sin(6.2832 * sub * t) * Math.exp(-t / 0.004);
+        d[i] = a * x;
+        peak = Math.max(peak, Math.abs(d[i]));
+      }
+      for (let i = 0; i < n; i++) d[i] /= peak;
+      set.push(b);
+    }
+    bupSets.set(sr, set);
+    return set;
+  }
+  // The cartoon kart's voice: bups scheduled a little ahead (pump() each frame) at the current
+  // rate. set() takes the same arguments as a recorded voice's.
+  function cartoonVoice(ac, dest, P) {
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 4200; lp.Q.value = 0.5;
+    const out = ac.createGain(); out.gain.value = 0;
+    lp.connect(out); out.connect(dest);
+    const set = bups(ac);
+    let seed = Math.floor(Math.random() * 1e6) + 1;
+    const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const st = { hz: P.idle, load: 0.3, toHz: P.idle, toLoad: 0.3, tc: 0.1, next: ac.currentTime + 0.03, stopped: false };
+    const voice = {
+      out, lp,
+      set(at, fHz, load, tc = 0.06) { st.toHz = fHz; st.toLoad = load; st.tc = Math.max(0.02, tc); },
+      pump(now) {
+        if (st.stopped) return;
+        if (st.next < now) st.next = now + 0.005; // a stalled tab: pick up from here
+        while (st.next < now + 0.09) {
+          const dt = 1 / st.hz;
+          const k = Math.min(1, dt / st.tc);
+          st.hz += (st.toHz - st.hz) * k;
+          st.load += (st.toLoad - st.load) * k;
+          const rev = Math.max(0, Math.min(1.2, (st.hz - P.idle) / (P.top - P.idle)));
+          if (!(st.load < 0.4 && rand() < 0.12)) { // coasting: the odd bup goes missing
+            const src = ac.createBufferSource();
+            src.buffer = set[Math.floor(rand() * set.length)];
+            src.playbackRate.value = (P.form[0] + (P.form[1] - P.form[0]) * rev) * (1 + (rand() - 0.5) * 0.06);
+            const g = ac.createGain();
+            g.gain.value = (0.55 + 0.45 * Math.min(1, st.load)) * (0.85 + rand() * 0.15);
+            src.connect(g); g.connect(lp);
+            src.start(st.next);
+          }
+          st.next += dt * (1 + (rand() - 0.5) * 0.06);
+        }
+      },
+      stop(at) { st.stopped = true; out.gain.setTargetAtTime(0, at, 0.04); },
+    };
+    return voice;
+  }
   // One engine voice of preset P into `dest` on audio context `ac`, starting at f firings a second.
   // recordings: { KART key: AudioBuffer }.
   function kartVoice(ac, dest, f, P, recordings) {
@@ -229,7 +305,7 @@
       const P = enginePreset();
       const names = engineSamples(P);
       if (names.some((n) => !buf(n))) { names.forEach((n) => loadSample(KART[n])); return; } // not here yet
-      const v = kartVoice(ctx, engines, P.idle, P, Object.fromEntries(names.map((n) => [n, buf(n)])));
+      const v = P.cartoon ? cartoonVoice(ctx, engines, P) : kartVoice(ctx, engines, P.idle, P, Object.fromEntries(names.map((n) => [n, buf(n)])));
       // Starting up: the engine catches, blips and settles to idle.
       v.set(t, P.idle * 0.6, 0.3, 0.001);
       v.set(t + 0.12, P.idle + (P.top - P.idle) * 0.45, 1, 0.08);
@@ -257,6 +333,7 @@
       engine = { voice: v, P, s, sg, skid: !!skidBuf, rumble, rg, warm: t + 0.75, throttle: false, hz: P.idle, popAt: 0 };
       return;
     }
+    if (engine.voice.pump) engine.voice.pump(t);
     if (t < engine.warm) return; // let the start-up blip play out
     const r = Math.max(0, Math.min(1.35, speedRatio));
     const hz = kartHz(r, throttle, boosting, engine.P);
@@ -319,7 +396,6 @@
   // CREDITS.md). Loaded when a kart game starts; until they arrive the synthesized versions play.
   const KART = {
     tick: '/audio/kart/tick.mp3', drop: '/audio/kart/drop.mp3', clunk: '/audio/kart/clunk.mp3', spin: '/audio/kart/spin.mp3',
-    toy: '/audio/kart/engine-toy.wav', putt: '/audio/kart/engine-putt.wav', zippy: '/audio/kart/engine-zippy.wav',
     moto: '/audio/kart/engine-moto.wav', car: '/audio/kart/engine-car.wav', skid: '/audio/kart/skid.wav', impact: '/audio/kart/impact.mp3',
     explode: '/audio/kart/explode.mp3', hurt: '/audio/kart/hurt.mp3', blaster: '/audio/kart/blaster.mp3',
     repeater: '/audio/kart/repeater.mp3', swap: '/audio/kart/swap.mp3', hop: '/audio/kart/hop.mp3',
@@ -354,59 +430,52 @@
   // Rival karts' engines: the nearest few, panned to where they are and fading with distance.
   // Each plays a loop of the same kart engine, rendered once at a set firing rate, sped up and
   // slowed down to follow its kart.
-  // Rivals play the main recording once (no layering: they're quieter and further away), at the
-  // same firing rate as the engine choice.
-  function rivalLoop() {
-    const name = enginePreset().layers[0][0];
-    const b = buf(name);
-    if (!b) loadSample(KART[name]);
-    return b;
-  }
-  const rivalVoices = new Map(); // id -> { src, g, p }
+  // Rivals: the nearest two, each its own engine of the same kind as yours (a recorded one plays
+  // its main recording once), panned to where they are, a little lower and quieter, fading with
+  // distance.
+  const rivalVoices = new Map(); // id -> { voice, g, p, pitch }
   function rivalsUpdate(list) {
     if (!ready()) { rivalsStop(); return; }
-    const loop = rivalLoop();
-    if (!loop) return;
+    const P = enginePreset();
+    const rec = P.layers && buf(P.layers[0][0]);
+    if (P.layers && !rec) { loadSample(KART[P.layers[0][0]]); return; }
     const t = ctx.currentTime;
     const keep = new Set();
     for (const r of list.slice(0, 2)) {
       keep.add(r.id);
       let v = rivalVoices.get(r.id);
       if (!v) {
-        const src = ctx.createBufferSource();
-        src.buffer = loop;
-        src.loop = true;
-        const lp = ctx.createBiquadFilter();
-        lp.type = 'lowpass'; lp.frequency.value = 1600;
         const g = ctx.createGain();
         g.gain.value = 0;
         const p = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
-        src.connect(lp); lp.connect(g);
         if (p) { g.connect(p); p.connect(engines); } else g.connect(engines);
-        src.start(t, Math.random() * 2);
-        v = { src, g, p, lp, pitch: 0.95 + Math.random() * 0.1 };
+        const solo = P.layers ? { ...P, layers: [[P.layers[0][0], 1, [0]]], baseHz: 28.2 } : P;
+        const voice = P.cartoon ? cartoonVoice(ctx, g, P) : kartVoice(ctx, g, P.idle, solo, { [P.layers[0][0]]: rec });
+        voice.out.gain.value = 1;
+        v = { voice, g, p, pitch: 0.92 + Math.random() * 0.08 };
         rivalVoices.set(r.id, v);
       }
       const near = Math.max(0, 1 - r.dist / 1100);
       const sp = Math.max(0, Math.min(1.3, r.speed));
-      v.src.playbackRate.setTargetAtTime((kartHz(sp, true, false) / enginePreset().baseHz) * (enginePreset().layers[0][2].length > 1 ? 1.24 : 0.92) * v.pitch, t, 0.1); // a little lower than yours
-      v.lp.frequency.setTargetAtTime(1200 + sp * 2600, t, 0.1);
-      v.g.gain.setTargetAtTime(0.06 * near * near * (0.45 + 0.55 * Math.min(1, sp)), t, 0.12); // quiet: several at once turn to mush
+      v.voice.set(t, kartHz(sp, true, false) * v.pitch, 0.8, 0.1);
+      if (v.voice.pump) v.voice.pump(t);
+      v.g.gain.setTargetAtTime(0.07 * near * near * (0.45 + 0.55 * Math.min(1, sp)), t, 0.12);
       if (v.p) v.p.pan.setTargetAtTime(Math.max(-0.9, Math.min(0.9, r.pan)), t, 0.08);
     }
     for (const [id, v] of rivalVoices) {
       if (keep.has(id)) continue;
       rivalVoices.delete(id);
       v.g.gain.setTargetAtTime(0, t, 0.1);
-      setTimeout(() => { try { v.src.stop(); } catch { /* stopped */ } }, 600);
+      v.voice.stop(t + 0.5);
     }
   }
   function rivalsStop() {
     for (const v of rivalVoices.values()) {
-      try { v.g.gain.setTargetAtTime(0, ctx.currentTime, 0.05); setTimeout(() => { try { v.src.stop(); } catch { /* stopped */ } }, 400); } catch { /* gone */ }
+      try { v.g.gain.setTargetAtTime(0, ctx.currentTime, 0.05); v.voice.stop(ctx.currentTime + 0.3); } catch { /* gone */ }
     }
     rivalVoices.clear();
   }
+
 
   // Star power: a bright arpeggio of mallet notes over a low pulse while it lasts, played a beat
   // at a time (so it stops the moment the star does).
