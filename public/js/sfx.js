@@ -158,17 +158,58 @@
   // The cartoon kart (default), built from scratch: a little exhaust that goes "brrrap", its
   // puffs coming faster as it revs (idle/top: puffs a second; form: the exhaust's main band).
   // See cartoonVoice() below.
+  const REV_LOOPS = ['rev0', 'rev1', 'rev2', 'rev3', 'rev4', 'rev5'];
   const ENGINES = {
-    cartoon: { name: 'Cartoon kart', cartoon: true, idle: 90, top: 260, form: [700, 1700], pops: true },
+    // The racing kart (default): six CC0 recordings of one engine at rising revs (domasx2,
+    // OpenGameArt), blended by speed the way racing games do, so the sound follows each kart's
+    // speed without stretching one recording. idle/top here are rev levels: 0 is the first loop,
+    // 1 the last (the throttle and boosts push past it a little).
+    racing: { name: 'Racing kart', revs: REV_LOOPS, idle: 0, top: 1, pops: true },
+    cartoon: { name: 'Cartoon kart (made in code)', cartoon: true, idle: 90, top: 260, form: [700, 1700], pops: true },
     kart: { name: 'Kart (recorded)', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 1, [0, HALF]]], lp: [3400, 500, 300], pops: true },
     blend: { name: 'Kart, heavier', baseHz: 56.4, idle: 65, top: 135, layers: [['moto', 0.8, [0, HALF]], ['car', 0.45, [0.37, 0.37 + HALF]]], lp: [3200, 600, 400], pops: true },
     single: { name: 'Single cylinder', baseHz: 28.2, idle: 56, top: 104, layers: [['moto', 1, [0]]], lp: [3200, 600, 400], pops: true },
   };
   const ENGINE_IDS = Object.keys(ENGINES);
-  let engineId = 'cartoon';
+  let engineId = 'racing';
   try { const saved = localStorage.getItem('teamup-kart-engine'); if (ENGINES[saved]) engineId = saved; } catch { /* ignore */ }
   const enginePreset = () => ENGINES[engineId];
-  const engineSamples = (P) => (P.layers ? [...new Set(P.layers.map((l) => l[0]))] : []);
+  const engineSamples = (P) => (P.revs || (P.layers ? [...new Set(P.layers.map((l) => l[0]))] : []));
+  // A rev-blended engine: every rev loop plays all the time; each is heard only near its own rev
+  // level, crossfading (equal power) into its neighbours, and bent a few percent in pitch toward
+  // them so the steps never show.
+  function revVoice(ac, dest, P, recordings) {
+    const t = ac.currentTime;
+    const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 40;
+    const out = ac.createGain(); out.gain.value = 0;
+    hp.connect(out); out.connect(dest);
+    const start = Math.random();
+    const layers = P.revs.map((name, k) => {
+      const src = ac.createBufferSource();
+      src.buffer = recordings[name];
+      src.loop = true;
+      const g = ac.createGain(); g.gain.value = k ? 0 : 1;
+      src.connect(g); g.connect(hp);
+      src.start(t, (start * recordings[name].duration + k * 0.137) % recordings[name].duration);
+      return { src, g };
+    });
+    const last = P.revs.length - 1;
+    return {
+      out, lp: hp,
+      // f: rev level (P.idle..P.top and a little past); load: throttle; tc: how quickly it follows.
+      set(at, f, load, tc = 0.06) {
+        const lvl = Math.max(0, Math.min(1.25, (f - P.idle) / (P.top - P.idle))) * last;
+        layers.forEach(({ src, g }, k) => {
+          let w = Math.max(0, 1 - Math.abs(lvl - k));
+          if (k === last && lvl > last) w = 1;
+          g.gain.setTargetAtTime(Math.sqrt(w) * (0.82 + 0.18 * Math.min(1, load)), at, tc);
+          const bend = k === last ? 1 + 0.1 * Math.max(0, lvl - last) : 1 + 0.08 * Math.max(-1, Math.min(1, lvl - k));
+          src.playbackRate.setTargetAtTime(bend, at, tc);
+        });
+      },
+      stop(at) { out.gain.setTargetAtTime(0, at, 0.04); for (const { src } of layers) { try { src.stop(at + 0.3); } catch { /* stopped */ } } },
+    };
+  }
 
   // The cartoon kart's exhaust: puffs of air, not tones. Noise (so no two puffs are ever alike)
   // shaped like an exhaust (two mid bands, nothing up top, a little low thump), gated on and off
@@ -305,7 +346,8 @@
       const P = enginePreset();
       const names = engineSamples(P);
       if (names.some((n) => !buf(n))) { names.forEach((n) => loadSample(KART[n])); return; } // not here yet
-      const v = P.cartoon ? cartoonVoice(ctx, engines, P) : kartVoice(ctx, engines, P.idle, P, Object.fromEntries(names.map((n) => [n, buf(n)])));
+      const recs = Object.fromEntries(names.map((n) => [n, buf(n)]));
+      const v = P.revs ? revVoice(ctx, engines, P, recs) : P.cartoon ? cartoonVoice(ctx, engines, P) : kartVoice(ctx, engines, P.idle, P, recs);
       // Starting up: the engine catches, blips and settles to idle.
       v.set(t, P.idle * 0.6, 0.3, 0.001);
       v.set(t + 0.12, P.idle + (P.top - P.idle) * 0.45, 1, 0.08);
@@ -395,6 +437,7 @@
   // Kart Battle's recorded sounds (CC0: Kenney's racing, FPS and platformer starter kits; see
   // CREDITS.md). Loaded when a kart game starts; until they arrive the synthesized versions play.
   const KART = {
+    rev0: '/audio/kart/rev0.wav', rev1: '/audio/kart/rev1.wav', rev2: '/audio/kart/rev2.wav', rev3: '/audio/kart/rev3.wav', rev4: '/audio/kart/rev4.wav', rev5: '/audio/kart/rev5.wav',
     tick: '/audio/kart/tick.mp3', drop: '/audio/kart/drop.mp3', clunk: '/audio/kart/clunk.mp3', spin: '/audio/kart/spin.mp3',
     moto: '/audio/kart/engine-moto.wav', car: '/audio/kart/engine-car.wav', skid: '/audio/kart/skid.wav', impact: '/audio/kart/impact.mp3',
     explode: '/audio/kart/explode.mp3', hurt: '/audio/kart/hurt.mp3', blaster: '/audio/kart/blaster.mp3',
@@ -437,8 +480,9 @@
   function rivalsUpdate(list) {
     if (!ready()) { rivalsStop(); return; }
     const P = enginePreset();
+    const names = engineSamples(P);
+    if (names.some((n) => !buf(n))) { names.forEach((n) => loadSample(KART[n])); return; }
     const rec = P.layers && buf(P.layers[0][0]);
-    if (P.layers && !rec) { loadSample(KART[P.layers[0][0]]); return; }
     const t = ctx.currentTime;
     const keep = new Set();
     for (const r of list.slice(0, 2)) {
@@ -450,7 +494,8 @@
         const p = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
         if (p) { g.connect(p); p.connect(engines); } else g.connect(engines);
         const solo = P.layers ? { ...P, layers: [[P.layers[0][0], 1, [0]]], baseHz: 28.2 } : P;
-        const voice = P.cartoon ? cartoonVoice(ctx, g, P) : kartVoice(ctx, g, P.idle, solo, { [P.layers[0][0]]: rec });
+        const voice = P.revs ? revVoice(ctx, g, P, Object.fromEntries(names.map((n) => [n, buf(n)])))
+          : P.cartoon ? cartoonVoice(ctx, g, P) : kartVoice(ctx, g, P.idle, solo, { [P.layers[0][0]]: rec });
         voice.out.gain.value = 1;
         v = { voice, g, p, pitch: 0.92 + Math.random() * 0.08 };
         rivalVoices.set(r.id, v);

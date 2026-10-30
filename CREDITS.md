@@ -29,6 +29,7 @@ Everything else in Ball & Chain (course pieces, stick figures, textures, the oth
 | `coin.mp3`, `break.mp3`, `fall.mp3` | Item box and roulette, ice shattering, falling off | CC0 1.0 | Kenney, [Starter Kit 3D Platformer](https://github.com/KenneyNL/Starter-Kit-3D-Platformer) |
 | `tick.mp3`, `drop.mp3`, `clunk.mp3`, `spin.mp3` (from `toggle`, `placement-a`, `placement-c`, `rotate`) | Roulette ticks and hit ticks, bananas and ink, shells and sticky bombs, shields and spikes | CC0 1.0 | Kenney, [Starter Kit City Builder](https://github.com/KenneyNL/Starter-Kit-City-Builder) |
 
+| `rev0.wav` … `rev5.wav` (`loop_0` … `loop_5`) | Every kart's engine: six recordings at rising revs, blended by each kart's speed | CC0 1.0 | domasx2, [Racing car engine sound loops](https://opengameart.org/content/racing-car-engine-sound-loops) (OpenGameArt) |
 | `engine-moto.wav` (from `audio/engine-motorcycle.ogg`, looped), `engine-car.wav` (from `audio/engine.ogg`, looped) | The recorded engine choices (the default cartoon kart is made in code, `public/js/sfx.js`) | CC0 1.0 | Kenney, [Starter Kit Racing](https://github.com/KenneyNL/Starter-Kit-Racing) |
 
 The two loops were cut to a few seconds, crossfaded end into start so they loop without a click, and saved as 22 kHz mono WAV (gapless in every browser); the rest are small mono MP3s. The countdown, mini-turbo and item jingles are still synthesized (`public/js/sfx.js`), layered over these where noted there.
